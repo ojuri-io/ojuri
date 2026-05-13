@@ -4,6 +4,19 @@ Open-source, self-hostable real-time fraud detection platform built as four
 cooperating microservices around shared PostgreSQL / Redis / Kafka infrastructure.
 Released under the MIT License — see [`LICENSE`](LICENSE).
 
+> **What's new in this revision** — see [`IMPROVEMENTS.md`](IMPROVEMENTS.md) for
+> the full adoption-focused feature list. Highlights: API-key auth, a
+> per-decision audit log with inline reason codes, a hot-reloaded rules
+> engine, a model registry with shadow / activate / retire, HMAC-signed
+> webhooks, idempotency keys, and a conversational FIA HTTP API for the
+> investigation UI.
+>
+> **Per-feature reference docs** live under [`docs/`](docs/README.md):
+> [auth](docs/AUTH.md), [audit log](docs/AUDIT.md),
+> [reason codes](docs/REASON-CODES.md), [rules](docs/RULES.md),
+> [model registry](docs/MODEL-REGISTRY.md), [webhooks](docs/WEBHOOKS.md),
+> [idempotency](docs/IDEMPOTENCY.md), [FIA API](docs/FIA-API.md).
+
 The four services:
 
 - **RDA (Real-Time Detection Agent)**: HTTP API using Fastify for fraud prediction with ONNX model inference, Redis feature retrieval, and Kafka event publishing
@@ -149,6 +162,22 @@ KAFKA_BLOCKED_TOPIC=transactions.blocked     # without this, FIA gets nothing
 MODEL_PATH=./models/fraud_model.onnx
 FRAUD_THRESHOLD=0.65
 LOG_LEVEL=debug
+
+# --- Adoption features ---
+
+# Authentication
+RDA_REQUIRE_API_KEY=false                    # set true to force X-Api-Key on /v1/predict
+RDA_ADMIN_TOKEN=                             # required for the /v1/admin/* surface
+
+# Rules + registry refresh
+RULES_RELOAD_INTERVAL_MS=30000
+MODEL_REGISTRY_REFRESH_MS=30000
+
+# Webhook delivery
+WEBHOOK_WORKER_INTERVAL_MS=10000
+
+# Idempotency cache TTL on /v1/predict
+IDEMPOTENCY_TTL_MS=86400000                  # 24h
 ```
 
 ### PAA Service (paa-service/.env)
@@ -297,37 +326,151 @@ docker compose restart fraud-redis
 
 ### RDA Service (http://localhost:3000)
 
-| Method | Endpoint        | Description                   |
-|--------|-----------------|-------------------------------|
-| GET    | `/`             | Service info                  |
-| GET    | `/livez`        | Liveness probe                |
-| GET    | `/readyz`       | Readiness probe (Postgres + Redis) |
-| POST   | `/v1/predict`   | Fraud prediction              |
-| GET    | `/v1/metrics`   | Prometheus metrics            |
+| Method | Endpoint                              | Description                                         |
+|--------|---------------------------------------|-----------------------------------------------------|
+| GET    | `/`                                   | Service info                                        |
+| GET    | `/livez`                              | Liveness probe                                      |
+| GET    | `/readyz`                             | Readiness probe (Postgres + Redis)                  |
+| POST   | `/v1/predict`                         | Fraud prediction                                    |
+| GET    | `/v1/decisions/:transactionId`        | Read the audit row for a transaction                |
+| POST   | `/v1/decisions/:auditId/override`     | Human reviewer override (fires `decision.overridden`) |
+| GET    | `/v1/review-queue`                    | Newest DECLINE rows awaiting review                 |
+| GET    | `/v1/metrics`                         | Prometheus metrics                                  |
+| POST   | `/v1/admin/api-keys`                  | Issue an API key (admin token required)             |
+| GET    | `/v1/admin/api-keys`                  | List API keys                                       |
+| DELETE | `/v1/admin/api-keys/:id`              | Revoke an API key                                   |
+| POST   | `/v1/admin/webhooks`                  | Register a webhook subscription                     |
+| GET    | `/v1/admin/webhooks`                  | List subscriptions                                  |
+| DELETE | `/v1/admin/webhooks/:id`              | Revoke a subscription                               |
+| POST   | `/v1/admin/models`                    | Register a model version (CANDIDATE)                |
+| GET    | `/v1/admin/models`                    | List models                                         |
+| POST   | `/v1/admin/models/:version/status`    | Activate / shadow / retire                          |
+| POST   | `/v1/admin/segment-thresholds`        | Set a per-segment threshold                         |
+| POST   | `/v1/admin/rules`                     | Create a pre/post rule                              |
+| GET    | `/v1/admin/rules`                     | List rules                                          |
+| PATCH  | `/v1/admin/rules/:id`                 | Update a rule                                       |
+| DELETE | `/v1/admin/rules/:id`                 | Delete a rule                                       |
 
-### Example Request
+Admin endpoints require `X-Admin-Token: $RDA_ADMIN_TOKEN`. The predict /
+audit / review-queue endpoints honour `X-Api-Key` (or `Authorization: Bearer`)
+and apply the per-key rate limit. Set `RDA_REQUIRE_API_KEY=true` to make auth
+mandatory; the default is `false` so the existing curl examples still work
+out of the box.
+
+### Example Requests
 
 ```bash
 # Health check
 curl http://localhost:3000/livez
 
-# Service info
-curl http://localhost:3000/
-
-# Fraud prediction (transaction_type must be one of CASH_IN, CASH_OUT, PAYMENT, TRANSFER, DEBIT)
+# Fraud prediction
 curl -X POST http://localhost:3000/v1/predict \
   -H "Content-Type: application/json" \
+  -H "X-Api-Key: fdk_..." \
+  -H "Idempotency-Key: 6e0d6c8e-a7f7-4f1a-94a1-3c8d0a2c0a01" \
   -d '{
     "transaction_id": "550e8400-e29b-41d4-a716-446655440000",
     "sender_id": "user123",
     "receiver_id": "user456",
     "amount": 1500.00,
     "transaction_type": "TRANSFER",
-    "timestamp": 1713100800
+    "timestamp": 1713100800,
+    "segment": "high_value"
   }'
 ```
 
-The response is `{ fraud, fraud_probability, decision: "ACCEPT" | "DECLINE", latency_ms, timestamp }`. The decision is binary at threshold `FRAUD_THRESHOLD=0.65`; on `DECLINE`, RDA additionally publishes the event to `transactions.blocked` for the FIA.
+The response now includes inline explanations and routing metadata:
+
+```json
+{
+  "transaction_id": "550e8400-…",
+  "fraud": false,
+  "fraud_probability": 0.1842,
+  "decision": "ACCEPT",
+  "decision_source": "ML",
+  "reason_codes": [
+    { "code": "AMOUNT_HIGH",  "description": "Transaction amount relative to typical range", "contribution":  0.27, "value": 1500.0 },
+    { "code": "VELOCITY_24H", "description": "Transactions in the last 24 hours above baseline", "contribution": -0.05, "value": 4.0 },
+    { "code": "PAGERANK",     "description": "Network-centrality score from the transaction graph", "contribution": -0.04, "value": 0.32 }
+  ],
+  "model_version": "default",
+  "threshold": 0.65,
+  "audit_id": "f3d7c0bc-…",
+  "latency_ms": 3,
+  "timestamp": 1713100800123
+}
+```
+
+On `DECLINE`, RDA additionally publishes the event to `transactions.blocked`
+for FIA. When a rule short-circuits the pipeline, the response includes
+`decision_source: "PRE_RULE" | "POST_RULE"` and `rule: { id, name, stage }`.
+
+Bootstrap an API key (admin token required):
+
+```bash
+curl -X POST http://localhost:3000/v1/admin/api-keys \
+  -H "Content-Type: application/json" \
+  -H "X-Admin-Token: $RDA_ADMIN_TOKEN" \
+  -d '{ "name": "prod-1", "rateLimitPerMinute": 1200 }'
+```
+
+The response contains the plaintext token exactly once — store it now;
+only the SHA-256 hash is persisted.
+
+`tenantId` is optional. The platform is built to be self-hosted, so the
+default is a single shared `"default"` tenant — no need to think about
+multi-tenancy unless you actually have sub-merchants, sandbox/prod splits,
+or business-unit isolation, in which case pass an explicit `tenantId` and
+keys / webhooks / idempotency scoping flows from it.
+
+Register a webhook:
+
+```bash
+curl -X POST http://localhost:3000/v1/admin/webhooks \
+  -H "Content-Type: application/json" \
+  -H "X-Admin-Token: $RDA_ADMIN_TOKEN" \
+  -d '{
+    "url": "https://acme.example.com/fraud-webhook",
+    "events": ["decision.created", "decision.overridden"]
+  }'
+```
+
+Webhooks are signed with `X-Webhook-Signature: t=<unix>,v1=<hex>` where
+`v1 = HMAC-SHA256(secret, "<t>.<rawBody>")`. Replay-resistance is the
+caller's responsibility — compare `t` against your clock skew window.
+
+Create a pre-ML rule (instant blocklist):
+
+```bash
+curl -X POST http://localhost:3000/v1/admin/rules \
+  -H "Content-Type: application/json" \
+  -H "X-Admin-Token: $RDA_ADMIN_TOKEN" \
+  -d '{
+    "name": "blocklist-mules",
+    "stage": "PRE",
+    "priority": 10,
+    "action": "DENY",
+    "expression": { "in": [ { "var": "sender_id" }, ["mule_001", "mule_002"] ] }
+  }'
+```
+
+Register a candidate model and activate it:
+
+```bash
+curl -X POST http://localhost:3000/v1/admin/models \
+  -H "Content-Type: application/json" \
+  -H "X-Admin-Token: $RDA_ADMIN_TOKEN" \
+  -d '{ "version": "v1.1.0", "sourceUri": "s3://models/fraud/v1.1.0.onnx", "defaultThreshold": 0.6 }'
+
+curl -X POST http://localhost:3000/v1/admin/models/v1.1.0/status \
+  -H "Content-Type: application/json" \
+  -H "X-Admin-Token: $RDA_ADMIN_TOKEN" \
+  -d '{ "status": "ACTIVE" }'
+```
+
+Note: registering a model record updates the registry metadata only.
+Hot-loading the ONNX bytes still happens via the existing
+`MODEL_REGISTRY_URL` poller or the `cp models/*.onnx` swap.
 
 ### PAA Service (http://localhost:9090, dev / 9091 in docker-compose)
 
@@ -340,11 +483,59 @@ The response is `{ fraud, fraud_probability, decision: "ACCEPT" | "DECLINE", lat
 
 ### FIA Service (http://localhost:9094)
 
-| Method | Endpoint    | Description                    |
-|--------|-------------|--------------------------------|
-| GET    | `/livez`    | Liveness                       |
-| GET    | `/readyz`   | Readiness (Kafka consumer up)  |
-| GET    | `/stats`    | processed / duplicates / failed / dropped_poison / in_flight_retries / llm_model |
+| Method | Endpoint                                | Description                                                                 |
+|--------|-----------------------------------------|-----------------------------------------------------------------------------|
+| GET    | `/livez`                                | Liveness                                                                    |
+| GET    | `/readyz`                               | Readiness (Kafka consumer up)                                               |
+| GET    | `/stats`                                | processed / duplicates / failed / dropped_poison / in_flight_retries / llm_model |
+| POST   | `/v1/reports`                           | On-demand report generation for any transaction (idempotent by `transaction_id`) |
+| GET    | `/v1/reports`                           | List recent reports (`?status=GENERATED&limit=50&offset=0`)                 |
+| GET    | `/v1/reports/{report_id}`               | Read a report + its full conversation history                               |
+| POST   | `/v1/reports/{report_id}/messages`      | Ask a follow-up question; answer is grounded in the report                  |
+
+Example — generate a report on demand, then ask a follow-up:
+
+```bash
+# Generate
+curl -X POST http://localhost:9094/v1/reports \
+  -H "Content-Type: application/json" \
+  -d '{
+    "transaction_id": "550e8400-e29b-41d4-a716-446655440000",
+    "sender_id": "user123",
+    "amount": 1500,
+    "transaction_type": "TRANSFER",
+    "fraud_probability": 0.92
+  }'
+# → { id: "<report_id>", verdict: "FRAUD_CONFIRMED", narrative: "…", conversation: [] }
+
+# Ask a follow-up
+curl -X POST http://localhost:9094/v1/reports/<report_id>/messages \
+  -H "Content-Type: application/json" \
+  -d '{ "content": "Why is the recommended action BLOCK and not CONTACT_CUSTOMER?" }'
+```
+
+The conversational endpoint runs at LLM-inference latencies (seconds on
+GPU/MPS, slower on CPU); on hosts where the LLM can't load, the
+deterministic fallback keeps the UI functional with a templated answer.
+
+## Synthetic Data & Replay
+
+Two CLI helpers ship in `scripts/` for adoption demos and pre-prod regression:
+
+```bash
+# Generate 5,000 PaySim-style requests at concurrency 16
+npm run seed:load -- --url http://localhost:3000 --count 5000 --concurrency 16 \
+  --api-key fdk_... --tenant tenant-acme
+
+# Replay yesterday's audit log against a candidate deployment, print a
+# confusion-style summary comparing original vs candidate decisions
+npm run replay -- --target http://localhost:3001 --since 2026-05-12 --limit 5000 \
+  --api-key fdk_...
+```
+
+`replay.ts` reads directly from the `decisionAuditLog` table — the same
+audit rows the platform writes for every prediction — so it's faithful to
+real production traffic without retaining raw PII.
 
 ## Database Migrations
 

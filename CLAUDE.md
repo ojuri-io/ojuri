@@ -110,6 +110,47 @@ If you see `TypeError: Field onnx.AttributeProto.ints: Expected an int, got a bo
 - The `knexfile.js` exposes `primary` and `secondary` pool configs (read replica via `REPLICA_DB_*` env vars, falls back to primary if unset).
 - Training requires non-null `fraudLabel` values in the `transactions` table. If absent, MLA's training script falls back to synthetic data (logged as a warning — fine for dev, not for production results).
 
+## Adoption Features (added in 2026-05 revision)
+
+These extend RDA without changing the real-time hot path. They all live
+under `src/shared/` so they can be reused by PAA or future workers.
+
+- **Auth (`src/shared/auth/`)** — `ApiKeyService` issues `fdk_<prefix>_<secret>`
+  tokens, persists only the SHA-256 hash, caches verification for 30 s. The
+  `apiKeyMiddleware` plugs into Fastify `preHandler`; `RDA_REQUIRE_API_KEY=true`
+  flips the predict endpoint from open to authenticated. Admin endpoints are
+  gated by a static `RDA_ADMIN_TOKEN`.
+- **Rules engine (`src/shared/rules/`)** — JSON-Logic-style evaluator (no
+  arithmetic, just predicates / combinators / `in` / `var`). Rules are
+  hot-reloaded from Postgres every `RULES_RELOAD_INTERVAL_MS` (30 s default).
+  `stage` is `PRE` (short-circuits ML) or `POST` (overrides ML).
+- **Model registry (`src/shared/models/model-registry.service.ts`)** — stores
+  `modelVersions` and `segmentThresholds`; resolves `(segment) → (champion,
+  shadow, threshold)` for each request. Status transitions: CANDIDATE →
+  SHADOW → ACTIVE → RETIRED. The ONNX session itself is still loaded by
+  `OnnxService`; the registry is metadata + threshold routing only.
+- **Decision audit log (`src/shared/audit/`)** — every `/v1/predict` writes a
+  row to `decisionAuditLog` with model versions, scores, threshold, rule hit,
+  reason codes, feature snapshot, and reviewer fields. Audit-log failures
+  must never break the decision path (the service swallows DB errors).
+- **Reason codes (`src/shared/onnx/reason-codes.ts`)** — lightweight
+  feature-deviation explainer for the 12 named feature positions. Cheap
+  enough to compute on every prediction. For deep narrative reasoning, use
+  the FIA endpoints (`POST /v1/reports`, `/messages`).
+- **Webhooks (`src/shared/webhooks/`)** — HMAC-signed POST with exponential
+  backoff. `WebhookService.publish(event, payload, tenantId)` enqueues
+  rows in `webhookDeliveries`; the in-process worker (started from
+  `server.ts`) drains pending rows every `WEBHOOK_WORKER_INTERVAL_MS`.
+- **Idempotency (`src/shared/idempotency/`)** — `Idempotency-Key` header on
+  `/v1/predict` is keyed against `(tenantId, key, requestHash)`. Replay
+  returns the cached response with `Idempotency-Replay: true`. Body
+  divergence on the same key returns 422.
+
+FIA gained an HTTP API on `:9094`: `POST /v1/reports` (on-demand reports
+for any transaction, idempotent by `transactionId`), `POST /v1/reports/:id/messages`
+(conversational follow-ups persisted in `investigationConversations`),
+`GET /v1/reports[/:id]` (list / read).
+
 ## Prototype Feature Pipeline
 
 The MLA pipeline intentionally extracts ~20 real features and pads to 434 dimensions ("PROTOTYPE MODE: USING PLACEHOLDER FEATURES" warnings are expected). The architecture supports closing this gap without changes to RDA — additional feature engineering is the natural extension point for adopters. Preserve the architecture demo even when the feature set is simplified.
