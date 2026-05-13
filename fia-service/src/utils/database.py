@@ -38,6 +38,18 @@ class DatabaseConnection:
             result = conn.execute(text(query), params or {})
             return result.rowcount
 
+    def execute_write_returning(
+        self, query: str, params: Optional[Dict[str, Any]] = None
+    ) -> List[Any]:
+        """
+        Execute a write that uses RETURNING. Uses `engine.begin()` so the
+        transaction commits on success — `fetch_all` would silently roll
+        back because `engine.connect()` does not autocommit in SQLAlchemy 2.x.
+        """
+        with self.engine.begin() as conn:
+            result = conn.execute(text(query), params or {})
+            return result.fetchall()
+
     def fetch_all(self, query: str, params: Optional[Dict[str, Any]] = None) -> List[Any]:
         with self.engine.connect() as conn:
             result = conn.execute(text(query), params or {})

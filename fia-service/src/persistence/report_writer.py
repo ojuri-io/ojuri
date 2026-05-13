@@ -142,7 +142,7 @@ class ReportWriter:
             "prompt_template_version": prompt_template_version,
             "generation_latency_ms": generation_latency_ms,
         }
-        rows = self._db.fetch_all(_INSERT_SQL, params)
+        rows = self._db.execute_write_returning(_INSERT_SQL, params)
         if not rows:
             logger.info(
                 "Report already exists for transaction_id=%s (idempotent skip)",
@@ -187,7 +187,7 @@ class ReportWriter:
         llm_model_version: Optional[str],
         latency_ms: Optional[int],
     ) -> bool:
-        rows = self._db.fetch_all(
+        rows = self._db.execute_write_returning(
             _INSERT_CONVERSATION_TURN_SQL,
             {
                 "report_id": report_id,
