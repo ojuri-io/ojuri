@@ -4,11 +4,13 @@ import App from "./app";
 import appConfig from "./config/app.config";
 import logger from "./shared/utils/logger";
 import KafkaProducer from "./shared/kafka/kafka-producer";
+import ModelRegistryService from "./shared/models/model-registry.service";
+import RulesService from "./shared/rules/rules.service";
+import { startWebhookWorker, stopWebhookWorker } from "./shared/webhooks/webhook-worker";
 
 const app = new App();
 
 async function start() {
-  // Initialize Kafka producer
   const kafkaProducer = container.resolve(KafkaProducer);
   try {
     await kafkaProducer.connect();
@@ -16,7 +18,21 @@ async function start() {
     logger.warn({ err }, "Kafka producer failed to connect - will retry on publish");
   }
 
-  // Start server
+  // Hydrate registry caches before accepting traffic so the first
+  // /v1/predict request after boot doesn't synchronously hit Postgres
+  // just to figure out which model and threshold to use.
+  const modelRegistry = container.resolve(ModelRegistryService);
+  await modelRegistry.initialize().catch((err) =>
+    logger.warn({ err }, "Model registry initial load failed - will retry on schedule")
+  );
+
+  const rules = container.resolve(RulesService);
+  await rules.initialize().catch((err) =>
+    logger.warn({ err }, "Rules initial load failed - will retry on schedule")
+  );
+
+  startWebhookWorker();
+
   const address = await app.listen(appConfig.server.port);
   logger.info(`${appConfig.app.name} started on ${address}`);
 }
@@ -24,12 +40,14 @@ async function start() {
 process
   .on("uncaughtException", (err) => {
     logger.error({ err });
+    stopWebhookWorker();
     app.close();
     process.exit(1);
   })
   .on("SIGINT", async () => {
     const kafkaProducer = container.resolve(KafkaProducer);
     await kafkaProducer.disconnect();
+    stopWebhookWorker();
     app.close();
     process.exit(0);
   });

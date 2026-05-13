@@ -11,7 +11,7 @@ rule-based report so the pipeline still produces something parseable.
 import json
 import re
 import time
-from typing import Any, Dict, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 from src.llm.prompt import build_prompt
 from src.llm.report_schema import InvestigationReport, ValidationError
@@ -172,6 +172,77 @@ class Phi3ReportGenerator:
             return InvestigationReport(**data)
         except ValidationError as e:
             raise ValueError(f"Schema validation failed: {e}") from e
+
+    # ─────────────────────────────────────────────────────────
+    # Conversational follow-up
+    # ─────────────────────────────────────────────────────────
+    def chat(
+        self,
+        report: Dict[str, Any],
+        history: List[Dict[str, str]],
+        user_message: str,
+    ) -> Tuple[str, int]:
+        """
+        Multi-turn follow-up grounded in an existing report.
+
+        `history` is the prior conversation as a list of
+        `{role: "user"|"assistant", content: str}` entries. The
+        returned tuple is `(answer, latency_ms)`. When the LLM is
+        unavailable we degrade to a deterministic templated answer
+        so the UI still has something to render.
+        """
+        start = time.time()
+
+        if self._fallback_only or self._pipeline is None:
+            answer = self._rule_based_chat(report, user_message)
+            return answer, int((time.time() - start) * 1000)
+
+        prompt = self._build_chat_prompt(report, history, user_message)
+        try:
+            raw = self._run_pipeline(prompt)
+            answer = raw.strip()
+            if not answer:
+                raise RuntimeError("Empty chat answer")
+            return answer, int((time.time() - start) * 1000)
+        except Exception as e:
+            logger.warning("LLM chat failed: %s", e)
+            if not self._config.FALLBACK_ON_LLM_FAILURE:
+                raise
+            return self._rule_based_chat(report, user_message), int((time.time() - start) * 1000)
+
+    @staticmethod
+    def _build_chat_prompt(
+        report: Dict[str, Any], history: List[Dict[str, str]], user_message: str
+    ) -> str:
+        lines = [
+            "You are a fraud investigation assistant grounded in the report below.",
+            "Answer follow-up questions concisely. Cite the report when relevant.",
+            "",
+            "REPORT:",
+            f"- verdict: {report.get('verdict')}",
+            f"- recommended_action: {report.get('recommendedAction') or report.get('recommended_action')}",
+            f"- confidence: {report.get('agentConfidence') or report.get('agent_confidence')}",
+            f"- narrative: {report.get('narrative')}",
+            f"- key_indicators: {report.get('keyIndicators') or report.get('key_indicators')}",
+            "",
+            "CONVERSATION:",
+        ]
+        for turn in history:
+            role = turn.get("role", "user").upper()
+            lines.append(f"{role}: {turn.get('content', '')}")
+        lines.append(f"USER: {user_message}")
+        lines.append("ASSISTANT:")
+        return "\n".join(lines)
+
+    def _rule_based_chat(self, report: Dict[str, Any], user_message: str) -> str:
+        verdict = report.get("verdict")
+        action = report.get("recommendedAction") or report.get("recommended_action")
+        narrative = report.get("narrative") or ""
+        return (
+            f"(LLM unavailable — deterministic answer) The report's verdict is "
+            f"{verdict} with recommended action {action}. "
+            f"Re: '{user_message}': see narrative — {narrative[:240]}"
+        )
 
     def _rule_based_report(self, event: Dict[str, Any]) -> InvestigationReport:
         """Deterministic fallback. Used when the LLM cannot be invoked or parsed."""

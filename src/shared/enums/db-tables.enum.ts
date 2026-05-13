@@ -8,4 +8,13 @@ export enum DB_TABLES {
   DEAD_LETTER_QUEUE = "deadLetterQueue",
   MODEL_METADATA = "modelMetadata",
   INVESTIGATION_REPORTS = "investigationReports",
+  DECISION_AUDIT_LOG = "decisionAuditLog",
+  API_KEYS = "apiKeys",
+  WEBHOOK_SUBSCRIPTIONS = "webhookSubscriptions",
+  WEBHOOK_DELIVERIES = "webhookDeliveries",
+  MODEL_VERSIONS = "modelVersions",
+  SEGMENT_THRESHOLDS = "segmentThresholds",
+  RULES = "rules",
+  IDEMPOTENCY_KEYS = "idempotencyKeys",
+  INVESTIGATION_CONVERSATIONS = "investigationConversations",
 }

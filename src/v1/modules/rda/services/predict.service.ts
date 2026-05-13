@@ -4,30 +4,44 @@ import { createServiceLogger } from "@shared/utils/logger/service-logger";
 import { metricsService } from "@shared/metrics/metrics.service";
 import OnnxService from "@shared/onnx/onnx.service";
 import KafkaProducer, { TransactionEvent } from "@shared/kafka/kafka-producer";
+import { explain, ReasonCode } from "@shared/onnx/reason-codes";
+import RulesService from "@shared/rules/rules.service";
+import { RuleContext } from "@shared/rules/rule.types";
+import ModelRegistryService from "@shared/models/model-registry.service";
+import DecisionAuditService from "@shared/audit/decision-audit.service";
+import WebhookService from "@shared/webhooks/webhook.service";
 import FeatureService from "./feature.service";
 import { PredictRequestDto, PredictResponseDto } from "../dtos/predict-request.dto";
 
 const log = createServiceLogger("PredictService");
 
+export interface PredictInvocation {
+  request: PredictRequestDto;
+  traceId: string;
+  tenantId?: string | null;
+  apiKeyId?: string | null;
+  idempotencyKey?: string | null;
+}
+
 /**
  * Fraud prediction service
- * Orchestrates feature retrieval, model inference, and event publishing
+ * Orchestrates feature retrieval, rule evaluation, ML inference,
+ * audit logging, and event publishing.
  */
 @injectable()
 class PredictService {
   constructor(
     private featureService: FeatureService,
     private onnxService: OnnxService,
-    private kafkaProducer: KafkaProducer
+    private kafkaProducer: KafkaProducer,
+    private rulesService: RulesService,
+    private modelRegistry: ModelRegistryService,
+    private decisionAudit: DecisionAuditService,
+    private webhookService: WebhookService
   ) {}
 
-  /**
-   * Process a fraud prediction request
-   * @param request - Transaction details
-   * @param traceId - Request trace ID for tracing
-   * @returns Fraud prediction response
-   */
-  async predict(request: PredictRequestDto, traceId: string): Promise<PredictResponseDto> {
+  async predict(invocation: PredictInvocation): Promise<PredictResponseDto> {
+    const { request, tenantId } = invocation;
     const startTime = Date.now();
 
     log.entry("predict", "Starting fraud prediction pipeline", {
@@ -36,83 +50,222 @@ class PredictService {
       amount: request.amount,
     });
 
-    try {
-      // Step 1: Retrieve features from Redis (with circuit breaker)
-      log.debug("predict", "Fetching features from Redis cache", {
-        senderId: request.sender_id,
+    const { championVersion, shadowVersion, threshold } = this.modelRegistry.resolve(request.segment);
+
+    // Step 1: Pull features. The pre-rule path also needs these
+    // because rules can reference feature values.
+    const { features, isDefault } = await this.featureService.getFeatures(
+      request.sender_id,
+      request.timestamp
+    );
+
+    const enrichedFeatures = this.enrichFeatures(features, request);
+    const featuresSnapshot = this.snapshotFeatures(enrichedFeatures);
+
+    // Step 2: Evaluate PRE-stage rules. A match short-circuits the
+    // pipeline — useful for allowlists, blocklists, or hard caps
+    // that should never reach the model.
+    const preCtx = this.buildRuleContext(request, tenantId, featuresSnapshot);
+    const preHit = this.rulesService.evaluate("PRE", preCtx);
+
+    if (preHit && preHit.rule.action !== "NONE") {
+      const finalDecision = preHit.rule.action === "ALLOW" ? "ACCEPT" : preHit.rule.action === "DENY" ? "DECLINE" : "REVIEW";
+      const reasonCodes = explain(enrichedFeatures);
+      return this.finalize({
+        invocation,
+        startTime,
+        request,
+        finalDecision,
+        decisionSource: "PRE_RULE",
+        rule: preHit,
+        mlScore: 0,
+        mlDecision: "ACCEPT",
+        threshold,
+        championVersion,
+        shadowVersion,
+        reasonCodes,
+        featuresSnapshot,
+        isDefault,
       });
-
-      const { features, isDefault } = await this.featureService.getFeatures(
-        request.sender_id,
-        request.timestamp
-      );
-
-      if (isDefault) {
-        log.warn("predict", "Using default features - Redis cache miss, degraded accuracy expected", {
-          senderId: request.sender_id,
-        });
-      } else {
-        log.debug("predict", "Features retrieved from cache", {
-          senderId: request.sender_id,
-          featureCount: features.length,
-        });
-      }
-
-      // Step 2: Enrich features with transaction-specific data
-      log.debug("predict", "Enriching features with transaction-specific data");
-      const enrichedFeatures = this.enrichFeatures(features, request);
-
-      // Step 3: Run ONNX model inference (with circuit breaker)
-      log.debug("predict", "Executing ONNX model prediction");
-      const fraudProbability = await this.onnxService.predict(enrichedFeatures);
-
-      // Step 4: Make decision based on threshold
-      const fraud = fraudProbability >= appConfig.fraud.threshold;
-      const decision: "ACCEPT" | "DECLINE" = fraud ? "DECLINE" : "ACCEPT";
-
-      log.info("predict", `Prediction computed - Decision: ${decision}`, {
-        fraudProbability: Math.round(fraudProbability * 10000) / 10000,
-        threshold: appConfig.fraud.threshold,
-        fraud,
-        decision,
-      });
-
-      // Record metrics
-      metricsService.recordDecision(decision);
-
-      const latencyMs = Date.now() - startTime;
-
-      // Step 5: Publish event to Kafka asynchronously (fire-and-forget)
-      log.debug("predict", "Publishing event to Kafka topic", {
-        topic: appConfig.kafka.topic,
-      });
-      this.publishTransactionEvent(request, fraud, fraudProbability, decision);
-
-      const response: PredictResponseDto = {
-        transaction_id: request.transaction_id,
-        fraud,
-        fraud_probability: Math.round(fraudProbability * 10000) / 10000, // 4 decimal places
-        decision,
-        latency_ms: latencyMs,
-        timestamp: Date.now(),
-      };
-
-      log.exit("predict", "Prediction pipeline completed", {
-        transactionId: request.transaction_id,
-        latencyMs,
-      });
-
-      return response;
-    } catch (err) {
-      log.error("predict", "Prediction pipeline failed", {
-        transactionId: request.transaction_id,
-        latencyMs: Date.now() - startTime,
-        error: err instanceof Error ? err.message : String(err),
-      });
-
-      metricsService.recordError("prediction_error");
-      throw err;
     }
+
+    // Step 3: ML inference.
+    const fraudProbability = await this.onnxService.predict(enrichedFeatures);
+    const mlFraud = fraudProbability >= threshold;
+    const mlDecision: "ACCEPT" | "DECLINE" = mlFraud ? "DECLINE" : "ACCEPT";
+    const reasonCodes = explain(enrichedFeatures);
+
+    // Step 4: POST-stage rules can override the model.
+    const postCtx: RuleContext = { ...preCtx, ml_score: fraudProbability, ml_decision: mlDecision };
+    const postHit = this.rulesService.evaluate("POST", postCtx);
+
+    let finalDecision: "ACCEPT" | "DECLINE" | "REVIEW" = mlDecision;
+    let decisionSource: "ML" | "PRE_RULE" | "POST_RULE" = "ML";
+
+    if (postHit && postHit.rule.action !== "NONE") {
+      finalDecision = postHit.rule.action === "ALLOW" ? "ACCEPT" : postHit.rule.action === "DENY" ? "DECLINE" : "REVIEW";
+      decisionSource = "POST_RULE";
+    }
+
+    return this.finalize({
+      invocation,
+      startTime,
+      request,
+      finalDecision,
+      decisionSource,
+      rule: postHit,
+      mlScore: fraudProbability,
+      mlDecision,
+      threshold,
+      championVersion,
+      shadowVersion,
+      reasonCodes,
+      featuresSnapshot,
+      isDefault,
+    });
+  }
+
+  private async finalize(args: {
+    invocation: PredictInvocation;
+    startTime: number;
+    request: PredictRequestDto;
+    finalDecision: "ACCEPT" | "DECLINE" | "REVIEW";
+    decisionSource: "ML" | "PRE_RULE" | "POST_RULE";
+    rule: { rule: { id: string; name: string }; stage: "PRE" | "POST" } | null;
+    mlScore: number;
+    mlDecision: "ACCEPT" | "DECLINE";
+    threshold: number;
+    championVersion: string;
+    shadowVersion: string | null;
+    reasonCodes: ReasonCode[];
+    featuresSnapshot: Record<string, number>;
+    isDefault: boolean;
+  }): Promise<PredictResponseDto> {
+    const { invocation, request } = args;
+    const latencyMs = Date.now() - args.startTime;
+
+    metricsService.recordDecision(args.finalDecision);
+
+    const auditId = await this.decisionAudit.record({
+      transactionId: request.transaction_id,
+      tenantId: invocation.tenantId ?? null,
+      apiKeyId: invocation.apiKeyId ?? null,
+      correlationId: invocation.traceId,
+      idempotencyKey: invocation.idempotencyKey ?? null,
+
+      senderId: request.sender_id,
+      receiverId: request.receiver_id,
+      amount: request.amount,
+      transactionType: request.transaction_type,
+      segment: request.segment ?? null,
+
+      championModelVersion: args.championVersion,
+      shadowModelVersion: args.shadowVersion,
+      championScore: args.mlScore,
+      shadowScore: null,
+      threshold: args.threshold,
+
+      mlDecision: args.mlDecision,
+      finalDecision: args.finalDecision,
+      decisionSource: args.decisionSource,
+
+      ruleId: args.rule?.rule.id ?? null,
+      ruleName: args.rule?.rule.name ?? null,
+      ruleStage: args.rule?.stage ?? null,
+
+      reasonCodes: args.reasonCodes,
+      featuresSnapshot: args.featuresSnapshot,
+      featuresDefault: args.isDefault,
+
+      latencyMs,
+    });
+
+    // Publish to Kafka (existing behaviour). Treat REVIEW as a
+    // non-blocked outcome at the auth path — downstream consumers
+    // can split on `decision` if they care.
+    this.publishTransactionEvent(
+      request,
+      args.finalDecision === "DECLINE",
+      args.mlScore,
+      args.finalDecision
+    );
+
+    // Webhook fan-out (fire-and-forget).
+    this.webhookService
+      .publish(
+        "decision.created",
+        {
+          transaction_id: request.transaction_id,
+          sender_id: request.sender_id,
+          receiver_id: request.receiver_id,
+          amount: request.amount,
+          decision: args.finalDecision,
+          decision_source: args.decisionSource,
+          model_version: args.championVersion,
+          fraud_probability: round4(args.mlScore),
+          reason_codes: args.reasonCodes,
+          audit_id: auditId,
+        },
+        invocation.tenantId ?? undefined
+      )
+      .catch((err) => log.error("webhook", "Failed to publish webhook", { err: String(err) }));
+
+    return {
+      transaction_id: request.transaction_id,
+      fraud: args.finalDecision === "DECLINE",
+      fraud_probability: round4(args.mlScore),
+      decision: args.finalDecision,
+      decision_source: args.decisionSource,
+      reason_codes: args.reasonCodes,
+      model_version: args.championVersion,
+      threshold: args.threshold,
+      rule: args.rule
+        ? { id: args.rule.rule.id, name: args.rule.rule.name, stage: args.rule.stage }
+        : undefined,
+      audit_id: auditId ?? undefined,
+      latency_ms: latencyMs,
+      timestamp: Date.now(),
+    };
+  }
+
+  private buildRuleContext(
+    request: PredictRequestDto,
+    tenantId: string | null | undefined,
+    features: Record<string, number>
+  ): RuleContext {
+    return {
+      transaction_id: request.transaction_id,
+      sender_id: request.sender_id,
+      receiver_id: request.receiver_id,
+      amount: request.amount,
+      transaction_type: request.transaction_type,
+      timestamp: request.timestamp,
+      segment: request.segment,
+      tenant_id: tenantId ?? undefined,
+      features,
+    };
+  }
+
+  /**
+   * Snapshot the named feature positions so they can be referenced
+   * by name in rule expressions and persisted alongside the
+   * decision in the audit log.
+   */
+  private snapshotFeatures(enriched: Float32Array): Record<string, number> {
+    return {
+      velocity_1h: enriched[0],
+      velocity_24h: enriched[1],
+      velocity_7d: enriched[2],
+      avg_amount_30d: enriched[3],
+      std_amount_30d: enriched[4],
+      pagerank: enriched[5],
+      clustering_coef: enriched[6],
+      time_since_last_txn: enriched[7],
+      is_weekend: enriched[8],
+      hour_of_day: enriched[9],
+      amount: enriched[10],
+      transaction_type_code: enriched[11],
+    };
   }
 
   /**
@@ -121,7 +274,6 @@ class PredictService {
    * Positions 10+: Transaction-specific features added at inference time
    */
   private static readonly FEATURE_POSITIONS = {
-    // Transaction-specific features (added during enrichment)
     AMOUNT: 10,
     TRANSACTION_TYPE: 11,
   } as const;
@@ -134,22 +286,11 @@ class PredictService {
     DEBIT: 4,
   };
 
-  /**
-   * Enrich feature vector with transaction-specific data
-   * User features (positions 0-9) come from Redis via FeatureService
-   * Transaction features (positions 10+) are added here at inference time
-   */
   private enrichFeatures(features: Float32Array, request: PredictRequestDto): Float32Array {
-    // Create a copy to avoid modifying the original
     const enriched = new Float32Array(features);
-
-    // Add transaction amount (position 10)
     enriched[PredictService.FEATURE_POSITIONS.AMOUNT] = request.amount;
-
-    // Add transaction type encoding (position 11)
     enriched[PredictService.FEATURE_POSITIONS.TRANSACTION_TYPE] =
       PredictService.TRANSACTION_TYPE_ENCODING[request.transaction_type] ?? 0;
-
     return enriched;
   }
 
@@ -183,29 +324,20 @@ class PredictService {
       processed_at: Date.now(),
     };
 
-    // Fire-and-forget - don't await.
-    // Primary topic keyed by sender_id so PAA preserves per-user ordering.
     this.kafkaProducer.publishAsync(event);
 
-    // Blocked topic does NOT need per-user ordering (each report is independent),
-    // and a single attacking sender would otherwise create a hot partition that
-    // pins all FIA work to one consumer instance. Key by transaction_id so the
-    // load spreads evenly across partitions and FIA can scale linearly.
     if (decision === "DECLINE") {
-      this.kafkaProducer.publishAsync(
-        event,
-        appConfig.kafka.blockedTopic,
-        event.transaction_id
-      );
+      this.kafkaProducer.publishAsync(event, appConfig.kafka.blockedTopic, event.transaction_id);
     }
   }
 
-  /**
-   * Check if service is ready
-   */
   isReady(): boolean {
     return this.featureService.isReady() && this.onnxService.isReady();
   }
+}
+
+function round4(n: number): number {
+  return Math.round(n * 10000) / 10000;
 }
 
 export default PredictService;

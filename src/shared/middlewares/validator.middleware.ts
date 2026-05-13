@@ -9,16 +9,14 @@ type Error = {
 };
 
 const validate = (rules: ObjectLiteral, validationMessages?: ObjectLiteral) => {
-  return (request: FastifyRequest, reply: FastifyReply, done) => {
+  return async (request: FastifyRequest, reply: FastifyReply): Promise<void> => {
     const validation = new Validator(request.body || request.query, rules, validationMessages);
 
-    const errors = validation.errors.all();
-
     if (validation.fails()) {
-      return reply.code(400).send(ErrorResponse("Your data is invalid", createValidationError(errors)));
+      await reply
+        .code(400)
+        .send(ErrorResponse("Your data is invalid", createValidationError(validation.errors.all())));
     }
-
-    done();
   };
 };
 
