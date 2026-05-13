@@ -1,0 +1,42 @@
+# Dependency directories
+node_modules
+jspm_packages
+
+# Optional yarn cache directory
+.yarn
+
+# Coverage directory used by tools like istanbul
+coverage
+
+# mac files
+.DS_Store
+
+# webstorm
+.idea
+
+# vscode
+.vscode
+*code-workspace
+
+# compiled app
+dist
+
+*.key
+package-lock.json
+.env
+
+# Python virtual environments and caches (FIA / MLA / PAA)
+venv/
+.venv/
+env/
+ENV/
+__pycache__/
+*.py[cod]
+*.egg-info/
+
+# Runtime LevelDB Kafka buffer (RDA disk fallback)
+.kafka-buffer/
+
+# Local tool / IDE state
+.claude/
+.qodo/

@@ -1,0 +1,411 @@
+services:
+  # ============================================
+  # NGINX Load Balancer
+  # ============================================
+  nginx:
+    image: nginx:alpine
+    container_name: fraud-nginx
+    ports:
+      - "80:80"
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+    depends_on:
+      - rda-1
+      - rda-2
+      - rda-3
+    networks:
+      - fraud-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "nginx", "-t"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # ============================================
+  # RDA Service Replicas (Real-Time Detection Agent)
+  # ============================================
+  rda-1:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: fraud-rda-1
+    environment:
+      - NODE_ENV=production
+      - PORT=3000
+      - APP_NAME=fraud-rda-1
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - REDIS_PASSWORD=${REDIS_PASSWORD:-}
+      - KAFKA_BROKERS=kafka:9092
+      - KAFKA_TOPIC=transactions.completed
+      - KAFKA_BLOCKED_TOPIC=transactions.blocked
+      - MODEL_PATH=/app/models/fraud_model.onnx
+      - FRAUD_THRESHOLD=0.65
+      - LOG_LEVEL=info
+      - DB_CLIENT=pg
+      - DB_URL=postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-postgres}@postgres:5432/${POSTGRES_DB:-fraud_db}
+    volumes:
+      - ./models:/app/models:ro
+    depends_on:
+      - redis
+      - kafka
+      - postgres
+    networks:
+      - fraud-network
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: "1"
+          memory: 4G
+
+  rda-2:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: fraud-rda-2
+    environment:
+      - NODE_ENV=production
+      - PORT=3000
+      - APP_NAME=fraud-rda-2
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - REDIS_PASSWORD=${REDIS_PASSWORD:-}
+      - KAFKA_BROKERS=kafka:9092
+      - KAFKA_TOPIC=transactions.completed
+      - KAFKA_BLOCKED_TOPIC=transactions.blocked
+      - MODEL_PATH=/app/models/fraud_model.onnx
+      - FRAUD_THRESHOLD=0.65
+      - LOG_LEVEL=info
+      - DB_CLIENT=pg
+      - DB_URL=postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-postgres}@postgres:5432/${POSTGRES_DB:-fraud_db}
+    volumes:
+      - ./models:/app/models:ro
+    depends_on:
+      - redis
+      - kafka
+      - postgres
+    networks:
+      - fraud-network
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: "1"
+          memory: 4G
+
+  rda-3:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: fraud-rda-3
+    environment:
+      - NODE_ENV=production
+      - PORT=3000
+      - APP_NAME=fraud-rda-3
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - REDIS_PASSWORD=${REDIS_PASSWORD:-}
+      - KAFKA_BROKERS=kafka:9092
+      - KAFKA_TOPIC=transactions.completed
+      - KAFKA_BLOCKED_TOPIC=transactions.blocked
+      - MODEL_PATH=/app/models/fraud_model.onnx
+      - FRAUD_THRESHOLD=0.65
+      - LOG_LEVEL=info
+      - DB_CLIENT=pg
+      - DB_URL=postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-postgres}@postgres:5432/${POSTGRES_DB:-fraud_db}
+    volumes:
+      - ./models:/app/models:ro
+    depends_on:
+      - redis
+      - kafka
+      - postgres
+    networks:
+      - fraud-network
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: "1"
+          memory: 4G
+
+  # ============================================
+  # PAA Service Replicas (Pattern Analysis Agent)
+  # Standalone Kafka consumer worker service
+  # ============================================
+  paa-1:
+    build:
+      context: ./paa-service
+      dockerfile: Dockerfile
+    container_name: fraud-paa-1
+    environment:
+      - NODE_ENV=production
+      - APP_NAME=fraud-paa-1
+      - METRICS_PORT=9090
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - REDIS_PASSWORD=${REDIS_PASSWORD:-}
+      - KAFKA_BROKERS=kafka:9092
+      - KAFKA_TOPIC=transactions.completed
+      - KAFKA_CONSUMER_GROUP=pattern-analysis
+      - KAFKA_CLIENT_ID=paa-1
+      - LOG_LEVEL=info
+      - DB_CLIENT=pg
+      - DB_URL=postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-postgres}@postgres:5432/${POSTGRES_DB:-fraud_db}
+      - GRAPH_UPDATE_INTERVAL=300000
+      - PAGERANK_DAMPING=0.85
+      - BATCH_SIZE=100
+      - MAX_GRAPH_NODES=1000000
+    ports:
+      - "9091:9090"
+    depends_on:
+      - redis
+      - kafka
+      - postgres
+    networks:
+      - fraud-network
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: "2"
+          memory: 8G
+
+  paa-2:
+    build:
+      context: ./paa-service
+      dockerfile: Dockerfile
+    container_name: fraud-paa-2
+    environment:
+      - NODE_ENV=production
+      - APP_NAME=fraud-paa-2
+      - METRICS_PORT=9090
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - REDIS_PASSWORD=${REDIS_PASSWORD:-}
+      - KAFKA_BROKERS=kafka:9092
+      - KAFKA_TOPIC=transactions.completed
+      - KAFKA_CONSUMER_GROUP=pattern-analysis
+      - KAFKA_CLIENT_ID=paa-2
+      - LOG_LEVEL=info
+      - DB_CLIENT=pg
+      - DB_URL=postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-postgres}@postgres:5432/${POSTGRES_DB:-fraud_db}
+      - GRAPH_UPDATE_INTERVAL=300000
+      - PAGERANK_DAMPING=0.85
+      - BATCH_SIZE=100
+      - MAX_GRAPH_NODES=1000000
+    ports:
+      - "9092:9090"
+    depends_on:
+      - redis
+      - kafka
+      - postgres
+    networks:
+      - fraud-network
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: "2"
+          memory: 8G
+
+  # ============================================
+  # FIA Service (Fraud Investigation Agent)
+  # Async LLM-based investigation report generator
+  # ============================================
+  fia:
+    build:
+      context: ./fia-service
+      dockerfile: Dockerfile
+    container_name: fraud-fia
+    environment:
+      - KAFKA_BROKERS=kafka:9092
+      - KAFKA_BLOCKED_TOPIC=transactions.blocked
+      - KAFKA_CONSUMER_GROUP=fraud-investigation
+      - KAFKA_AUTO_OFFSET_RESET=earliest
+      - POSTGRES_HOST=postgres
+      - POSTGRES_PORT=5432
+      - POSTGRES_DB=${POSTGRES_DB:-fraud_db}
+      - POSTGRES_USER=${POSTGRES_USER:-postgres}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-postgres}
+      - LLM_MODEL_NAME=${FIA_LLM_MODEL_NAME:-microsoft/Phi-3-mini-4k-instruct}
+      - LLM_MODEL_PATH=${FIA_LLM_MODEL_PATH:-}
+      - LLM_DEVICE=${FIA_LLM_DEVICE:-auto}
+      - LLM_DTYPE=${FIA_LLM_DTYPE:-auto}
+      - LLM_MAX_NEW_TOKENS=${FIA_LLM_MAX_NEW_TOKENS:-384}
+      - LLM_TEMPERATURE=${FIA_LLM_TEMPERATURE:-0.2}
+      - FIA_FALLBACK_ON_LLM_FAILURE=${FIA_FALLBACK_ON_LLM_FAILURE:-true}
+      - PROMPT_TEMPLATE_VERSION=${FIA_PROMPT_TEMPLATE_VERSION:-v1}
+      - METRICS_PORT=9094
+      - LOG_LEVEL=${FIA_LOG_LEVEL:-INFO}
+      # Pin HuggingFace cache into the named volume so the ~8 GB Phi-3 download
+      # survives container recreates.
+      - HF_HOME=/app/.hf-cache
+      # Bound torch's CPU thread pool so it doesn't fight RDA/PAA on the host.
+      - OMP_NUM_THREADS=${FIA_OMP_NUM_THREADS:-2}
+    ports:
+      - "9094:9094"
+    volumes:
+      - fia-hf-cache:/app/.hf-cache
+      - ./fia-service/models:/app/models
+    depends_on:
+      kafka:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+    networks:
+      - fraud-network
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: "2"
+          memory: 8G
+        reservations:
+          memory: 4G
+
+  # ============================================
+  # Redis
+  # ============================================
+  redis:
+    image: redis:7-alpine
+    container_name: fraud-redis
+    command: redis-server --appendonly yes --maxmemory 2gb --maxmemory-policy volatile-lru
+    ports:
+      - "6380:6379"
+    volumes:
+      - redis-data:/data
+    networks:
+      - fraud-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ============================================
+  # Kafka + Zookeeper
+  # ============================================
+  zookeeper:
+    image: confluentinc/cp-zookeeper:7.5.0
+    container_name: fraud-zookeeper
+    environment:
+      ZOOKEEPER_CLIENT_PORT: 2181
+      ZOOKEEPER_TICK_TIME: 2000
+    volumes:
+      - zookeeper-data:/var/lib/zookeeper/data
+      - zookeeper-logs:/var/lib/zookeeper/log
+    networks:
+      - fraud-network
+    restart: unless-stopped
+
+  kafka:
+    image: confluentinc/cp-kafka:7.5.0
+    container_name: fraud-kafka
+    depends_on:
+      - zookeeper
+    ports:
+      - "9092:9092"
+      - "29092:29092"
+    environment:
+      KAFKA_BROKER_ID: 1
+      KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
+      KAFKA_LISTENERS: INTERNAL://0.0.0.0:29092,EXTERNAL://0.0.0.0:9092
+      KAFKA_ADVERTISED_LISTENERS: INTERNAL://kafka:29092,EXTERNAL://localhost:9092
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: INTERNAL:PLAINTEXT,EXTERNAL:PLAINTEXT
+      KAFKA_INTER_BROKER_LISTENER_NAME: INTERNAL
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_NUM_PARTITIONS: 12
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
+      KAFKA_LOG_RETENTION_HOURS: 168
+      KAFKA_LOG_RETENTION_BYTES: 10737418240
+    volumes:
+      - kafka-data:/var/lib/kafka/data
+    networks:
+      - fraud-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "kafka-topics", "--bootstrap-server", "localhost:9092", "--list"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+
+  # ============================================
+  # PostgreSQL
+  # ============================================
+  postgres:
+    image: postgres:15-alpine
+    container_name: fraud-postgres
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
+      POSTGRES_DB: ${POSTGRES_DB:-fraud_db}
+    ports:
+      - "5433:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    networks:
+      - fraud-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-postgres}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ============================================
+  # Monitoring Stack (Optional)
+  # ============================================
+  prometheus:
+    image: prom/prometheus:v2.47.0
+    container_name: fraud-prometheus
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus-data:/prometheus
+    command:
+      - "--config.file=/etc/prometheus/prometheus.yml"
+      - "--storage.tsdb.path=/prometheus"
+      - "--web.enable-lifecycle"
+    networks:
+      - fraud-network
+    restart: unless-stopped
+
+  grafana:
+    image: grafana/grafana:10.1.0
+    container_name: fraud-grafana
+    ports:
+      - "3001:3000"
+    environment:
+      - GF_SECURITY_ADMIN_USER=${GRAFANA_USER:-admin}
+      - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_PASSWORD:-admin}
+    volumes:
+      - grafana-data:/var/lib/grafana
+    depends_on:
+      - prometheus
+    networks:
+      - fraud-network
+    restart: unless-stopped
+
+# ============================================
+# Networks
+# ============================================
+networks:
+  fraud-network:
+    driver: bridge
+
+# ============================================
+# Volumes
+# ============================================
+volumes:
+  redis-data:
+  postgres-data:
+  kafka-data:
+  zookeeper-data:
+  zookeeper-logs:
+  prometheus-data:
+  grafana-data:
+  fia-hf-cache:

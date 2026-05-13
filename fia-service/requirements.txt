@@ -1,0 +1,26 @@
+# Kafka
+kafka-python==2.0.2
+
+# Database
+sqlalchemy==2.0.25
+psycopg2-binary==2.9.9
+
+# Configuration
+python-dotenv==1.0.1
+
+# LLM stack (Phi-3-mini-4k-instruct via HuggingFace transformers)
+# Pinned to versions known to load Phi-3 cleanly. CPU inference works
+# (slow); GPU is enabled automatically when torch detects CUDA, MPS on
+# Apple Silicon. torch 2.2.2 was built against NumPy 1.x — keep numpy<2
+# or torch will fail to import with "NumPy 2.x cannot be run".
+numpy<2
+torch==2.2.2
+transformers==4.41.2
+accelerate==0.30.1
+sentencepiece==0.2.0
+
+# Tokenization fallback / fast path
+tokenizers==0.19.1
+
+# JSON schema validation for parsed LLM output
+pydantic==2.6.4

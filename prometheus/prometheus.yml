@@ -1,0 +1,54 @@
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+
+alerting:
+  alertmanagers:
+    - static_configs:
+        - targets: []
+
+rule_files:
+  # - "alerts/*.yml"
+
+scrape_configs:
+  # Prometheus self-monitoring
+  - job_name: "prometheus"
+    static_configs:
+      - targets: ["localhost:9090"]
+
+  # RDA Service metrics
+  - job_name: "rda"
+    metrics_path: /v1/metrics
+    static_configs:
+      - targets:
+          - "rda-1:3000"
+          - "rda-2:3000"
+          - "rda-3:3000"
+    relabel_configs:
+      - source_labels: [__address__]
+        target_label: instance
+        regex: "(.+):\\d+"
+        replacement: "$1"
+
+  # PAA Service metrics
+  - job_name: "paa"
+    metrics_path: /metrics
+    static_configs:
+      - targets:
+          - "paa-1:9090"
+          - "paa-2:9090"
+    relabel_configs:
+      - source_labels: [__address__]
+        target_label: instance
+        regex: "(.+):\\d+"
+        replacement: "$1"
+
+  # Redis metrics (requires redis_exporter)
+  # - job_name: "redis"
+  #   static_configs:
+  #     - targets: ["redis-exporter:9121"]
+
+  # Nginx metrics (requires nginx-prometheus-exporter)
+  # - job_name: "nginx"
+  #   static_configs:
+  #     - targets: ["nginx-exporter:9113"]

@@ -1,0 +1,25 @@
+# Development Dockerfile for PAA with hot-reload support
+FROM node:20-slim
+
+# Install build dependencies
+RUN apt-get update && apt-get install -y python3 make g++ git && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+
+# Copy package files
+COPY package*.json ./
+
+# Install all dependencies (including devDependencies)
+RUN npm install
+
+# Copy source code
+COPY . .
+
+# Environment variables
+ENV NODE_ENV=development
+ENV METRICS_PORT=9090
+
+EXPOSE 9090
+
+# Use nodemon for hot-reload
+CMD ["npm", "run", "start:dev"]
