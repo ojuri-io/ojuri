@@ -24,6 +24,7 @@ class App {
     this.fastify.register(routes.health);
     this.fastify.register(routes.auditTrail, { prefix: RouteVersion.v1 });
     this.fastify.register(routes.rda, { prefix: RouteVersion.v1 });
+    this.fastify.register(routes.admin, { prefix: RouteVersion.v1 });
   }
 
   public getInstance() {

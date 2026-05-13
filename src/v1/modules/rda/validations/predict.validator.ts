@@ -8,6 +8,7 @@ export const predictValidationRules = {
   amount: "required|numeric|min:0.01",
   transaction_type: "required|string|in:CASH_IN,CASH_OUT,PAYMENT,TRANSFER,DEBIT",
   timestamp: "required|numeric",
+  segment: "string|max:100",
   "device_fingerprint.browser": "string|max:255",
   "device_fingerprint.os": "string|max:255",
   "device_fingerprint.screen_resolution": "string|max:50",

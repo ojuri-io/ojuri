@@ -191,7 +191,7 @@ class MetricsService {
   /**
    * Record a fraud decision
    */
-  recordDecision(decision: "ACCEPT" | "DECLINE") {
+  recordDecision(decision: "ACCEPT" | "DECLINE" | "REVIEW") {
     this.decisionCounter.inc({ decision });
   }
 
