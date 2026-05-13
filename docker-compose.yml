@@ -215,6 +215,12 @@ services:
   # Async LLM-based investigation report generator
   # ============================================
   fia:
+    # FIA carries the Phi-3 LLM weights (~7.6 GB on first run) and the
+    # torch + transformers + accelerate Python stack. Gating it behind
+    # a Compose profile means `docker compose up` is fast for first-time
+    # adopters; opt in with `docker compose --profile fia up` once you
+    # have the disk + bandwidth to download the model.
+    profiles: ["fia"]
     build:
       context: ./fia-service
       dockerfile: Dockerfile

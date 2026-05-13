@@ -9,6 +9,23 @@ reports on demand and support multi-turn follow-ups.
 The HTTP API runs on the same port as the health endpoints
 (`METRICS_PORT`, default `9094`).
 
+## Starting FIA
+
+FIA is gated behind the `fia` Compose profile so first-run adopters
+aren't forced to download ~7.6 GB of Phi-3 weights before they can
+see anything work. Once the rest of the stack is up:
+
+```bash
+docker compose --profile fia up --build -d fia
+docker compose logs -f fia
+```
+
+The first boot downloads Phi-3-mini into the named `fia-hf-cache`
+volume; subsequent restarts reuse it. On a host without GPU/MPS and
+without spare RAM, set `FIA_FALLBACK_ON_LLM_FAILURE=true` (the
+default) — FIA will boot in degraded mode and serve deterministic
+rule-based reports instead of failing.
+
 ## Endpoints
 
 | Method | Path                                  | Purpose                                  |

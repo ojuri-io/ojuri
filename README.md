@@ -23,6 +23,7 @@ The four services:
 - **PAA (Pattern Analysis Agent)**: Standalone Kafka consumer worker for graph-based network analysis, velocity calculations, and feature engineering
 - **MLA (Model Learning Agent)**: Python service for concept drift detection, automated model retraining, and A/B testing deployment
 - **FIA (Fraud Investigation Agent)**: Python service that consumes blocked transactions and uses a fine-tuned Phi-3 LLM to generate analyst-readable investigation reports (async, never on the auth path)
+- **Sentinel dashboard (`frontend/`)**: Vite + React 18 operator UI built from the Sentinel design handoff. Review queue, transaction detail, rule editor, model registry, audit log, investigations, integrations. Talks to RDA's `/v1/admin/*` and FIA's `/v1/reports*` APIs; falls back to seed data when those services are offline so the UI is always demoable. See [`docs/FRONTEND.md`](docs/FRONTEND.md).
 
 ## Architecture
 
@@ -133,6 +134,29 @@ deps (`kafka-python sqlalchemy psycopg2-binary pydantic python-dotenv`) and
 keep the default `FIA_FALLBACK_ON_LLM_FAILURE=true` — FIA will degrade to a
 deterministic rule-based report so the pipeline still produces rows. See
 [`fia-service/README.md`](fia-service/README.md) for full details.
+
+### Sentinel Dashboard (frontend)
+
+```bash
+cd frontend
+npm install
+npm run dev          # http://localhost:5173
+```
+
+The Vite dev server proxies `/v1/*` → RDA (`VITE_RDA_URL`, default
+`http://localhost:3000`) and `/fia/*` → FIA (`VITE_FIA_URL`, default
+`http://localhost:9094`). Set your admin token and an issued API key in
+the browser to enable writes:
+
+```js
+localStorage.setItem('sentinel.adminToken', '<your RDA_ADMIN_TOKEN>');
+localStorage.setItem('sentinel.apiKey', 'fdk_…');
+```
+
+The dashboard runs against the live API when those services are up
+and silently falls back to seed data otherwise — so you can review the
+design without booting Postgres / Redis / Kafka / RDA / FIA. Full
+reference: [`docs/FRONTEND.md`](docs/FRONTEND.md).
 
 ## Environment Configuration
 
@@ -589,6 +613,13 @@ multi-agent-fraud-detection/
 │       ├── llm/              # phi3_generator.py, prompt.py, report_schema.py (Pydantic)
 │       ├── persistence/      # report_writer.py (INSERT … ON CONFLICT DO NOTHING)
 │       └── main.py           # entry + inline health server on :9094
+├── frontend/                 # Sentinel dashboard — Vite + React 18 (port 5173)
+│   └── src/
+│       ├── app.jsx           # hash routing, shared state, tweaks panel host
+│       ├── api/client.js     # /v1 + /fia calls wrapped in safe() with seed fallback
+│       ├── components/       # shell.jsx (Sidebar, PageHead, Modal, helpers), tweaks-panel.jsx
+│       ├── pages/            # 12 page screens — dashboard, review queue, rule editor, models, …
+│       └── data/mock.js      # seed dataset used when the backend is unreachable
 ├── models/                   # Production ONNX model copied from mla-service/models/
 ├── docs/
 │   ├── ARCHITECTURE.md       # System architecture and design notes
@@ -666,8 +697,9 @@ volumes:
 
 ## Tech Stack
 
-- **Runtimes**: Node.js 18+ (RDA, PAA), Python 3.11 (MLA, FIA)
+- **Runtimes**: Node.js 18+ (RDA, PAA, frontend toolchain), Python 3.11 (MLA, FIA)
 - **HTTP / framework**: Fastify 5.x with `tsyringe` DI and `module-alias` path resolution (RDA), KafkaJS standalone worker (PAA)
+- **Frontend**: React 18 + Vite 5 (Sentinel operator dashboard, `frontend/`); Vitest + Testing Library for unit tests
 - **Database**: PostgreSQL 14 (host port 5433), Redis 7 (host port 6380)
 - **Message bus**: Apache Kafka (`transactions.completed` keyed by `sender_id`; `transactions.blocked` keyed by `transaction_id`)
 - **Real-time inference**: ONNX Runtime (CPUExecutionProvider) on a 122 KB XGBoost model

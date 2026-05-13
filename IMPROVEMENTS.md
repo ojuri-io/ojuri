@@ -107,6 +107,7 @@ snippet). Failed deliveries can be replayed via the admin API.
 | Synthetic data generator that produces realistic PaySim-style traffic | Implemented |
 | Replay last N hours against a candidate model | Implemented |
 | Curl examples in README cover auth, rules, webhooks, FIA chat | Implemented |
+| FIA gated behind `--profile fia` so first-run is fast | Implemented |
 | Demo dataset shipped in `data/demo/` | Follow-up |
 | Hosted sandbox (`sandbox.<domain>`) | Follow-up (infra) |
 
