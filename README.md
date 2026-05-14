@@ -28,96 +28,62 @@ The four services:
 
 ## Architecture
 
-```mermaid
-flowchart TB
-    Client(["Server-side caller (PSP / wallet / gateway)"])
-    Operator(["Operator / Analyst"])
-    Subs(["Subscriber endpoints"])
-
-    Client -->|"POST /v1/predict + X-Api-Key + Idempotency-Key"| RDA
-    RDA -->|"ACCEPT / DECLINE / REVIEW + reason codes"| Client
-
-    Operator -->|HTTPS| UI
-
-    subgraph FE ["Sentinel Dashboard"]
-        UI["Review queue, Rules, Models, Features,<br/>Audit log, Investigations, Users / Roles"]
-    end
-
-    UI -.->|"JWT /v1/admin/*"| RDA
-    UI -.->|"/v1/reports*"| FIA
-
-    subgraph S1 ["Real-Time Detection Agent (RDA)"]
-        RDA["Fastify HTTP API"]
-        Rules["Rules Engine<br/>PRE / POST, hot-reload 30s"]
-        Builder["Feature Builder<br/>catalogue-driven (64 + N dims)"]
-        ONNX["ONNX Runtime<br/>XGBoost, segment thresholds"]
-        Reasons["Reason Codes"]
-        Audit["Decision Audit"]
-        RDA --> Rules
-        Rules --> Builder
-        Builder --> ONNX
-        ONNX --> Reasons
-        Reasons --> Audit
-    end
-
-    subgraph S2 ["Pattern Analysis Agent (PAA)"]
-        PAA["Kafka consumer"]
-        Graph["Transaction graph<br/>+ velocity windows"]
-        PAA --> Graph
-    end
-
-    subgraph S3 ["Model Learning Agent (MLA)"]
-        MLA["Drift monitor (F1 + PSI)"]
-        Train["XGBoost + SMOTE<br/>McNemar A/B"]
-        Conv["ONNX export<br/>+ feature_schema_version"]
-        MLA --> Train
-        Train --> Conv
-    end
-
-    subgraph S4 ["Fraud Investigation Agent (FIA)"]
-        FIA["HTTP API + Kafka consumer"]
-        LLM["Phi-3-mini-4k (LoRA)<br/>rule-based fallback"]
-        FIA --> LLM
-    end
-
-    Redis[("Redis<br/>features hash per sender")]
-    Kafka[["Apache Kafka"]]
-    PG[("PostgreSQL — fraud_db")]
-    Models[("models/versions/ on disk<br/>shared bind-mount")]
-
-    Builder <-->|"hgetall catalogue keys"| Redis
-    RDA -->|"transactions.completed (key=sender_id)"| Kafka
-    RDA -->|"transactions.blocked (DECLINE only, key=transaction_id)"| Kafka
-    Audit -->|"decisionAuditLog"| PG
-
-    Kafka -->|"transactions.completed"| PAA
-    Kafka -->|"transactions.completed"| MLA
-    Kafka -->|"transactions.blocked"| FIA
-
-    Graph -->|"catalogue keys"| Redis
-    Graph -->|"graphMetadata, velocitySnapshots"| PG
-
-    MLA <-->|"COALESCE groundTruthFraud, fraudLabel"| PG
-    Conv -->|"write model.onnx + meta.json"| Models
-    Conv -->|"POST /v1/admin/models then ACTIVE"| RDA
-    Models -.->|"onActiveChange hot-swap"| ONNX
-
-    LLM -->|"investigationReports (UNIQUE on transactionId)"| PG
-
-    UI -->|"reviewer override Accept / Decline"| RDA
-    Audit -->|"groundTruthFraud (closes the loop)"| PG
-
-    RDA -->|"HMAC-signed webhooks"| Subs
-
-    classDef fiaTone fill:#FAECE7,stroke:#993C1D,stroke-width:2px,color:#4A1B0C
-    classDef feTone fill:#E8F0FA,stroke:#1F4E8C,stroke-width:1px,color:#0F2C52
-    classDef storeTone fill:#FFF4D1,stroke:#8B6914,stroke-width:1px,color:#5C4500
-    class FIA,LLM fiaTone
-    class UI feTone
-    class Models storeTone
+```
+                  ┌──────────────┐                            ┌──────────────┐
+                  │   Clients    │── POST /v1/predict ─────▶  │   Sentinel   │
+                  │ (PSP / SDK)  │   X-Api-Key                │   dashboard  │
+                  └──────┬───────┘   Idempotency-Key          │ React / Vite │
+                         │                                    └──────┬───────┘
+                         ▼                                           │  JWT
+                  ┌──────────────┐                                   │  /v1/admin/*
+                  │    NGINX     │ ◄─────────────────────────────────┤  /v1/reports*
+                  │     (LB)     │                                   │
+                  └──────┬───────┘                                   │
+                         │                                           │
+       ┌─────────────────┼─────────────────┐                         │
+       │                 │                 │                         │
+  ┌────▼────┐       ┌────▼────┐       ┌────▼────┐                    │
+  │  RDA-1  │       │  RDA-2  │       │  RDA-3  │  ─── Fastify API   │
+  │         │       │         │       │         │  ─── Rules (PRE / POST, hot-reload)
+  │         │       │         │       │         │  ─── Feature builder (catalogue · 64+N)
+  │         │       │         │       │         │  ─── ONNX inference + segment thresholds
+  │         │       │         │       │         │  ─── Reason codes + decision audit
+  └────┬────┘       └────┬────┘       └────┬────┘
+       │                 │                 │   ─── HMAC webhooks ──▶ subscriber endpoints
+       └─────────────────┼─────────────────┘
+                         │
+     ┌────────────┬──────┴──────┬─────────────┬──────────────────┐
+     │            │             │             │                  │
+ ┌───▼───┐    ┌──▼──┐       ┌──▼──┐     ┌────▼────┐      ┌──────▼──────┐
+ │ Redis │    │Kafka│       │ PG  │     │ models/ │      │     FIA     │
+ │feature│    │     │       │fraud│     │versions │      │  Phi-3-mini │
+ │  hash │    │     │       │ _db │     │  (FS)   │      │   + LoRA    │
+ └───▲───┘    └──┬──┘       └──▲──┘     └────▲────┘      │ HTTP :9094  │
+     │           │              │             │          └──────▲──────┘
+     │   ┌───────┴───────┐      │             │                 │
+     │   │ completed     │ blocked (DECLINE only,               │
+     │   │ (key=         │ key=transaction_id)                  │
+     │   │  sender_id)   │                                      │
+     │   ▼               └──────────────────────────────────────┘
+     │ ┌──────┐   ┌──────┐                       (FIA consumes blocked)
+     │ │ PAA  │   │ MLA  │── writes new version ─▶ models/versions/<v>/
+     │ │graph │   │drift │   then POST /v1/admin/models → ACTIVE
+     │ │+ vel │   │+SMOTE│
+     │ └──┬───┘   └──┬───┘◄── onActiveChange ─── hot-swap session in RDA ONNX
+     │    │          │
+     └────┘          │  COALESCE(groundTruthFraud, fraudLabel)
+       refresh       │  ▲
+       features      │  │  Sentinel reviewer overrides write
+                     │  │  groundTruthFraud on the matching txn —
+                     │  └─ closes the train loop so the model
+                     │     doesn't learn from its own past decisions
+                     ▼
+                  ┌──────┐
+                  │  PG  │
+                  └──────┘
 ```
 
-**Reading the diagram.** The synchronous path is `Client → RDA → ACCEPT/DECLINE/REVIEW` — everything else is async. RDA publishes every scored event to `transactions.completed` keyed by `sender_id` (consumed by PAA + MLA for per-user ordering) and, on `DECLINE`, additionally to `transactions.blocked` keyed by `transaction_id` (consumed only by FIA — keeps seconds-per-LLM-call latency off PAA's millisecond pipeline). The model registry is filesystem-backed (`models/versions/<v>/`) and shared between RDA and MLA via bind-mount; MLA writes a new version, RDA's `OnnxService` hot-swaps the session via `onActiveChange`. Reviewer overrides in the dashboard write `groundTruthFraud` on the matching transaction row, which MLA prefers via `COALESCE` over the system's own prior decision — that's the loop that prevents the model from learning to reproduce its own past decisions.
+**Key components.** Real-time path: client `→` NGINX `→` RDA replicas, each running rules (PRE/POST, hot-reloaded every 30 s), a catalogue-driven feature builder, ONNX inference with per-segment thresholds, reason codes, and a decision-audit writer. Async fan-out: RDA publishes to `transactions.completed` (keyed by `sender_id`, consumed by PAA + MLA) and additionally to `transactions.blocked` on `DECLINE` (keyed by `transaction_id`, consumed only by FIA — keeps LLM latency off PAA's hot path). MLA writes new model versions into the filesystem registry under `models/versions/<v>/` (shared bind-mount with RDA) and posts `/v1/admin/models` then flips to `ACTIVE` — RDA's `OnnxService` hot-swaps the session via `onActiveChange`. Reviewer overrides from the Sentinel UI write `groundTruthFraud` on the matching transaction row; MLA's training query prefers it via `COALESCE` over the system's own prior decision. Outbound HMAC-signed webhooks (`decision.created`, `decision.overridden`, `model.activated`) deliver to subscriber endpoints with retry + ledger.
 
 ## Prerequisites
 
