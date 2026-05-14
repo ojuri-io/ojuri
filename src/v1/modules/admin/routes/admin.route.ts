@@ -7,6 +7,7 @@ import usersRoute from "./users.route";
 import rolesRoute from "./roles.route";
 import auditRoute from "./audit.route";
 import savedReportsRoute from "./saved-reports.route";
+import featuresRoute from "./features.route";
 
 /**
  * Admin / management routes.
@@ -27,6 +28,7 @@ const adminRoute: FastifyPluginAsync = async (fastify) => {
   fastify.register(rolesRoute);
   fastify.register(auditRoute);
   fastify.register(savedReportsRoute);
+  fastify.register(featuresRoute);
 };
 
 export default adminRoute;

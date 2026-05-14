@@ -299,6 +299,17 @@ export const listModels = () =>
     () => [],
   );
 
+// Pull the running RDA feature catalogue. Returns
+// `{ schemaVersion, baseVersion, inputDimension, adopterSha256, features }`.
+// The Sentinel "Features" page renders this read-only — the catalogue is
+// edited on disk (`models/feature-catalog.adopter.json`) and picked up on
+// the next RDA restart.
+export const getFeatureCatalog = () =>
+  safe(
+    () => fetch('/v1/admin/features/catalog', { headers: adminHeaders() }).then(unwrap),
+    () => null,
+  );
+
 export const registerModel = (model) =>
   fetch('/v1/admin/models', {
     method: 'POST',

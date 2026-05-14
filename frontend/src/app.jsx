@@ -37,6 +37,7 @@ import Investigations from './pages/investigations.jsx';
 import AuditLog from './pages/audit-log.jsx';
 import RuleEditor from './pages/rule-editor.jsx';
 import ModelRegistry from './pages/model-registry.jsx';
+import Features from './pages/features.jsx';
 import Metrics from './pages/metrics.jsx';
 import Reports from './pages/reports.jsx';
 import ServiceHealth from './pages/service-health.jsx';
@@ -63,6 +64,7 @@ function loadRoute() {
     'invest',
     'audit',
     'models',
+    'features',
     'metrics',
     'reports',
     'health',
@@ -352,6 +354,9 @@ function AuthenticatedApp({ user, connection, setConnection, onLogout }) {
       />
     );
     screenLabel = '07 Models';
+  } else if (page === 'features') {
+    PageBody = <Features toast={toast} />;
+    screenLabel = '07a Features';
   } else if (page === 'metrics') {
     PageBody = <Metrics toast={toast} />;
     screenLabel = '08 Metrics';
