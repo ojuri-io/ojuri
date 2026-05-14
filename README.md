@@ -14,7 +14,8 @@ Released under the MIT License — see [`LICENSE`](LICENSE).
 > **Per-feature reference docs** live under [`docs/`](docs/README.md):
 > [auth](docs/AUTH.md), [audit log](docs/AUDIT.md),
 > [reason codes](docs/REASON-CODES.md), [rules](docs/RULES.md),
-> [model registry](docs/MODEL-REGISTRY.md), [webhooks](docs/WEBHOOKS.md),
+> [model registry](docs/MODEL-REGISTRY.md), [feature catalogue](docs/FEATURES.md),
+> [training](docs/TRAINING.md), [webhooks](docs/WEBHOOKS.md),
 > [idempotency](docs/IDEMPOTENCY.md), [FIA API](docs/FIA-API.md).
 
 The four services:
@@ -84,6 +85,12 @@ docker compose ps
 npm run db:migrate
 ```
 
+The migration seeds three roles (`SUPER_ADMIN`, `FRAUD_ANALYST`,
+`OPERATIONS`) and a default admin user. Log in with
+**`admin / admin@fraudit`** the first time, then change the password
+via `PATCH /v1/admin/users/:id`. Full auth model:
+[`docs/AUTHZ.md`](docs/AUTHZ.md).
+
 ### 3. Start Development Services
 
 **Option A: Run in Docker (with hot-reload)**
@@ -149,7 +156,8 @@ The Vite dev server proxies `/v1/*` → RDA (`VITE_RDA_URL`, default
 the browser to enable writes:
 
 ```js
-localStorage.setItem('sentinel.adminToken', '<your RDA_ADMIN_TOKEN>');
+// Get a JWT first from POST /v1/auth/login with admin / admin@fraudit.
+localStorage.setItem('sentinel.jwt', '<token from /v1/auth/login>');
 localStorage.setItem('sentinel.apiKey', 'fdk_…');
 ```
 
@@ -191,7 +199,8 @@ LOG_LEVEL=debug
 
 # Authentication
 RDA_REQUIRE_API_KEY=false                    # set true to force X-Api-Key on /v1/predict
-RDA_ADMIN_TOKEN=                             # required for the /v1/admin/* surface
+AUTH_JWT_SECRET=                             # ≥16-char random string. Required for login & all admin APIs.
+AUTH_JWT_TTL_SECONDS=28800                   # session lifetime; default 8h
 
 # Rules + registry refresh
 RULES_RELOAD_INTERVAL_MS=30000
@@ -360,7 +369,21 @@ docker compose restart fraud-redis
 | POST   | `/v1/decisions/:auditId/override`     | Human reviewer override (fires `decision.overridden`) |
 | GET    | `/v1/review-queue`                    | Newest DECLINE rows awaiting review                 |
 | GET    | `/v1/metrics`                         | Prometheus metrics                                  |
-| POST   | `/v1/admin/api-keys`                  | Issue an API key (admin token required)             |
+| POST   | `/v1/auth/login`                      | User login → JWT (see docs/AUTHZ.md)                |
+| POST   | `/v1/auth/logout`                     | Stateless logout (client drops token)               |
+| GET    | `/v1/auth/me`                         | Current user + roles + permissions                  |
+| GET    | `/v1/admin/permissions`               | List the permission catalogue                       |
+| POST   | `/v1/admin/users`                     | Create a new user (perm: `users:create`)            |
+| GET    | `/v1/admin/users`                     | List users                                          |
+| PATCH  | `/v1/admin/users/:id`                 | Edit user (name / email / password / active)        |
+| DELETE | `/v1/admin/users/:id`                 | Delete user                                         |
+| POST   | `/v1/admin/users/:id/roles`           | Assign a role to a user                             |
+| DELETE | `/v1/admin/users/:id/roles/:roleId`   | Remove a role from a user                           |
+| GET    | `/v1/admin/roles`                     | List roles + their permissions                      |
+| POST   | `/v1/admin/roles`                     | Create a custom role with picked permissions        |
+| PATCH  | `/v1/admin/roles/:id`                 | Edit a custom role (system roles are immutable)     |
+| DELETE | `/v1/admin/roles/:id`                 | Delete a custom role                                |
+| POST   | `/v1/admin/api-keys`                  | Issue an API key (perm: `api_keys:issue`)           |
 | GET    | `/v1/admin/api-keys`                  | List API keys                                       |
 | DELETE | `/v1/admin/api-keys/:id`              | Revoke an API key                                   |
 | POST   | `/v1/admin/webhooks`                  | Register a webhook subscription                     |
@@ -375,11 +398,15 @@ docker compose restart fraud-redis
 | PATCH  | `/v1/admin/rules/:id`                 | Update a rule                                       |
 | DELETE | `/v1/admin/rules/:id`                 | Delete a rule                                       |
 
-Admin endpoints require `X-Admin-Token: $RDA_ADMIN_TOKEN`. The predict /
-audit / review-queue endpoints honour `X-Api-Key` (or `Authorization: Bearer`)
-and apply the per-key rate limit. Set `RDA_REQUIRE_API_KEY=true` to make auth
-mandatory; the default is `false` so the existing curl examples still work
-out of the box.
+Admin endpoints (`/v1/admin/*`) require a logged-in user JWT
+(`Authorization: Bearer <token>` from `/v1/auth/login`) **and** the
+per-route permission code. The seeded `admin / admin@fraudit` user has
+the `SUPER_ADMIN` role (all permissions); create real users and
+custom roles via the admin API — see [`docs/AUTHZ.md`](docs/AUTHZ.md).
+The predict / audit / review-queue endpoints honour `X-Api-Key` (or
+`Authorization: Bearer fdk_…`) and apply the per-key rate limit. Set
+`RDA_REQUIRE_API_KEY=true` to make predict auth mandatory; the default
+is `false` so the existing curl examples still work out of the box.
 
 ### Example Requests
 
@@ -429,12 +456,16 @@ On `DECLINE`, RDA additionally publishes the event to `transactions.blocked`
 for FIA. When a rule short-circuits the pipeline, the response includes
 `decision_source: "PRE_RULE" | "POST_RULE"` and `rule: { id, name, stage }`.
 
-Bootstrap an API key (admin token required):
+Log in as the seeded admin to get a JWT, then bootstrap an API key:
 
 ```bash
+TOKEN=$(curl -s -X POST http://localhost:3000/v1/auth/login \
+  -H "Content-Type: application/json" \
+  -d '{"username":"admin","password":"admin@fraudit"}' | jq -r .data.token)
+
 curl -X POST http://localhost:3000/v1/admin/api-keys \
   -H "Content-Type: application/json" \
-  -H "X-Admin-Token: $RDA_ADMIN_TOKEN" \
+  -H "Authorization: Bearer $TOKEN" \
   -d '{ "name": "prod-1", "rateLimitPerMinute": 1200 }'
 ```
 
@@ -452,7 +483,7 @@ Register a webhook:
 ```bash
 curl -X POST http://localhost:3000/v1/admin/webhooks \
   -H "Content-Type: application/json" \
-  -H "X-Admin-Token: $RDA_ADMIN_TOKEN" \
+  -H "Authorization: Bearer $TOKEN" \
   -d '{
     "url": "https://acme.example.com/fraud-webhook",
     "events": ["decision.created", "decision.overridden"]
@@ -468,7 +499,7 @@ Create a pre-ML rule (instant blocklist):
 ```bash
 curl -X POST http://localhost:3000/v1/admin/rules \
   -H "Content-Type: application/json" \
-  -H "X-Admin-Token: $RDA_ADMIN_TOKEN" \
+  -H "Authorization: Bearer $TOKEN" \
   -d '{
     "name": "blocklist-mules",
     "stage": "PRE",
@@ -483,12 +514,12 @@ Register a candidate model and activate it:
 ```bash
 curl -X POST http://localhost:3000/v1/admin/models \
   -H "Content-Type: application/json" \
-  -H "X-Admin-Token: $RDA_ADMIN_TOKEN" \
+  -H "Authorization: Bearer $TOKEN" \
   -d '{ "version": "v1.1.0", "sourceUri": "s3://models/fraud/v1.1.0.onnx", "defaultThreshold": 0.6 }'
 
 curl -X POST http://localhost:3000/v1/admin/models/v1.1.0/status \
   -H "Content-Type: application/json" \
-  -H "X-Admin-Token: $RDA_ADMIN_TOKEN" \
+  -H "Authorization: Bearer $TOKEN" \
   -d '{ "status": "ACTIVE" }'
 ```
 

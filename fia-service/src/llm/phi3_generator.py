@@ -245,28 +245,99 @@ class Phi3ReportGenerator:
         )
 
     def _rule_based_report(self, event: Dict[str, Any]) -> InvestigationReport:
-        """Deterministic fallback. Used when the LLM cannot be invoked or parsed."""
+        """
+        Deterministic fallback. Used when the LLM cannot be invoked or
+        parsed.
+
+        Verdict resolution order:
+
+        1. If the upstream `decision` is DECLINE, this transaction was
+           blocked — the verdict must reflect that. When the source is
+           a rule (PRE_RULE / POST_RULE) the raw ML probability is
+           irrelevant (the rule short-circuited ML), so we report
+           FRAUD_CONFIRMED with the agent's confidence pegged to a
+           rule-driven baseline of 0.90.
+        2. Otherwise (decision = ACCEPT) we fall back to bucketing on
+           the ML score, which is the original behaviour.
+        """
         prob = float(event.get("fraud_probability") or 0.0)
         amount = float(event.get("amount") or 0.0)
         txn_type = event.get("transaction_type") or "UNKNOWN"
+        decision = (event.get("decision") or "").upper()
+        # FIA's Kafka consumer events come straight from RDA's
+        # publishTransactionEvent, which embeds decision_source in
+        # newer schemas. Older payloads won't have it — treat as ML.
+        source = (event.get("decision_source") or "ML").upper()
+        rule_name = event.get("rule_name") or event.get("ruleName")
 
-        if prob >= 0.85:
-            verdict, action, conf = "FRAUD_CONFIRMED", "BLOCK", min(prob, 0.95)
+        if decision == "DECLINE":
+            if source in ("PRE_RULE", "POST_RULE"):
+                verdict = "FRAUD_CONFIRMED"
+                action = "BLOCK"
+                conf = 0.90
+                indicators = [
+                    f"Rule fired: {rule_name or 'unnamed rule'} ({source.lower()})",
+                    f"Amount: NGN {amount:,.2f}",
+                    f"Type: {txn_type}",
+                    f"ML probability (informational): {prob:.2f}",
+                ]
+                narrative = (
+                    f"Automated fallback report (LLM unavailable). The transaction "
+                    f"was DECLINED by rule '{rule_name or 'unnamed rule'}' at the "
+                    f"{source.replace('_RULE', '').lower()}-ML stage. ML probability "
+                    f"was {prob:.2f} — informational only since the rule already "
+                    f"resolved the decision. Recommended action: {action}. Verify "
+                    f"the rule still matches current policy."
+                )
+            elif prob >= 0.85:
+                verdict, action, conf = "FRAUD_CONFIRMED", "BLOCK", min(prob, 0.95)
+                indicators = [
+                    f"ML probability: {prob:.2f}",
+                    f"Amount: NGN {amount:,.2f}",
+                    f"Type: {txn_type}",
+                ]
+                narrative = (
+                    f"Automated fallback report (LLM unavailable). The ML model "
+                    f"flagged this {txn_type.lower()} of NGN {amount:,.2f} with high "
+                    f"probability {prob:.2f}. Recommended action: {action}."
+                )
+            else:
+                verdict, action, conf = "UNCERTAIN", "MANUAL_REVIEW", max(prob, 0.65)
+                indicators = [
+                    f"ML probability: {prob:.2f}",
+                    f"Decision source: {source}",
+                    f"Amount: NGN {amount:,.2f}",
+                ]
+                narrative = (
+                    f"Automated fallback report (LLM unavailable). Transaction was "
+                    f"DECLINED but the ML probability ({prob:.2f}) is below the "
+                    f"high-confidence threshold. Manual review required."
+                )
         elif prob >= 0.65:
             verdict, action, conf = "UNCERTAIN", "MANUAL_REVIEW", prob
+            indicators = [
+                f"ML probability: {prob:.2f}",
+                f"Amount: NGN {amount:,.2f}",
+                f"Type: {txn_type}",
+            ]
+            narrative = (
+                f"Automated fallback report (LLM unavailable). The ML model flagged "
+                f"this {txn_type.lower()} of NGN {amount:,.2f} with probability "
+                f"{prob:.2f} — borderline. Recommended action: {action}."
+            )
         else:
             verdict, action, conf = "LIKELY_LEGITIMATE", "RELEASE", max(1 - prob, 0.55)
+            indicators = [
+                f"ML probability: {prob:.2f}",
+                f"Amount: NGN {amount:,.2f}",
+                f"Type: {txn_type}",
+            ]
+            narrative = (
+                f"Automated fallback report (LLM unavailable). Low fraud probability "
+                f"({prob:.2f}) on this {txn_type.lower()} of NGN {amount:,.2f}. "
+                f"Recommended action: {action}."
+            )
 
-        indicators = [
-            f"ML probability: {prob:.2f}",
-            f"Amount: NGN {amount:,.2f}",
-            f"Type: {txn_type}",
-        ]
-        narrative = (
-            f"Automated fallback report (LLM unavailable). The ML model flagged this "
-            f"{txn_type.lower()} of NGN {amount:,.2f} with probability {prob:.2f}. "
-            f"Recommended action: {action}. Manual review required to confirm verdict."
-        )
         return InvestigationReport(
             verdict=verdict,
             agent_confidence=conf,

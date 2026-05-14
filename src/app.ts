@@ -22,9 +22,12 @@ class App {
   private async registerModules() {
     this.fastify.register(routes.app);
     this.fastify.register(routes.health);
+    this.fastify.register(routes.healthV1, { prefix: RouteVersion.v1 });
     this.fastify.register(routes.auditTrail, { prefix: RouteVersion.v1 });
     this.fastify.register(routes.rda, { prefix: RouteVersion.v1 });
+    this.fastify.register(routes.auth, { prefix: RouteVersion.v1 });
     this.fastify.register(routes.admin, { prefix: RouteVersion.v1 });
+    this.fastify.register(routes.stats, { prefix: RouteVersion.v1 });
   }
 
   public getInstance() {

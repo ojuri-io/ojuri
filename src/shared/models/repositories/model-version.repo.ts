@@ -9,6 +9,10 @@ class ModelVersionRepo extends BaseRepository<IModelVersion, ModelVersion> {
     super(ModelVersion);
   }
 
+  async deleteByVersion(version: string): Promise<number> {
+    return ModelVersion.query().delete().where({ version });
+  }
+
   async findByVersion(version: string): Promise<ModelVersion | undefined> {
     return ModelVersion.query().findOne({ version });
   }

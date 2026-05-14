@@ -21,6 +21,16 @@ export interface TransactionEvent {
   fraud: boolean;
   fraud_probability: number;
   decision: string;
+  /**
+   * What drove the decision: "ML", "PRE_RULE", or "POST_RULE". Optional
+   * for backward compat with pre-rules-engine consumers — downstream
+   * services should treat missing as "ML".
+   */
+  decision_source?: string;
+  /** Human-readable rule name when decision_source is a rule. */
+  rule_name?: string;
+  /** Audit row id, useful for downstream consumers correlating to audit. */
+  audit_id?: string;
   device_fingerprint?: {
     browser?: string;
     os?: string;

@@ -101,15 +101,21 @@ class FIAHttpHandler(BaseHTTPRequestHandler):
         if body is None:
             return self._respond(400, {"error": "invalid JSON body"})
 
-        required = ("transaction_id", "sender_id", "amount", "transaction_type")
-        missing = [k for k in required if k not in body]
-        if missing:
-            return self._respond(400, {"error": f"missing required fields: {missing}"})
+        # Accept camelCase `transactionId` from the frontend alongside
+        # the snake_case `transaction_id` Kafka payloads use.
+        if "transactionId" in body and "transaction_id" not in body:
+            body["transaction_id"] = body["transactionId"]
 
-        # Defaults for optional fields. `decision` and
-        # `fraud_probability` are accepted but not required — the
-        # endpoint deliberately works for accepted-but-suspicious
-        # transactions, not just blocked ones.
+        # The only field the caller MUST supply is `transaction_id`.
+        # Everything else is hydrated from `decisionAuditLog` so the
+        # operator's "Investigate" click works with just the row id.
+        txn_id = body.get("transaction_id")
+        if not txn_id:
+            return self._respond(400, {"error": "missing required field: transaction_id"})
+
+        # Optional-field defaults — only used if neither the body nor
+        # the audit hydrate fill them in. Lets the endpoint serve
+        # accepted-but-suspicious transactions, not just blocked ones.
         body.setdefault("decision", "DECLINE")
         body.setdefault("fraud_probability", body.get("fraud_probability") or 0.0)
         body.setdefault("receiver_id", body.get("receiver_id"))

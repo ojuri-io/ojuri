@@ -10,6 +10,8 @@ import { RuleContext } from "@shared/rules/rule.types";
 import ModelRegistryService from "@shared/models/model-registry.service";
 import DecisionAuditService from "@shared/audit/decision-audit.service";
 import WebhookService from "@shared/webhooks/webhook.service";
+import { loadCatalog } from "@shared/features/feature-catalog";
+import { buildFeatures } from "@shared/features/feature-builder";
 import FeatureService from "./feature.service";
 import { PredictRequestDto, PredictResponseDto } from "../dtos/predict-request.dto";
 
@@ -52,15 +54,22 @@ class PredictService {
 
     const { championVersion, shadowVersion, threshold } = this.modelRegistry.resolve(request.segment);
 
-    // Step 1: Pull features. The pre-rule path also needs these
-    // because rules can reference feature values.
-    const { features, isDefault } = await this.featureService.getFeatures(
+    // Step 1: Pull the Redis feature snapshot + build the catalogue-
+    // aligned input vector. The catalogue is the single source of
+    // truth for the ONNX input contract — feature.service.ts just
+    // fetches the raw hash, and `buildFeatures` lays it out plus the
+    // request-derived features in catalogue order.
+    const catalog = loadCatalog();
+    const { snapshot: redisSnapshot, isDefault } = await this.featureService.getFeatures(
       request.sender_id,
       request.timestamp
     );
 
-    const enrichedFeatures = this.enrichFeatures(features, request);
-    const featuresSnapshot = this.snapshotFeatures(enrichedFeatures);
+    const { vector: enrichedFeatures, snapshot: featuresSnapshot } = buildFeatures(
+      catalog,
+      request as unknown as Record<string, unknown>,
+      redisSnapshot
+    );
 
     // Step 2: Evaluate PRE-stage rules. A match short-circuits the
     // pipeline — useful for allowlists, blocklists, or hard caps
@@ -182,12 +191,18 @@ class PredictService {
 
     // Publish to Kafka (existing behaviour). Treat REVIEW as a
     // non-blocked outcome at the auth path — downstream consumers
-    // can split on `decision` if they care.
+    // can split on `decision` if they care. Include decision_source
+    // and rule_name so FIA can distinguish "ML said fraud" from
+    // "rule said fraud" — its fallback report classifier needs this
+    // to avoid mislabelling rule-driven DECLINEs as LIKELY_LEGITIMATE.
     this.publishTransactionEvent(
       request,
       args.finalDecision === "DECLINE",
       args.mlScore,
-      args.finalDecision
+      args.finalDecision,
+      args.decisionSource,
+      args.rule?.rule.name ?? null,
+      auditId ?? null
     );
 
     // Webhook fan-out (fire-and-forget).
@@ -246,53 +261,13 @@ class PredictService {
     };
   }
 
-  /**
-   * Snapshot the named feature positions so they can be referenced
-   * by name in rule expressions and persisted alongside the
-   * decision in the audit log.
-   */
-  private snapshotFeatures(enriched: Float32Array): Record<string, number> {
-    return {
-      velocity_1h: enriched[0],
-      velocity_24h: enriched[1],
-      velocity_7d: enriched[2],
-      avg_amount_30d: enriched[3],
-      std_amount_30d: enriched[4],
-      pagerank: enriched[5],
-      clustering_coef: enriched[6],
-      time_since_last_txn: enriched[7],
-      is_weekend: enriched[8],
-      hour_of_day: enriched[9],
-      amount: enriched[10],
-      transaction_type_code: enriched[11],
-    };
-  }
-
-  /**
-   * Feature positions for transaction-specific enrichment
-   * Positions 0-9: User features from Redis (velocity, graph metrics, time features)
-   * Positions 10+: Transaction-specific features added at inference time
-   */
-  private static readonly FEATURE_POSITIONS = {
-    AMOUNT: 10,
-    TRANSACTION_TYPE: 11,
-  } as const;
-
-  private static readonly TRANSACTION_TYPE_ENCODING: Record<string, number> = {
-    CASH_IN: 0,
-    CASH_OUT: 1,
-    PAYMENT: 2,
-    TRANSFER: 3,
-    DEBIT: 4,
-  };
-
-  private enrichFeatures(features: Float32Array, request: PredictRequestDto): Float32Array {
-    const enriched = new Float32Array(features);
-    enriched[PredictService.FEATURE_POSITIONS.AMOUNT] = request.amount;
-    enriched[PredictService.FEATURE_POSITIONS.TRANSACTION_TYPE] =
-      PredictService.TRANSACTION_TYPE_ENCODING[request.transaction_type] ?? 0;
-    return enriched;
-  }
+  // NOTE — `snapshotFeatures()`, `FEATURE_POSITIONS`, the hand-rolled
+  // `TRANSACTION_TYPE_ENCODING` table, and `enrichFeatures()` were
+  // retired in Phase 2. All three are now subsumed by the feature
+  // catalogue: `buildFeatures()` produces a vector AND a named
+  // snapshot in one pass, and the catalogue's own encoders cover the
+  // CASH_IN/OUT/etc. ID mapping (with a wider domain too — see
+  // `src/shared/features/encoders.ts`).
 
   /**
    * Publish transaction event to Kafka asynchronously
@@ -308,7 +283,10 @@ class PredictService {
     request: PredictRequestDto,
     fraud: boolean,
     fraudProbability: number,
-    decision: string
+    decision: string,
+    decisionSource?: string,
+    ruleName?: string | null,
+    auditId?: string | null
   ): void {
     const event: TransactionEvent = {
       transaction_id: request.transaction_id,
@@ -320,6 +298,9 @@ class PredictService {
       fraud,
       fraud_probability: fraudProbability,
       decision,
+      decision_source: decisionSource,
+      rule_name: ruleName ?? undefined,
+      audit_id: auditId ?? undefined,
       device_fingerprint: request.device_fingerprint,
       processed_at: Date.now(),
     };

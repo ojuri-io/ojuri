@@ -4,12 +4,13 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Repository Layout
 
-This is a polyglot monorepo with **four independent services** that share PostgreSQL/Redis/Kafka infrastructure. Each service has its own dependencies and build:
+This is a polyglot monorepo with **four independent backend services** that share PostgreSQL/Redis/Kafka infrastructure, plus a separate frontend SPA. Each service has its own dependencies and build:
 
 - **Root (`src/`)** — RDA (Real-Time Detection Agent), TypeScript/Fastify HTTP API. Owns the `package.json` at the repo root, the Knex migrations under `src/database/migrations/`, and the shared ONNX model under `models/`.
 - **`paa-service/`** — PAA (Pattern Analysis Agent), TypeScript Kafka consumer worker. Has its own `package.json`, `tsconfig.json`, and `node_modules`. Not invoked from the root scripts.
 - **`mla-service/`** — MLA (Model Learning Agent), Python 3.11 service. Has its own `requirements.txt` and `venv`. Trains XGBoost → ONNX models that are deployed by copying into `models/fraud_model.onnx` for RDA.
 - **`fia-service/`** — FIA (Fraud Investigation Agent), Python 3.11 service. Consumes the `transactions.blocked` Kafka topic, runs a fine-tuned Phi-3-mini-4k-instruct LLM, and writes structured reports to PostgreSQL `investigationReports`. Strictly async — never on the RDA authorization path.
+- **`frontend/`** — Sentinel operator dashboard, Vite + React 18 SPA. Has its own `package.json` and `node_modules`. Not invoked from the root scripts. Talks to RDA `/v1/admin/*` and FIA `/v1/reports*`; falls back to seed data when those services aren't reachable so the UI is always demoable.
 
 RDA is the only producer. PAA and MLA consume `transactions.completed`; FIA consumes `transactions.blocked` (published by RDA only when the decision is `DECLINE`). All four services share the same Postgres `fraud_db`.
 
@@ -49,6 +50,17 @@ pytest                                      # all tests
 pytest tests/test_onnx_conversion.py -v     # single file
 ```
 After training, deploy the model to RDA with `cp models/fraud_model_v1.0.onnx ../models/fraud_model.onnx`.
+
+### Frontend (`frontend/`)
+The Sentinel dashboard has its own deps and build — `cd frontend` first. The root `npm install` does **not** install frontend deps.
+```bash
+cd frontend && npm install
+npm run dev                                  # vite dev server on :5173
+npm run build                                # production bundle into dist/
+npm test                                     # vitest run (jsdom + Testing Library)
+npm test -- tests/sidebar.test.jsx           # single file
+```
+The dev server proxies `/v1/*` → `VITE_RDA_URL` (default `http://localhost:3000`) and `/fia/*` → `VITE_FIA_URL` (default `http://localhost:9094`, prefix stripped). Auth is read from `localStorage` at request time — `sentinel.jwt` becomes `Authorization: Bearer …` (the user JWT from `POST /v1/auth/login`), `sentinel.apiKey` becomes `X-Api-Key`. See [`docs/FRONTEND.md`](docs/FRONTEND.md) for the full reference.
 
 ### Infrastructure
 ```bash
@@ -94,6 +106,14 @@ RDA wraps Redis feature retrieval and ONNX inference in `opossum` circuit breake
 - PAA: standalone HTTP server on `METRICS_PORT` (default 9090) exposing `/livez`, `/readyz`, `/metrics`, `/stats`. Defined inline in `paa-service/src/worker.ts` — not a Fastify app.
 - FIA: HTTP server on `METRICS_PORT` (default 9094) exposing `/livez`, `/readyz`, `/stats` (counters: processed, duplicates, failed, dropped_poison, in_flight_retries, llm_model). Defined inline in `fia-service/src/main.py` — not a Fastify/Flask app.
 
+### Frontend dashboard
+The Sentinel SPA under `frontend/` ports the Claude Design handoff into ES-module React. Two non-obvious patterns matter when editing it:
+
+- **`safe()` fallback wrapper.** Every read in `frontend/src/api/client.js` is wrapped: `safe(() => fetch(...), () => MOCK.xxx)`. When the backend is offline or 401s, the call returns the corresponding slice of `frontend/src/data/mock.js` instead of throwing. This is what keeps every page demoable without running RDA/FIA. Write calls (issue key, save rule, …) do **not** use `safe` — they `try` the real call, catch failures locally, and update React state regardless so the UI keeps moving. New endpoints should follow the same split: reads via `safe`, writes try-locally-update.
+- **Auth lives in `localStorage`, read per-request.** `adminHeaders()` and `apiHeaders()` in `client.js` re-read `sentinel.jwt` / `sentinel.apiKey` on each call. The JWT is obtained via `POST /v1/auth/login` and carries a snapshot of the user's permissions (see `docs/AUTHZ.md`). Changing a user's role only takes effect on next login. `RDA_REQUIRE_API_KEY=true` on the backend will 401 all predict calls until `sentinel.apiKey` is set.
+
+The dashboard never sits on the prediction hot path: it issues admin reads and rare writes only. Adding a new page only needs three touch points: a new file under `frontend/src/pages/`, the route id in `loadRoute()` in `frontend/src/app.jsx`, and a `Sidebar` entry in `frontend/src/components/shell.jsx`.
+
 ## ONNX Compatibility (MLA only)
 
 XGBoost → ONNX conversion is broken in newer onnxmltools/onnx releases. `mla-service/requirements.txt` pins:
@@ -115,11 +135,17 @@ If you see `TypeError: Field onnx.AttributeProto.ints: Expected an int, got a bo
 These extend RDA without changing the real-time hot path. They all live
 under `src/shared/` so they can be reused by PAA or future workers.
 
-- **Auth (`src/shared/auth/`)** — `ApiKeyService` issues `fdk_<prefix>_<secret>`
+- **API-key auth (`src/shared/auth/`)** — `ApiKeyService` issues `fdk_<prefix>_<secret>`
   tokens, persists only the SHA-256 hash, caches verification for 30 s. The
   `apiKeyMiddleware` plugs into Fastify `preHandler`; `RDA_REQUIRE_API_KEY=true`
-  flips the predict endpoint from open to authenticated. Admin endpoints are
-  gated by a static `RDA_ADMIN_TOKEN`.
+  flips the predict endpoint from open to authenticated.
+- **User auth + RBAC (`src/shared/authz/`)** — bcrypt-hashed users, roles
+  with permission arrays, JWT sessions. Permission catalogue is
+  **code-defined** in `permissions.ts` (no migration to add a new code).
+  Migration seeds `SUPER_ADMIN` + `admin/admin@fraudit`. The
+  `requireAuth(...perms)` middleware (`src/shared/middlewares/require-auth.middleware.ts`)
+  guards every `/v1/admin/*` route; the static `RDA_ADMIN_TOKEN` was
+  retired in 2026-05.
 - **Rules engine (`src/shared/rules/`)** — JSON-Logic-style evaluator (no
   arithmetic, just predicates / combinators / `in` / `var`). Rules are
   hot-reloaded from Postgres every `RULES_RELOAD_INTERVAL_MS` (30 s default).
@@ -151,9 +177,13 @@ for any transaction, idempotent by `transactionId`), `POST /v1/reports/:id/messa
 (conversational follow-ups persisted in `investigationConversations`),
 `GET /v1/reports[/:id]` (list / read).
 
-## Prototype Feature Pipeline
+## Feature catalogue (replaces the legacy 434-dim prototype pipeline)
 
-The MLA pipeline intentionally extracts ~20 real features and pads to 434 dimensions ("PROTOTYPE MODE: USING PLACEHOLDER FEATURES" warnings are expected). The architecture supports closing this gap without changes to RDA — additional feature engineering is the natural extension point for adopters. Preserve the architecture demo even when the feature set is simplified.
+Features are now **declaratively contracted** in `models/feature-catalog.v1.json` — 64 base features across 9 categories (velocity / pair / graph / transaction / identity / receiver / geographic / device / calendar). Adopters add their own features via `models/feature-catalog.adopter.json` overlay using a small algebra of compute ops (`from_field`, `equals`, `is_one_of`, `ratio`, `lookup`, `numeric_bucket`, `bool_and/or`, `from_redis`). See `docs/FEATURES.md`.
+
+Both RDA (TS — `src/shared/features/`) and MLA (Python — `mla-service/src/features/`) load the same JSON catalogue and validate identical invariants. `feature_schema_version` is baked into every model's `meta.json` and enforced at load time by `OnnxService` — a model trained against a different overlay is **refused** rather than silently misaligned. `MODEL_INPUT_DIMENSION` env enables pad-to-fit during the brief Phase-2/Phase-3 transition where RDA produces 64-dim but the deployed model still expects more.
+
+The previous "PROTOTYPE MODE: USING PLACEHOLDER FEATURES" warnings and 411-zero-padding have been removed. Training and inference dimensions now match exactly.
 
 ## Reference Performance (single developer workstation, Apple Silicon)
 

@@ -1,5 +1,5 @@
 import * as ort from "onnxruntime-node";
-import { singleton } from "tsyringe";
+import { container, singleton } from "tsyringe";
 import appConfig from "@config/app.config";
 import { createServiceLogger, TraceContext } from "@shared/utils/logger/service-logger";
 import { metricsService } from "@shared/metrics/metrics.service";
@@ -12,15 +12,24 @@ const onnxLogger = createServiceLogger("OnnxService");
 
 /**
  * ONNX Runtime service for ML model inference
- * Handles model loading, inference, and hot-reloading
+ * Handles model loading, inference, and hot-reloading.
+ *
+ * Hot-reload now follows the model registry — when MLA registers a
+ * new model and POSTs `status=ACTIVE`, `ModelRegistryService` notifies
+ * us via its `onActiveChange` listener. We resolve the row's
+ * `sourceUri` (a relative path like `models/versions/v1.2.0/model.onnx`),
+ * load the bytes, and atomically swap the session. The legacy
+ * `MODEL_REGISTRY_URL` HTTP polling is retired in favour of this
+ * filesystem-driven flow — `models/` is bind-mounted into RDA so any
+ * write by MLA on the host is immediately visible.
  */
 @singleton()
 class OnnxService {
   private session: ort.InferenceSession | null = null;
   private modelPath: string;
-  private modelETag: string | null = null;
   private inferenceCircuitBreaker: CircuitBreaker<any[], any>;
   private isModelLoaded: boolean = false;
+  private unsubscribeActiveChange: (() => void) | null = null;
 
   constructor() {
     this.modelPath = path.resolve(appConfig.onnx.modelPath);
@@ -53,7 +62,12 @@ class OnnxService {
   async initialize(): Promise<void> {
     try {
       await this.loadModel();
-      this.startModelPolling();
+      // Subscribe synchronously so any ACTIVE-flip that happens between
+      // `loadModel()` and the first request can't slip past us. The
+      // dynamic import is still required to break the circular dep with
+      // ModelRegistryService, but we now `await` it so initialize() does
+      // not return until the listener is wired.
+      await this.subscribeToRegistry();
       onnxLogger.success("initialize", "ONNX service initialized successfully", {});
     } catch (err) {
       onnxLogger.error("initialize", "Failed to initialize ONNX service", {
@@ -126,75 +140,125 @@ class OnnxService {
   }
 
   /**
-   * Start polling for model updates
+   * Subscribe to ACTIVE-version changes published by
+   * `ModelRegistryService`. Awaited from `initialize()`, so the listener
+   * is wired before the server starts accepting requests. The dynamic
+   * import is still used to break the circular construction dependency
+   * with ModelRegistryService — but unlike a fire-and-forget `.then()`,
+   * the awaiter blocks until the subscription is in place.
    */
-  private startModelPolling(): void {
-    if (!appConfig.onnx.modelRegistryUrl) {
-      onnxLogger.debug("startModelPolling", "Model registry URL not configured, skipping model polling", {});
-      return;
-    }
-
-    setInterval(async () => {
-      await this.checkForModelUpdate();
-    }, appConfig.onnx.modelPollInterval);
-  }
-
-  /**
-   * Check for model updates via HTTP HEAD request
-   */
-  private async checkForModelUpdate(): Promise<void> {
-    if (!appConfig.onnx.modelRegistryUrl) return;
-
+  private async subscribeToRegistry(): Promise<void> {
     try {
-      const response = await fetch(appConfig.onnx.modelRegistryUrl, { method: "HEAD" });
-      const etag = response.headers.get("etag");
-
-      if (etag && etag !== this.modelETag) {
-        onnxLogger.entry("checkForModelUpdate", "New model version detected", {
-          oldETag: this.modelETag,
-          newETag: etag,
+      const { default: ModelRegistryService } = await import("@shared/models/model-registry.service");
+      const registry = container.resolve(ModelRegistryService);
+      this.unsubscribeActiveChange = registry.onActiveChange((current, previous) => {
+        onnxLogger.info("activeChange", "ACTIVE model version changed", {
+          from: previous?.version ?? "(none)",
+          to: current?.version ?? "(none)",
         });
-        await this.downloadAndLoadModel();
-        this.modelETag = etag;
-      }
+        if (!current) return;
+        this.applyActiveVersion(current.sourceUri, current.metadata).catch((err) =>
+          onnxLogger.error("applyActiveVersion", "Failed to load new ACTIVE model", {
+            version: current.version,
+            sourceUri: current.sourceUri,
+            error: err instanceof Error ? err.message : String(err),
+          })
+        );
+      });
     } catch (err) {
-      onnxLogger.error("checkForModelUpdate", "Failed to check for model update", {
+      onnxLogger.warn("subscribeToRegistry", "Could not subscribe to registry", {
         error: err instanceof Error ? err.message : String(err),
       });
     }
   }
 
   /**
-   * Download and load new model version
+   * Load the ONNX bytes for a registered model's `sourceUri` and
+   * atomically replace the current session. Supports `file://` URLs
+   * and bare relative / absolute paths. Anything else (s3://, http://)
+   * logs and skips — those schemes belong in a hosted-deployment
+   * fork and aren't part of the open-source self-hosted flow.
+   *
+   * Schema-version check: when the registered row's `metadata` carries
+   * a `feature_schema_version`, it must match the running catalogue.
+   * A mismatch means the model was trained against a different
+   * feature contract — loading would silently misalign input columns.
+   * We refuse, log loudly, and keep the previous session running.
    */
-  private async downloadAndLoadModel(): Promise<void> {
-    if (!appConfig.onnx.modelRegistryUrl) return;
+  private async applyActiveVersion(
+    sourceUri: string | null,
+    metadata?: Record<string, unknown> | null
+  ): Promise<void> {
+    if (!sourceUri) return;
 
-    try {
-      const response = await fetch(appConfig.onnx.modelRegistryUrl);
-      const buffer = await response.arrayBuffer();
+    if (metadata && typeof metadata.feature_schema_version === "string") {
+      const { loadCatalog } = await import("@shared/features/feature-catalog");
+      const expected = loadCatalog().schemaVersion;
+      const reported = metadata.feature_schema_version as string;
+      if (reported !== expected) {
+        onnxLogger.error(
+          "applyActiveVersion",
+          "Refusing to load model — feature schema mismatch",
+          { reported, expected }
+        );
+        throw new Error(
+          `Feature schema mismatch: model was trained against '${reported}', running catalogue is '${expected}'. ` +
+            `Either retrain the model against the current catalogue or revert the adopter overlay.`
+        );
+      }
+    }
 
-      // Write to temp file first
-      const tempPath = `${this.modelPath}.tmp`;
-      fs.writeFileSync(tempPath, Buffer.from(buffer));
-
-      // Rename to actual path (atomic operation)
-      fs.renameSync(tempPath, this.modelPath);
-
-      // Reload model
-      await this.loadModel();
-
-      onnxLogger.success("downloadAndLoadModel", "Model updated successfully", {});
-    } catch (err) {
-      onnxLogger.error("downloadAndLoadModel", "Failed to download and load new model", {
-        error: err instanceof Error ? err.message : String(err),
+    let resolved: string;
+    if (sourceUri.startsWith("file://")) {
+      resolved = sourceUri.slice("file://".length);
+    } else if (sourceUri.startsWith("/")) {
+      resolved = sourceUri;
+    } else if (/^[a-z]+:\/\//i.test(sourceUri)) {
+      onnxLogger.warn("applyActiveVersion", "Non-local sourceUri scheme — skipping hot-reload", {
+        sourceUri,
       });
+      return;
+    } else {
+      resolved = path.resolve(process.cwd(), sourceUri);
+    }
+
+    if (!fs.existsSync(resolved)) {
+      throw new Error(`Resolved sourceUri does not exist on disk: ${resolved}`);
+    }
+
+    // Copy into the canonical MODEL_PATH so anyone bypassing the
+    // registry (or restarting cold) still gets the correct artefact.
+    // Atomic rename so an in-flight predict never observes a half-
+    // written file.
+    if (resolved !== this.modelPath) {
+      const tempPath = `${this.modelPath}.tmp`;
+      fs.copyFileSync(resolved, tempPath);
+      fs.renameSync(tempPath, this.modelPath);
+    }
+
+    await this.loadModel();
+    onnxLogger.success("applyActiveVersion", "Hot-reloaded ACTIVE model", {
+      sourceUri,
+      modelPath: this.modelPath,
+    });
+  }
+
+  /**
+   * Tear down listeners. Exposed so server-shutdown hooks can call it
+   * cleanly; safe to call multiple times.
+   */
+  close(): void {
+    if (this.unsubscribeActiveChange) {
+      this.unsubscribeActiveChange();
+      this.unsubscribeActiveChange = null;
     }
   }
 
   /**
-   * Run inference on feature vector using circuit breaker
-   * @param features - Feature vector (434 dimensions)
+   * Run inference on feature vector using circuit breaker.
+   * Vector width is determined by the active feature catalogue
+   * (64 base + adopter overlay). Pad-to-fit handles models trained
+   * against a wider dimension via `MODEL_INPUT_DIMENSION`.
    * @returns Fraud probability (0.0 - 1.0)
    */
   async predict(features: Float32Array): Promise<number> {
@@ -214,8 +278,20 @@ class OnnxService {
         return this.mockInference(features);
       }
 
+      // Pad-to-fit if the loaded model expects more dimensions than
+      // the catalogue currently produces. Only used for the brief
+      // transition between Phase 2 (RDA serves 64-dim) and Phase 3
+      // (MLA retrains at 64-dim). When the model and catalogue match,
+      // `features` is used verbatim.
+      const expectedDim = Number(process.env.MODEL_INPUT_DIMENSION) || 0;
+      let inputArray = features;
+      if (expectedDim > features.length) {
+        inputArray = new Float32Array(expectedDim);
+        inputArray.set(features);
+      }
+
       // Create input tensor
-      const inputTensor = new ort.Tensor("float32", features, [1, features.length]);
+      const inputTensor = new ort.Tensor("float32", inputArray, [1, inputArray.length]);
 
       // Run inference
       const feeds = { input: inputTensor };
@@ -245,23 +321,20 @@ class OnnxService {
   }
 
   /**
-   * Mock inference for development/testing
-   */
-  /**
-   * Mock inference for development/testing when no ONNX model is loaded
-   * Feature positions match toFeatureVector() in feature.service.ts:
-   *   0: velocity_1h, 1: velocity_24h, 2: velocity_7d
-   *   3: avg_amount_30d, 4: std_amount_30d, 5: pagerank
-   *   6: clustering_coef, 7: time_since_last_txn, 8: is_weekend, 9: hour_of_day
-   *   10: amount (from enrichFeatures), 11: transaction_type
+   * Heuristic fallback used when no ONNX model is loaded (dev / first
+   * boot before MLA registers an artefact). Reads positions defined by
+   * the base catalogue in `models/feature-catalog.v1.json`.
    */
   private mockInference(features: Float32Array): number {
-    // Extract features by their actual positions
+    // Catalogue base layout: 0=velocity_1h, 1=velocity_24h, 2=velocity_7d,
+    // 3=amount_mean_30d, 5=graph_pagerank, and `amount` lives in the
+    // transaction block. See models/feature-catalog.v1.json for the
+    // authoritative index map.
     const velocity1h = features[0] || 0;
     const velocity24h = features[1] || 0;
     const avgAmount30d = features[3] || 0;
     const pagerank = features[5] || 0;
-    const amount = features[10] || 0; // Transaction amount from enrichFeatures
+    const amount = features[10] || 0;
 
     // Simple heuristic for demo purposes
     let probability = 0.1;
@@ -296,10 +369,11 @@ class OnnxService {
    * Get model info
    */
   getModelInfo(): { path: string; loaded: boolean; inputDimensions: number } {
+    const expectedDim = Number(process.env.MODEL_INPUT_DIMENSION) || 0;
     return {
       path: this.modelPath,
       loaded: this.isModelLoaded,
-      inputDimensions: 434,
+      inputDimensions: expectedDim,
     };
   }
 }

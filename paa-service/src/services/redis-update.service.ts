@@ -90,20 +90,37 @@ class RedisUpdateService {
     }
   }
 
+  /**
+   * Hash field names follow the canonical names in
+   * `models/feature-catalog.v1.json`. RDA's `buildFeatures()` reads
+   * `features:{senderId}` and looks up each catalogue feature by its
+   * `name` — so any rename here MUST keep the keys in lock-step with
+   * the catalogue. The local PAA `CombinedFeatures` type retains its
+   * own names; this is the only contract boundary that crosses the
+   * Redis wire.
+   */
   private featuresToHash(features: CombinedFeatures): Record<string, string> {
     return {
+      // Velocity (catalogue indices 3, 4, 5 — PAA windows; finer 1m/5m/15m left to extensions).
       velocity_1h: String(features.velocity_1h),
       velocity_24h: String(features.velocity_24h),
       velocity_7d: String(features.velocity_7d),
-      avg_amount_30d: String(features.avg_amount_30d),
-      std_amount_30d: String(features.std_amount_30d),
-      time_since_last_txn: String(features.time_since_last_txn),
-      pagerank: String(features.pagerank),
-      clustering_coef: String(features.clusteringCoef),
-      community_id: String(features.communityId),
-      degree_centrality: String(features.degreeCentrality),
-      in_degree: String(features.inDegree),
-      out_degree: String(features.outDegree),
+
+      // Amount aggregates (catalogue indices 8, 9).
+      amount_mean_30d: String(features.avg_amount_30d),
+      amount_std_30d: String(features.std_amount_30d),
+
+      // Pair-level (catalogue index 14).
+      pair_time_since_last_send: String(features.time_since_last_txn),
+
+      // Graph block (catalogue indices 18-22).
+      graph_pagerank: String(features.pagerank),
+      graph_clustering_coef: String(features.clusteringCoef),
+      graph_community_id: String(features.communityId),
+      graph_in_degree: String(features.inDegree),
+      graph_out_degree: String(features.outDegree),
+
+      // Bookkeeping — not in catalogue, kept for ops/debugging.
       updated_at: String(features.updated_at),
     };
   }

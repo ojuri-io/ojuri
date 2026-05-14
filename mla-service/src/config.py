@@ -61,20 +61,32 @@ class Config:
     XGBOOST_COLSAMPLE_BYTREE: float = float(os.getenv('XGBOOST_COLSAMPLE_BYTREE', '0.8'))
     
     # ═══════════════════════════════════════════════════════════════
-    # MinIO Model Registry
+    # Model Registry — filesystem-backed
     # ═══════════════════════════════════════════════════════════════
-    MINIO_ENDPOINT: str = os.getenv('MINIO_ENDPOINT', 'localhost:9000')
-    MINIO_ACCESS_KEY: str = os.getenv('MINIO_ACCESS_KEY', 'minioadmin')
-    MINIO_SECRET_KEY: str = os.getenv('MINIO_SECRET_KEY', 'minioadmin')
-    MINIO_BUCKET: str = os.getenv('MINIO_BUCKET', 'fraud-models')
-    MINIO_SECURE: bool = os.getenv('MINIO_SECURE', 'false').lower() == 'true'
-    
+    # MinIO retired from the self-hosted distribution. The flow is now:
+    #   1. MLA writes `models/versions/<version>/` directly.
+    #   2. MLA POSTs to RDA admin to register + activate (optional).
+    #   3. RDA's OnnxService hot-reloads the new ACTIVE on disk.
+    #
+    # `RDA_API_URL` + `MLA_SERVICE_TOKEN` are optional. When unset,
+    # MLA writes locally and operators activate via the admin UI.
+    RDA_API_URL: str = os.getenv('RDA_API_URL', '')
+    MLA_SERVICE_TOKEN: str = os.getenv('MLA_SERVICE_TOKEN', '')
+
     # ═══════════════════════════════════════════════════════════════
     # Paths
     # ═══════════════════════════════════════════════════════════════
-    MODEL_OUTPUT_DIR: str = os.getenv('MODEL_OUTPUT_DIR', './models')
+    # Default points at the repo-root `models/` directory so MLA
+    # writes land where RDA reads from (bind-mounted into the RDA
+    # container as `/app/models`).
+    MODEL_OUTPUT_DIR: str = os.getenv('MODEL_OUTPUT_DIR', '../models')
     DATA_CACHE_DIR: str = os.getenv('DATA_CACHE_DIR', './data')
     
+    # ═══════════════════════════════════════════════════════════════
+    # Health / metrics HTTP server
+    # ═══════════════════════════════════════════════════════════════
+    METRICS_PORT: int = int(os.getenv('METRICS_PORT', '9095'))
+
     # ═══════════════════════════════════════════════════════════════
     # Logging
     # ═══════════════════════════════════════════════════════════════

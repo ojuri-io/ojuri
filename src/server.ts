@@ -7,10 +7,24 @@ import KafkaProducer from "./shared/kafka/kafka-producer";
 import ModelRegistryService from "./shared/models/model-registry.service";
 import RulesService from "./shared/rules/rules.service";
 import { startWebhookWorker, stopWebhookWorker } from "./shared/webhooks/webhook-worker";
+import { loadCatalog } from "./shared/features/feature-catalog";
 
 const app = new App();
 
 async function start() {
+  // Load + validate the feature catalogue first. A malformed catalogue
+  // means an unknown model contract — better to fail boot than to
+  // silently serve predictions with a broken input shape.
+  const catalog = loadCatalog();
+  logger.info(
+    {
+      schemaVersion: catalog.schemaVersion,
+      inputDimension: catalog.inputDimension,
+      adopterFeatures: catalog.features.length - 64,
+    },
+    "Feature catalogue loaded"
+  );
+
   const kafkaProducer = container.resolve(KafkaProducer);
   try {
     await kafkaProducer.connect();

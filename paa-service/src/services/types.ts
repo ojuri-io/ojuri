@@ -11,6 +11,17 @@ export interface TransactionEvent {
   fraud: boolean;
   fraud_probability: number;
   decision: string;
+  /**
+   * What drove the decision: "ML", "PRE_RULE", or "POST_RULE". MLA
+   * filters on this to avoid training on rule-driven DECLINEs (which
+   * would otherwise teach the next model to mimic the rules).
+   * Optional for backward compatibility with pre-rules-engine events.
+   */
+  decision_source?: string;
+  /** Human-readable rule name when decision_source is a rule. */
+  rule_name?: string;
+  /** Optional audit row id, for tracing back to decisionAuditLog. */
+  audit_id?: string;
   device_fingerprint?: {
     browser?: string;
     os?: string;

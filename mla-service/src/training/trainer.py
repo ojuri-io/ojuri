@@ -246,14 +246,16 @@ class ModelTrainer:
             Dict mapping feature names to importance scores
         """
         importances = model.feature_importances_
-        
+
         if feature_names is None:
             feature_names = [f'feature_{i}' for i in range(len(importances))]
-        
-        # Sort by importance
-        importance_dict = dict(zip(feature_names, importances))
+
+        # Coerce numpy.float32 → built-in float so callers (and JSON
+        # serialisers downstream) get a clean Python type, not a numpy
+        # scalar that fails `isinstance(v, float)` checks.
+        importance_dict = {name: float(v) for name, v in zip(feature_names, importances)}
         sorted_importance = dict(
             sorted(importance_dict.items(), key=lambda x: x[1], reverse=True)[:top_n]
         )
-        
+
         return sorted_importance

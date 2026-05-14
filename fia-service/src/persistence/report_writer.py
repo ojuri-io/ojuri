@@ -66,6 +66,17 @@ LIMIT 1
 """
 
 
+_SELECT_AUDIT_BY_TXN_SQL = """
+SELECT "transactionId", "senderId", "receiverId", amount, "transactionType",
+       "championScore", "finalDecision", "decisionSource", "ruleName",
+       "createdAt"
+FROM "decisionAuditLog"
+WHERE "transactionId" = :transaction_id
+ORDER BY "createdAt" DESC
+LIMIT 1
+"""
+
+
 _LIST_REPORTS_SQL = """
 SELECT id, "transactionId", "senderId", amount, "transactionType",
        verdict, "recommendedAction", "agentConfidence", status, "createdAt"
@@ -142,7 +153,7 @@ class ReportWriter:
             "prompt_template_version": prompt_template_version,
             "generation_latency_ms": generation_latency_ms,
         }
-        rows = self._db.fetch_all(_INSERT_SQL, params)
+        rows = self._db.execute_write_returning(_INSERT_SQL, params)
         if not rows:
             logger.info(
                 "Report already exists for transaction_id=%s (idempotent skip)",
@@ -156,6 +167,30 @@ class ReportWriter:
         if not rows:
             return None
         return self._row_to_dict(rows[0])
+
+    def find_audit_by_transaction_id(self, transaction_id: str) -> Optional[Dict[str, Any]]:
+        """
+        Hydrate the missing fields of an on-demand `POST /v1/reports`
+        request from `decisionAuditLog`. Returns the canonical event
+        shape (snake_case) that FIA's generator expects, or `None`
+        when no audit row exists yet (e.g. a transaction the platform
+        has not yet seen).
+        """
+        rows = self._db.fetch_all(_SELECT_AUDIT_BY_TXN_SQL, {"transaction_id": transaction_id})
+        if not rows:
+            return None
+        r = self._row_to_dict(rows[0])
+        return {
+            "transaction_id": r.get("transactionId"),
+            "sender_id": r.get("senderId"),
+            "receiver_id": r.get("receiverId"),
+            "amount": float(r.get("amount") or 0),
+            "transaction_type": r.get("transactionType"),
+            "fraud_probability": float(r.get("championScore") or 0),
+            "decision": r.get("finalDecision") or "DECLINE",
+            "decision_source": r.get("decisionSource") or "ML",
+            "rule_name": r.get("ruleName"),
+        }
 
     def get_by_transaction_id(self, transaction_id: str) -> Optional[Dict[str, Any]]:
         rows = self._db.fetch_all(_SELECT_BY_TXN_SQL, {"transaction_id": transaction_id})
@@ -187,7 +222,7 @@ class ReportWriter:
         llm_model_version: Optional[str],
         latency_ms: Optional[int],
     ) -> bool:
-        rows = self._db.fetch_all(
+        rows = self._db.execute_write_returning(
             _INSERT_CONVERSATION_TURN_SQL,
             {
                 "report_id": report_id,

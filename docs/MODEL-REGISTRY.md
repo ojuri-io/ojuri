@@ -57,11 +57,11 @@ So:
 
 ```bash
 curl -X POST http://localhost:3000/v1/admin/models \
-  -H "X-Admin-Token: $RDA_ADMIN_TOKEN" \
+  -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
   -d '{
     "version": "v1.2.0",
-    "sourceUri": "s3://acme-models/fraud/v1.2.0.onnx",
+    "sourceUri": "models/versions/v1.2.0/model.onnx",
     "sha256": "9b40…",
     "defaultThreshold": 0.6,
     "metrics": { "f1": 0.57, "auc": 0.91, "test_samples": 118108 }
@@ -72,17 +72,19 @@ curl -X POST http://localhost:3000/v1/admin/models \
 training context, hyperparameters, dataset hashes, etc. They surface
 in `GET /v1/admin/models` and are searchable in SQL via `jsonb` operators.
 
-> **Note** — registering a model creates the **metadata** record. The
-> ONNX bytes themselves are still loaded by `OnnxService` from
-> `MODEL_PATH` (or pulled by the `MODEL_REGISTRY_URL` poller). A
-> future iteration will close that loop by fetching `sourceUri`
-> automatically on activation.
+> **How activation triggers a hot-reload.** `ModelRegistryService`
+> emits an `onActiveChange` event when the cached ACTIVE row's
+> `version` or `sourceUri` changes. `OnnxService` subscribes during
+> startup, resolves the new `sourceUri` to a local path (supports
+> `file://…`, `/abs/path`, or repo-relative — anything else is
+> skipped), copies the bytes into `MODEL_PATH` via an atomic
+> rename, and reloads the session. No RDA restart required.
 
 ## Updating threshold without re-registering
 
 ```bash
 curl -X PATCH http://localhost:3000/v1/admin/models/v1.2.0 \
-  -H "X-Admin-Token: $RDA_ADMIN_TOKEN" \
+  -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
   -d '{ "defaultThreshold": 0.62 }'
 ```
@@ -94,7 +96,7 @@ new threshold is in effect within `MODEL_REGISTRY_REFRESH_MS`.
 
 ```bash
 curl -X POST http://localhost:3000/v1/admin/models/v1.2.0/status \
-  -H "X-Admin-Token: $RDA_ADMIN_TOKEN" \
+  -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
   -d '{ "status": "ACTIVE" }'
 ```
@@ -109,7 +111,7 @@ Atomic transition:
 
 ```bash
 curl -X POST http://localhost:3000/v1/admin/models/v1.3.0/status \
-  -H "X-Admin-Token: $RDA_ADMIN_TOKEN" \
+  -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
   -d '{ "status": "SHADOW" }'
 ```
@@ -141,12 +143,26 @@ slices where the business risk profile differs from the global average.
 
 ```bash
 curl -X POST http://localhost:3000/v1/admin/segment-thresholds \
-  -H "X-Admin-Token: $RDA_ADMIN_TOKEN" \
+  -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
   -d '{ "segment": "high_value", "modelVersion": "v1.2.0", "threshold": 0.55 }'
 ```
 
 `(segment, modelVersion)` is unique; re-posting upserts the threshold.
+
+## Deleting versions
+
+```bash
+curl -X DELETE http://localhost:3000/v1/admin/models/v1.0.0 \
+  -H "Authorization: Bearer $TOKEN"
+```
+
+Requires the `models:delete` permission. Refuses ACTIVE / SHADOW with
+409 — operators must retire the model first via `setStatus`. On
+success the version row is removed AND the on-disk directory at
+`models/versions/<version>/` is deleted. The admin UI's Model
+Registry page exposes a Delete button per row gated by the same
+permission.
 
 ## Today's limitations
 
@@ -155,6 +171,10 @@ curl -X POST http://localhost:3000/v1/admin/segment-thresholds \
   second session before `shadowScore` is populated. This is intentional
   — for many adopters, the registry's metadata + audit log alone is
   enough to make A/B decisions offline against historical traffic.
-- **No automatic promotion.** Champion/challenger logic (e.g. MLA's
-  McNemar's test) lives offline in MLA. The platform exposes the
-  endpoints; the decision to flip ACTIVE is human-driven.
+- **MLA → RDA promotion is automated when wired up.** MLA's
+  `ModelRegistry` POSTs to `/v1/admin/models` + flips the new row to
+  `ACTIVE` if `RDA_API_URL` and `MLA_SERVICE_TOKEN` are set in MLA's
+  env. When they aren't, MLA still writes `models/versions/<version>/`
+  and operators activate manually from the admin UI. The McNemar test
+  inside `_run_training_pipeline` still gates whether MLA bothers
+  POSTing at all.

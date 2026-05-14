@@ -6,8 +6,6 @@ export interface ApiKeyContext {
   rateLimitPerMinute: number;
 }
 
-declare module "fastify" {
-  interface FastifyRequest {
-    apiKey?: ApiKeyContext;
-  }
-}
+// Fastify augmentation for req.apiKey / req.auth lives in
+// src/types/fastify.d.ts — kept in one place so the declarations don't
+// fight each other across modules.

@@ -43,6 +43,8 @@ WORKDIR /app
 COPY --from=builder --chown=nodejs:nodejs /app/dist ./dist
 COPY --from=builder --chown=nodejs:nodejs /app/node_modules ./node_modules
 COPY --from=builder --chown=nodejs:nodejs /app/package*.json ./
+# dist/database/index.js requires('../../knexfile') — must sit alongside dist/.
+COPY --from=builder --chown=nodejs:nodejs /app/knexfile.js ./knexfile.js
 
 # Create directories for models and data
 RUN mkdir -p /app/models /app/.kafka-buffer && \
@@ -64,7 +66,7 @@ HEALTHCHECK --interval=30s --timeout=10s --start-period=30s --retries=3 \
     CMD curl -f http://localhost:3000/livez || exit 1
 
 # Use tini as init process
-ENTRYPOINT ["/sbin/tini", "--"]
+ENTRYPOINT ["/usr/bin/tini", "--"]
 
 # Start the application
 CMD ["node", "dist/server.js"]

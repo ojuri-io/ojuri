@@ -26,6 +26,8 @@ export interface ResolvedDecisionContext {
  * label when the DB is empty (i.e. the first run before anyone
  * registers a real model).
  */
+type ActiveChangeListener = (current: ModelVersion | null, previous: ModelVersion | null) => void;
+
 @singleton()
 class ModelRegistryService {
   private champion: ModelVersion | null = null;
@@ -33,11 +35,28 @@ class ModelRegistryService {
   private thresholdsBySegment: Map<string, Map<string, number>> = new Map();
   private timer: NodeJS.Timeout | null = null;
   private loaded = false;
+  // Listeners notified when the ACTIVE model row changes (different
+  // version label or different sourceUri). OnnxService subscribes so
+  // it can hot-swap the loaded model without RDA restart.
+  private activeChangeListeners: ActiveChangeListener[] = [];
 
   constructor(
     private readonly versionRepo: ModelVersionRepo,
     private readonly thresholdRepo: SegmentThresholdRepo
   ) {}
+
+  /**
+   * Subscribe to ACTIVE-version changes. Called with `(current,
+   * previous)` whenever a reload finds a different ACTIVE row from
+   * the cached one. `previous` is `null` on the first ACTIVE seen
+   * after startup. Returns an unsubscribe function.
+   */
+  onActiveChange(fn: ActiveChangeListener): () => void {
+    this.activeChangeListeners.push(fn);
+    return () => {
+      this.activeChangeListeners = this.activeChangeListeners.filter((l) => l !== fn);
+    };
+  }
 
   async initialize(): Promise<void> {
     await this.reload();
@@ -55,8 +74,26 @@ class ModelRegistryService {
       this.thresholdRepo.listActive(),
     ]);
 
+    const previousChampion = this.champion;
     this.champion = versions.find((v) => v.status === "ACTIVE") || null;
     this.shadow = versions.find((v) => v.status === "SHADOW") || null;
+
+    // Detect "ACTIVE changed" via version label OR sourceUri delta —
+    // both matter because operators can re-register the same version
+    // pointing at a different artefact path.
+    const changed =
+      previousChampion?.version !== this.champion?.version ||
+      previousChampion?.sourceUri !== this.champion?.sourceUri;
+    if (changed && this.activeChangeListeners.length > 0) {
+      const current = this.champion;
+      for (const listener of this.activeChangeListeners) {
+        try {
+          listener(current, previousChampion);
+        } catch (err) {
+          log.error("activeChange", "Listener threw — continuing", { err: String(err) });
+        }
+      }
+    }
 
     const segMap = new Map<string, Map<string, number>>();
     for (const t of thresholds) {
@@ -128,6 +165,15 @@ class ModelRegistryService {
   }
 
   /**
+   * All segment-threshold rows. The admin UI's Models page renders
+   * these in a per-segment table; only the active set is consulted on
+   * the prediction hot path.
+   */
+  async listSegmentThresholds() {
+    return this.thresholdRepo.listAll();
+  }
+
+  /**
    * Patch mutable fields on an existing model record without
    * re-registering. Useful for nudging a threshold in production
    * without a deploy, or for backfilling `metrics` after an
@@ -149,6 +195,68 @@ class ModelRegistryService {
   }): Promise<void> {
     await this.thresholdRepo.upsert(input);
     await this.reload();
+  }
+
+  /**
+   * Hard-delete a model version. The on-disk artefacts (resolved from
+   * the row's `sourceUri`) are removed before the row to avoid an
+   * orphaned blob if the DB write fails. Refuses ACTIVE / SHADOW —
+   * callers must transition the model to RETIRED first.
+   *
+   * Returns true if a row was deleted, false if the version didn't
+   * exist. Throws when the version is still ACTIVE / SHADOW.
+   */
+  async deleteVersion(version: string): Promise<boolean> {
+    const row = await this.versionRepo.findByVersion(version);
+    if (!row) return false;
+    if (row.status === "ACTIVE" || row.status === "SHADOW") {
+      throw new Error(
+        `Cannot delete ${row.status} model '${version}' — retire it first via POST /v1/admin/models/${version}/status`
+      );
+    }
+
+    // Best-effort filesystem cleanup. `sourceUri` is a relative path
+    // (e.g. "models/versions/v1.2.0/model.onnx") — the version's
+    // sibling artefacts (scaler.npz, meta.json) live in the same
+    // directory, so we remove the directory if it's under models/.
+    const path = await import("path");
+    const fs = await import("fs/promises");
+    try {
+      const resolved = this.resolveLocalPath(row.sourceUri);
+      if (resolved && resolved.includes(path.sep + "models" + path.sep + "versions" + path.sep)) {
+        const dir = path.dirname(resolved);
+        await fs.rm(dir, { recursive: true, force: true });
+        log.info("deleteVersion", "Removed model directory", { version, dir });
+      }
+    } catch (err) {
+      // Don't abort the DB delete on filesystem errors — operators
+      // can clean up stale dirs manually if needed.
+      log.warn("deleteVersion", "Filesystem cleanup failed", {
+        version,
+        err: String(err),
+      });
+    }
+
+    await this.versionRepo.deleteByVersion(version);
+    await this.reload();
+    return true;
+  }
+
+  /**
+   * Resolve a `sourceUri` to an absolute filesystem path. Supports
+   * `file://...` URLs and bare relative paths. Anything else
+   * (s3://, http://) returns null — caller should treat that as
+   * "not a local artefact, can't manage on disk".
+   */
+  resolveLocalPath(sourceUri: string | null | undefined): string | null {
+    if (!sourceUri) return null;
+    const path = require("path") as typeof import("path");
+    if (sourceUri.startsWith("file://")) {
+      return sourceUri.slice("file://".length);
+    }
+    if (sourceUri.startsWith("/")) return sourceUri;
+    if (/^[a-z]+:\/\//i.test(sourceUri)) return null; // remote scheme
+    return path.resolve(process.cwd(), sourceUri);
   }
 
   isLoaded(): boolean {

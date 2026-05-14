@@ -40,3 +40,13 @@ __pycache__/
 # Local tool / IDE state
 .claude/
 .qodo/
+
+# Trained model artefacts — produced by `mla-service/scripts/train_initial_model.py`
+# and reproducible from training data. Source is the catalogue + scripts, not the
+# binary weights. Keep `models/feature-catalog.*.json` and `models/lookups/`.
+models/current_production_model.*
+models/fraud_model.onnx
+models/fraud_model_*.onnx
+models/fraud_model_*_scaler.npz
+models/fraud_model_*.json
+models/versions/

@@ -21,7 +21,7 @@ are not enqueued.
 ```bash
 curl -X POST http://localhost:3000/v1/admin/webhooks \
   -H "Content-Type: application/json" \
-  -H "X-Admin-Token: $RDA_ADMIN_TOKEN" \
+  -H "Authorization: Bearer $TOKEN" \
   -d '{
     "url": "https://acme.example.com/fraud-webhook",
     "events": ["decision.created", "decision.overridden"],
@@ -179,7 +179,7 @@ has exhausted its retry budget.
 
 ```bash
 curl -X DELETE http://localhost:3000/v1/admin/webhooks/<id> \
-  -H "X-Admin-Token: $RDA_ADMIN_TOKEN"
+  -H "Authorization: Bearer $TOKEN"
 ```
 
 Pending deliveries belonging to a revoked subscription are skipped on
