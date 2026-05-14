@@ -17,6 +17,7 @@ import signal
 import socketserver
 import sys
 import threading
+from http.server import ThreadingHTTPServer
 from typing import Any, Dict, List, Optional, Tuple
 
 from src.api.handler import make_handler
@@ -153,10 +154,40 @@ class FIAService:
         Returns (report_dict, http_status_code). Idempotency is by
         `transactionId` — a re-request for the same transaction returns
         the existing report row with status 200.
+
+        If the request only supplied a `transaction_id` (the common
+        case from the frontend's "Investigate" button), the rest of
+        the payload is hydrated from `decisionAuditLog` — the
+        platform already wrote a row per prediction, so callers don't
+        need to re-collect amount / sender / etc.
         """
-        existing = self._writer.get_by_transaction_id(event["transaction_id"])
+        txn_id = event["transaction_id"]
+        existing = self._writer.get_by_transaction_id(txn_id)
         if existing:
             return self._enrich_with_conversation(existing), 200
+
+        # Hydrate if any required upstream field is missing.
+        required = ("sender_id", "amount", "transaction_type")
+        if any(event.get(k) in (None, "") for k in required):
+            audit = self._writer.find_audit_by_transaction_id(txn_id)
+            if audit is None:
+                return (
+                    {
+                        "error": "transaction not found",
+                        "detail": (
+                            f"No decision audit row exists for transaction_id={txn_id}. "
+                            "Either send the full event payload (sender_id, amount, "
+                            "transaction_type) or call /v1/predict on the transaction first."
+                        ),
+                    },
+                    404,
+                )
+            # Caller-supplied values win over hydrated ones — that way a
+            # deliberate "what-if" override (e.g. bumping fraud_probability)
+            # still works on top of the audit-recorded baseline.
+            for k, v in audit.items():
+                if event.get(k) in (None, "") and v is not None:
+                    event[k] = v
 
         try:
             report, latency_ms = self._generator.generate(event)
@@ -245,9 +276,17 @@ class FIAService:
     # HTTP server (health + report API)
     # ────────────────────────────────────────────────────────────
     def _start_http_server(self) -> None:
-        socketserver.TCPServer.allow_reuse_address = True
+        # ThreadingHTTPServer hands each request to a new daemon
+        # thread. Critical: an in-flight LLM `/v1/reports` generation
+        # can take 40-90 s on CPU. With the single-threaded
+        # `TCPServer`, every other request (including `/livez` health
+        # probes from the operator dashboard and RDA's fan-out) was
+        # blocked until the generation finished — making FIA look
+        # "down" even when it was just thinking. Threading server
+        # lets health probes return instantly while reports stream.
+        ThreadingHTTPServer.allow_reuse_address = True
         try:
-            self._http_server = socketserver.TCPServer(
+            self._http_server = ThreadingHTTPServer(
                 ("0.0.0.0", config.METRICS_PORT), make_handler(self)
             )
             self._http_thread = threading.Thread(

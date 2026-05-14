@@ -31,7 +31,9 @@ interface Args {
 }
 
 function parseArgs(argv: string[]): Args {
-  const out: Args = { target: "http://localhost:3000", limit: 1000 };
+  // 127.0.0.1 not `localhost` — Node 18+ fetch resolves `localhost` to ::1
+  // on macOS, Fastify binds IPv4 only. See seed-load.ts for the same note.
+  const out: Args = { target: "http://127.0.0.1:3000", limit: 1000 };
   for (let i = 0; i < argv.length; i++) {
     const k = argv[i];
     const v = argv[i + 1];

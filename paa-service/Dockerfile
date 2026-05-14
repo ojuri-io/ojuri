@@ -59,8 +59,9 @@ EXPOSE 9090
 HEALTHCHECK --interval=30s --timeout=10s --start-period=30s --retries=3 \
     CMD curl -f http://localhost:9090/health || exit 1
 
-# Use tini as init process
-ENTRYPOINT ["/sbin/tini", "--"]
+# Use tini as init process. `apt-get install tini` on Debian places
+# the binary at /usr/bin/tini; /sbin/tini is the Alpine convention.
+ENTRYPOINT ["/usr/bin/tini", "--"]
 
 # Start the worker
 CMD ["node", "dist/worker.js"]

@@ -35,8 +35,13 @@ interface CliArgs {
 const TRANSACTION_TYPES = ["CASH_IN", "CASH_OUT", "PAYMENT", "TRANSFER", "DEBIT"] as const;
 
 function parseArgs(argv: string[]): CliArgs {
+  // Default URL uses 127.0.0.1 rather than `localhost` because Node 18+
+  // resolves `localhost` to ::1 (IPv6) on macOS, but Fastify binds to the
+  // IPv4 loopback only. Using `localhost` produces "fetch failed →
+  // connect ECONNREFUSED ::1:3000" on every request. Operators can still
+  // pass `--url http://localhost:3000` if their host actually serves IPv6.
   const out: CliArgs = {
-    url: "http://localhost:3000",
+    url: "http://127.0.0.1:3000",
     count: 100,
     concurrency: 8,
     fraudRatio: 0.02,

@@ -17,4 +17,8 @@ export enum DB_TABLES {
   RULES = "rules",
   IDEMPOTENCY_KEYS = "idempotencyKeys",
   INVESTIGATION_CONVERSATIONS = "investigationConversations",
+  USERS = "users",
+  ROLES = "roles",
+  USER_ROLES = "userRoles",
+  SAVED_REPORTS = "savedReports",
 }

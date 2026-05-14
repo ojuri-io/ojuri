@@ -42,31 +42,6 @@ export function apiKeyMiddleware(opts: { required: boolean }) {
   };
 }
 
-/**
- * Admin-only guard — gated by a shared static token configured via
- * `RDA_ADMIN_TOKEN`. Use sparingly: the admin token bypasses the
- * per-key rate limit and is intended for bootstrapping the first
- * API key, not for hot-path traffic.
- */
-export function adminTokenMiddleware() {
-  return async (req: FastifyRequest, res: FastifyReply) => {
-    const expected = process.env.RDA_ADMIN_TOKEN;
-    if (!expected) {
-      return res.code(httpStatus.SERVICE_UNAVAILABLE).send(
-        ErrorResponse("Admin API disabled: set RDA_ADMIN_TOKEN to enable")
-      );
-    }
-
-    const presented =
-      (req.headers["x-admin-token"] as string | undefined) ||
-      extractBearer(req.headers.authorization as string | undefined);
-
-    if (presented !== expected) {
-      return res.code(httpStatus.UNAUTHORIZED).send(ErrorResponse("Admin token required"));
-    }
-  };
-}
-
 function extractToken(req: FastifyRequest): string | undefined {
   const headerKey = req.headers["x-api-key"];
   if (typeof headerKey === "string" && headerKey.length > 0) {

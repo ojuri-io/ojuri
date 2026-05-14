@@ -1,0 +1,65 @@
+{
+  "$schema": "https://multi-agent-fraud-detection.io/feature-catalog/v1-adopter.json",
+  "extends": "v1",
+  "description": "Example adopter overlay. Copy to `feature-catalog.adopter.json` (no `.example`) to activate. The base catalog reserves indices 0–63; adopter overlays use 64–95 (32 slots).",
+  "features": [
+    {
+      "index": 64,
+      "name": "amount_to_balance_ratio",
+      "category": "adopter",
+      "source": "rda:derived",
+      "dtype": "float32",
+      "default": 0,
+      "description": "amount / walletBalance — wallet-drain indicator. Safe divide returns 0 when balance ≤ 0.",
+      "compute": {
+        "type": "ratio",
+        "numerator": { "field": "amount" },
+        "denominator": { "field": "walletBalance" },
+        "min_denominator": 1
+      }
+    },
+    {
+      "index": 65,
+      "name": "channel_is_ussd",
+      "category": "adopter",
+      "source": "rda:derived",
+      "dtype": "bool",
+      "default": 0,
+      "description": "Transaction came over a USSD channel — higher-risk in NG mobile money.",
+      "compute": {
+        "type": "equals",
+        "field": "transactionChannel",
+        "value": "USSD"
+      }
+    },
+    {
+      "index": 66,
+      "name": "txn_country_high_risk",
+      "category": "adopter",
+      "source": "rda:derived",
+      "dtype": "bool",
+      "default": 0,
+      "description": "Transaction country is on the adopter's high-risk list (FATF grey + internal additions).",
+      "compute": {
+        "type": "is_one_of",
+        "field": "transactionCountry",
+        "values": ["IR", "KP", "MM", "SY"]
+      }
+    },
+    {
+      "index": 67,
+      "name": "purpose_bucket",
+      "category": "adopter",
+      "source": "rda:derived",
+      "dtype": "uint8",
+      "default": 0,
+      "description": "Coarse purpose code derived from a controlled vocabulary lookup.",
+      "compute": {
+        "type": "lookup",
+        "field": "purpose",
+        "table": "purpose_buckets.json",
+        "default": 0
+      }
+    }
+  ]
+}

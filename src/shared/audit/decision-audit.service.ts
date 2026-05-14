@@ -1,7 +1,7 @@
 import { singleton } from "tsyringe";
 import { createServiceLogger } from "@shared/utils/logger/service-logger";
 import { ReasonCode } from "@shared/onnx/reason-codes";
-import DecisionAuditRepo from "./repositories/decision-audit.repo";
+import DecisionAuditRepo, { AuditListFilters } from "./repositories/decision-audit.repo";
 import { DecisionAudit } from "./model/decision-audit.model";
 
 const log = createServiceLogger("DecisionAudit");
@@ -103,6 +103,35 @@ class DecisionAuditService {
       decision: input.decision,
       reason: input.reason ?? null,
     });
+
+    // Propagate the verified verdict to `transactions.groundTruthFraud`
+    // so MLA's next retrain uses this row as a real label instead of
+    // the system's own prior decision. This is the feedback loop:
+    // human review → ground truth → next model.
+    //
+    // Mapping: DECLINE override = "reviewer confirmed fraud" = true.
+    //          ACCEPT  override = "reviewer cleared it"      = false.
+    //
+    // Best-effort — a missing matching transactions row (e.g. PAA
+    // hadn't flushed yet) just means we'll wait for the next
+    // override on a later prediction; we don't fail the override
+    // on a label-write hiccup.
+    if (row) {
+      try {
+        await this.repo.writeGroundTruth({
+          transactionId: row.transactionId,
+          groundTruthFraud: input.decision === "DECLINE",
+          source: "reviewer_override",
+          recordedBy: input.reviewer,
+        });
+      } catch (err) {
+        log.warn("override", "Ground-truth write failed; override still recorded", {
+          transactionId: row.transactionId,
+          err: String(err),
+        });
+      }
+    }
+
     return row ?? null;
   }
 
@@ -118,6 +147,18 @@ class DecisionAuditService {
 
   async listReviewQueue(opts?: { limit?: number }): Promise<DecisionAudit[]> {
     return this.repo.listReviewQueue(opts?.limit ?? 100);
+  }
+
+  async listFiltered(filters: AuditListFilters) {
+    return this.repo.listFiltered(filters);
+  }
+
+  async listRecentSince(since: Date | null, limit: number) {
+    return this.repo.listRecentSince(since, limit);
+  }
+
+  async listSimilar(auditId: string, limit: number) {
+    return this.repo.listSimilar(auditId, limit);
   }
 }
 

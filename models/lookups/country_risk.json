@@ -1,0 +1,9 @@
+{
+  "$comment": "ISO-3166 alpha-2 → risk band. 0=low, 1=medium, 2=high, 3=sanctioned/grey. Reviewed against FATF grey + EU high-risk list 2025-Q4. Operators should fork-and-tune for their own risk appetite.",
+  "NG": 1, "GH": 1, "KE": 1, "ZA": 1, "EG": 1, "MA": 1,
+  "US": 0, "GB": 0, "DE": 0, "FR": 0, "CA": 0, "AU": 0, "JP": 0, "SG": 0,
+  "AE": 1, "TR": 1, "RU": 2,
+  "IR": 3, "KP": 3, "MM": 3, "SY": 3, "VE": 2, "CU": 2,
+  "AF": 2, "YE": 2, "LY": 2, "SD": 2, "SO": 2,
+  "$default": 1
+}

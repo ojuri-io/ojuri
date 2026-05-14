@@ -12,6 +12,14 @@ class SegmentThresholdRepo extends BaseRepository<ISegmentThreshold, SegmentThre
     return SegmentThreshold.query().where({ isActive: true });
   }
 
+  /**
+   * All segment-threshold rows, newest first. Used by the admin UI so
+   * operators can see overrides even after they've been deactivated.
+   */
+  async listAll(): Promise<SegmentThreshold[]> {
+    return SegmentThreshold.query().orderBy("updatedAt", "desc");
+  }
+
   async upsert(input: { segment: string; modelVersion: string; threshold: number }): Promise<void> {
     // Objection has no first-class upsert. Use raw `ON CONFLICT` via
     // the underlying knex builder for the (segment, modelVersion)

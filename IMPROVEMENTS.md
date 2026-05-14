@@ -61,8 +61,12 @@ service exposes:
 |------|--------|
 | `modelVersions` registry table (sha256, source URI, status, metrics) | Implemented |
 | Activate / shadow / retire endpoints | Implemented |
+| Filesystem-backed registry (`models/versions/<v>/`) — MinIO retired | Implemented |
 | Per-segment thresholds (segment × model_version) | Implemented |
 | Backtest endpoint (replay historical traffic) | Implemented (CLI) |
+| Catalogue-driven feature contract (64 base + adopter overlay) | Implemented |
+| Schema-version enforcement on model load | Implemented |
+| Reviewer-override → `groundTruthFraud` propagation for retrain | Implemented |
 | Canary traffic split by API-key cohort | Follow-up |
 | Champion / challenger automated promotion | Follow-up (MLA-side hook) |
 

@@ -30,10 +30,12 @@ logger = get_logger(__name__)
 def train_initial_model(num_samples: int = None, skip_registry: bool = False):
     """
     Train initial fraud detection model.
-    
+
     Args:
         num_samples: Number of training samples (overrides config)
-        skip_registry: Skip uploading to MinIO (for local testing)
+        skip_registry: Skip materialising into ``models/versions/`` and
+            registering with RDA (useful for local sanity checks where
+            you only want the raw ONNX artefact).
     """
     logger.info("=" * 60)
     logger.info("MLA INITIAL MODEL TRAINING")
@@ -116,38 +118,33 @@ def train_initial_model(num_samples: int = None, skip_registry: bool = False):
         logger.info(f"  ONNX model saved: {onnx_path}")
         logger.info(f"  Size: {model_info.get('size_mb', 0):.2f} MB")
     
-    # Step 5: Upload to registry (optional)
+    # Step 5: Materialise into the filesystem registry (optional).
+    # Writes models/versions/v1.0/{model.onnx,model.pkl,scaler.npz,meta.json}
+    # and, when RDA_API_URL + MLA_SERVICE_TOKEN are set, registers the
+    # version with RDA and flips it to ACTIVE so OnnxService hot-reloads.
     logger.info("")
     logger.info("[5/5] Saving to model registry...")
-    
+
     if skip_registry:
-        logger.info("  Skipping registry upload (--skip-registry flag)")
+        logger.info("  Skipping registry materialisation (--skip-registry flag)")
     else:
         try:
             registry = ModelRegistry(config)
-            if registry.is_available():
-                # Save XGBoost model
-                xgb_path = os.path.join(output_dir, 'fraud_model_v1.0.pkl')
-                import pickle
-                with open(xgb_path, 'wb') as f:
-                    pickle.dump(model, f)
-                
-                version = registry.upload_model(
-                    model_path=xgb_path,
-                    onnx_path=onnx_path,
-                    metadata={
-                        'metrics': metrics,
-                        'num_features': X_train.shape[1],
-                        'training_samples': len(X_train),
-                        'is_initial_model': True
-                    }
-                )
-                logger.info(f"  Uploaded as version: {version}")
-            else:
-                logger.warning("  MinIO not available - model saved locally only")
+            version = registry.upload_model(
+                model=model,
+                model_path=onnx_path,
+                version='v1.0',
+                metadata={
+                    **metrics,
+                    'num_features': X_train.shape[1],
+                    'training_samples': len(X_train),
+                    'is_initial_model': True,
+                },
+            )
+            logger.info(f"  Registered as version: {version}")
         except Exception as e:
-            logger.warning(f"  Registry upload failed: {e}")
-            logger.info("  Model saved locally at: " + output_dir)
+            logger.warning(f"  Registry materialisation failed: {e}")
+            logger.info("  Raw ONNX still saved at: " + output_dir)
     
     # Summary
     logger.info("")
@@ -177,7 +174,7 @@ if __name__ == '__main__':
     parser.add_argument(
         '--skip-registry',
         action='store_true',
-        help='Skip uploading to MinIO registry'
+        help='Skip materialising version into models/versions/ and registering with RDA'
     )
     
     args = parser.parse_args()

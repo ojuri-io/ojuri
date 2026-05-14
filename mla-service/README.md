@@ -8,7 +8,7 @@ A Python-based automated model retraining service for fraud detection. This serv
 - **Automated Retraining**: XGBoost model with SMOTE for class imbalancing
 - **A/B Testing**: McNemar's statistical test for model comparison
 - **ONNX Conversion**: Converts models to ONNX format for RDA service inference
-- **Model Registry**: MinIO S3-compatible storage for model versioning
+- **Model Registry**: Filesystem-backed. Versions land in `models/versions/<v>/` (shared with RDA via bind-mount) and are registered with RDA over `POST /v1/admin/models`
 
 ## Architecture
 
@@ -30,8 +30,10 @@ A Python-based automated model retraining service for fraud detection. This serv
 │                                                │                │
 │                                                ▼                │
 │                                         ┌──────────────┐       │
-│                                         │ MinIO Model  │       │
+│                                         │ Filesystem   │       │
 │                                         │   Registry   │       │
+│                                         │ models/      │       │
+│                                         │ versions/    │       │
 │                                         └──────────────┘       │
 └─────────────────────────────────────────────────────────────────┘
 ```
@@ -43,7 +45,7 @@ A Python-based automated model retraining service for fraud detection. This serv
 - Python 3.11+
 - PostgreSQL database with transactions table
 - Kafka for event streaming
-- MinIO for model storage (optional)
+- Shared `models/` directory bind-mounted between RDA and MLA (registry artefacts)
 
 ### Installation
 
@@ -74,7 +76,7 @@ python scripts/train_initial_model.py
 # Train with custom sample size (for testing)
 python scripts/train_initial_model.py --samples 10000
 
-# Skip MinIO upload (local only)
+# Skip filesystem registry materialisation (raw ONNX only)
 python scripts/train_initial_model.py --skip-registry
 ```
 
@@ -164,7 +166,7 @@ mla-service/
 │   ├── consumer/
 │   │   └── kafka_consumer.py # Kafka event consumer
 │   ├── deployment/
-│   │   ├── model_registry.py # MinIO model storage
+│   │   ├── model_registry.py # Filesystem registry + RDA admin bridge
 │   │   └── onnx_converter.py # XGBoost → ONNX
 │   ├── monitoring/
 │   │   └── drift_detector.py # F1 + PSI monitoring
@@ -255,7 +257,7 @@ pip install onnx==1.13.0 onnxmltools==1.10.0 onnxconverter-common==1.12.0
 Key considerations adopters should be aware of:
 
 - **Fraud Label Delay**: Real fraud labels arrive 3-7 days after transaction (via chargebacks). The drift detector and retraining cadence are designed around this delayed-feedback constraint.
-- **Placeholder Features**: ~20 core features are extracted from PAA and the loader pads with zeros to the model's expected 434 dimensions. The architecture supports extending this without changes to RDA — it is the obvious customisation point for adopters.
+- **Catalogue-Driven Features**: The base catalogue (`models/feature-catalog.v1.json`) defines 64 features in 9 categories. Adopters extend this via `feature-catalog.adopter.json` overlay using declarative compute ops — no Python or TS code changes required. See `docs/FEATURES.md`.
 - **SMOTE**: Critical for handling severe class imbalance in fraud data (~0.1% fraud rate). Applied on the training split only — never on validation/test.
 - **Synthetic Data Fallback**: When no labeled data exists, synthetic data is generated. This is fine for development and integration tests; production requires real fraud/non-fraud labels.
 - **ONNX Library Pinning**: `onnx==1.13.0` / `onnxmltools==1.10.0` are deliberately pinned — newer versions break XGBoost-to-ONNX conversion with a `Field onnx.AttributeProto.ints` type mismatch.

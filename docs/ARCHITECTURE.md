@@ -20,33 +20,40 @@ This system is a polyglot monorepo of **four independently deployable services**
                                   │             │             │
                                   └─────────────┼─────────────┘
                                                 ▼
-                ┌───────────────┬─────────────────────────────┬──────────────┐
-                │               │                             │              │
-                ▼               ▼                             ▼              ▼
-            ┌───────┐    ┌──────────────┐               ┌──────────┐   ┌──────────┐
-            │ Redis │    │ Apache Kafka │               │ Postgres │   │  MinIO   │
-            └───────┘    └──┬────────┬──┘               └────┬─────┘   └─────┬────┘
-                ▲           │        │                       ▲               ▲
-                │           │        │                       │               │
-                │     ┌─────┘        └───────┐               │               │
-                │     │ transactions.        │ transactions. │               │
-                │     │ completed            │ blocked       │               │
-                │     ▼ (keyed by sender_id) ▼ (keyed by tx) │               │
-                │  ┌──────────┐         ┌─────────┐          │               │
-                │  │ PAA-1/-2 │         │   FIA   │──────────┤               │
-                │  └────┬─────┘         └────┬────┘  inv-    │               │
-                └──────┘                     │       Reports │               │
-                  refresh                    │               │               │
-                  features                   ▼               │               │
-                                         ┌────────┐          │               │
-                                         │ Phi-3  │          │               │
-                                         │  LLM   │          │               │
-                                         └────────┘          │               │
-                                                             │               │
-                                                       ┌─────┴────────┐      │
-                                                       │     MLA      │──────┘
-                                                       │ drift+train  │ deploy
-                                                       └──────────────┘ ONNX
+                ┌───────────────┬─────────────────────────────┐
+                │               │                             │
+                ▼               ▼                             ▼
+            ┌───────┐    ┌──────────────┐               ┌──────────┐
+            │ Redis │    │ Apache Kafka │               │ Postgres │
+            └───────┘    └──┬────────┬──┘               └────┬─────┘
+                ▲           │        │                       ▲
+                │           │        │                       │
+                │     ┌─────┘        └───────┐               │
+                │     │ transactions.        │ transactions. │
+                │     │ completed            │ blocked       │
+                │     ▼ (keyed by sender_id) ▼ (keyed by tx) │
+                │  ┌──────────┐         ┌─────────┐          │
+                │  │ PAA-1/-2 │         │   FIA   │──────────┤
+                │  └────┬─────┘         └────┬────┘  inv-    │
+                └──────┘                     │       Reports │
+                  refresh                    │               │
+                  features                   ▼               │
+                                         ┌────────┐          │
+                                         │ Phi-3  │          │
+                                         │  LLM   │          │
+                                         └────────┘          │
+                                                             │
+                                                       ┌─────┴────────┐
+                                                       │     MLA      │
+                                                       │ drift+train  │
+                                                       └──────┬───────┘
+                                                              │ writes models/versions/<v>/
+                                                              ▼
+                                                       ┌────────────┐
+                                                       │ models/    │  ← shared
+                                                       │ filesystem │    bind-mount
+                                                       │ registry   │    with RDA
+                                                       └────────────┘
 ```
 
 `fraud_db` (a single Postgres database) is owned by RDA's Knex migrations; PAA, MLA and FIA read/write the same tables but do **not** own migrations. Postgres listens on host port `5433`, Redis on `6380`, Kafka on `9092`.
@@ -63,9 +70,9 @@ This system is a polyglot monorepo of **four independently deployable services**
 
 **Pipeline (`src/v1/modules/rda/services/predict.service.ts`, lines 30–116):**
 
-1. **Feature lookup** — `FeatureService.getFeatures()` reads `features:{senderId}` from Redis behind an `opossum` circuit breaker. On miss or breaker-open it returns the static `DEFAULT_FEATURES` vector and logs a degraded-accuracy warning.
-2. **Enrichment** — copies the user feature vector and writes the request `amount` (position 10) and the transaction-type encoding (position 11). The full vector has 434 dimensions.
-3. **Inference** — `OnnxService.predict()` runs the XGBoost model through ONNX Runtime, wrapped in a second circuit breaker. **Fails closed**: on inference failure the breaker returns probability 1.0, i.e. DECLINE.
+1. **Feature lookup** — `FeatureService.getFeatures()` reads `features:{senderId}` from Redis behind an `opossum` circuit breaker. On miss or breaker-open it returns a default snapshot and logs a degraded-accuracy warning.
+2. **Build vector** — `buildFeatures(catalog, request, redisSnapshot)` resolves every catalogue feature (64 base + adopter overlay) into a single `Float32Array`. Base features have hand-written resolvers; adopter features delegate to the compute-op executor. The vector width comes from the catalogue — no fixed 434 ceiling, no zero-padding placeholders.
+3. **Inference** — `OnnxService.predict()` runs the XGBoost model through ONNX Runtime, wrapped in a second circuit breaker. **Fails closed**: on inference failure the breaker returns probability 1.0, i.e. DECLINE. `MODEL_INPUT_DIMENSION` pad-to-fit covers the brief transition when a wider legacy model is still ACTIVE.
 4. **Decision** — binary: `fraud = probability >= FRAUD_THRESHOLD` (default 0.65). Decision is `"ACCEPT"` or `"DECLINE"` — there is no `REVIEW` branch.
 5. **Publish** — fire-and-forget to Kafka. Always emits to `transactions.completed` keyed by `sender_id`. On `DECLINE` it additionally emits the same event to `transactions.blocked` keyed by `transaction_id`. Neither publish blocks the HTTP response.
 
@@ -147,7 +154,7 @@ This system is a polyglot monorepo of **four independently deployable services**
 3. Run McNemar's chi-squared test with continuity correction against the currently deployed model (`validator.py`, lines 143–184).
 4. Deploy the candidate **only** if the raw F1 improvement ≥ 0.01 **and** the change is significant at α = 0.05.
 5. Convert to ONNX (`onnx==1.13.0` / `onnxmltools==1.10.0` — newer versions break XGBoost conversion). Output is `.onnx` + `_scaler.npz` (StandardScaler mean/variance) + `_metadata.json`.
-6. Register in MinIO; deployment to RDA is `cp models/fraud_model_v1.0.onnx ../models/fraud_model.onnx`.
+6. Materialise into the filesystem registry under `models/versions/<v>/{model.onnx,model.pkl,scaler.npz,meta.json}` (shared bind-mount with RDA), then POST `/v1/admin/models` and flip to `ACTIVE`. RDA's `OnnxService.onActiveChange` listener hot-swaps the session — no copy step, no restart.
 
 A full retrain on 683,852 IEEE-CIS rows including SMOTE and 5-fold CV completes in ~28 s on a single CPU.
 
@@ -222,14 +229,32 @@ A full retrain on 683,852 IEEE-CIS rows including SMOTE and 5-fold CV completes 
 ### Learning path (offline, periodic)
 
 ```
-1. MLA pull labelled rows from Postgres
+1. MLA pull labelled rows from Postgres (decisionSource = 'ML' only)
 2. MLA evaluate deployed model: F1 + PSI(amount)
 3. If drift: retrain XGBoost + SMOTE
 4. McNemar's test vs deployed model
-5. If significant improvement: ONNX export
-6. Push to MinIO model registry
-7. cp into models/fraud_model.onnx → next RDA restart loads new model
+5. If significant improvement: ONNX export to models/versions/<version>/
+6. MLA POSTs /v1/admin/models (register CANDIDATE) and
+   /v1/admin/models/<version>/status (ACTIVE) on RDA
+7. RDA's ModelRegistryService fires its onActiveChange listener →
+   OnnxService loads the new ONNX bytes from models/versions/<version>/
+   and atomically replaces the in-process session. No restart needed.
 ```
+
+Filesystem layout (shared bind-mount; RDA reads, MLA writes):
+
+```
+models/
+├── fraud_model.onnx           # legacy MODEL_PATH default — kept for cold-start
+└── versions/
+    ├── v1.0.0/{model.onnx, model.pkl, scaler.npz, meta.json}
+    ├── v1.1.0/…
+    └── v1.2.0/…
+```
+
+The MinIO step that earlier revisions documented has been retired
+from the self-hosted distribution — adopters who want object storage
+can fork and reintroduce it without changing this schema.
 
 ---
 
@@ -244,9 +269,10 @@ A full retrain on 683,852 IEEE-CIS rows including SMOTE and 5-fold CV completes 
 | Redis       | 6379          | **6380**  | Avoids the local 6379 |
 | Kafka       | 9092          | 9092      | Event bus |
 | Zookeeper   | 2181          | —         | Kafka coordination |
-| MinIO       | 9000/9001     | 9000/9001 | Model registry |
 | Prometheus  | 9090          | 9099      | Metrics scrape |
 | Grafana     | 3000          | 3001      | Dashboards |
+
+Model registry: filesystem-backed under `models/versions/`, shared between RDA and MLA via bind-mount. See `docs/MODEL-REGISTRY.md`.
 
 ### Spinning up the system
 
@@ -279,11 +305,12 @@ The shipped `docker-compose.yml` runs the full production stack (3× RDA, 2× PA
 
 Owned by Knex migrations under `src/database/migrations/`:
 
-- `transactions` — fraud-scored events, with `fraudLabel` filled later by chargeback feedback (used for MLA training).
+- `transactions` — fraud-scored events. `fraudLabel` is the upstream "system decided this was fraud" signal; `groundTruthFraud` is the verified label (populated by reviewer overrides, chargebacks, customer reports). MLA's training query prefers `groundTruthFraud` via `COALESCE`, falling back to `fraudLabel` for unlabelled rows.
 - `fraudAlerts` — high-risk transaction summaries.
 - `graphMetadata` — PAA-emitted network features, persisted every 100 events.
 - `velocitySnapshots` — periodic snapshots of velocity windows.
-- `modelMetadata` — model-version registry rows (mirrors MinIO).
+- `modelVersions` / `segmentThresholds` — model-version registry rows + per-segment threshold routing.
+- `decisionAuditLog` — one row per `/v1/predict` with model versions, scores, threshold, rule hit, reason codes, feature snapshot, reviewer fields.
 - `investigationReports` — FIA output. **`transactionId` is UNIQUE** — required for the idempotency guard on FIA writes.
 - `auditTrails` — system audit logs.
 - `deadLetterQueue` — failed message retry queue.
@@ -345,7 +372,7 @@ The numbers below were measured on a single developer workstation (Apple Silicon
 
 ## Known Limitations
 
-1. **Feature pipeline is in PROTOTYPE MODE.** PAA extracts ~20 real per-user features and the dataset loader pads to 434 with zeroed placeholders to match the model input shape. The architecture supports closing this gap without changes to RDA — additional feature engineering is an expected extension point for adopters. See `mla-service/src/training/dataset_loader.py` lines 288–306.
+1. **Feature catalogue v1 ships at 64 features.** Base coverage spans 9 categories (velocity, pair, graph, transaction, identity, receiver, geographic, device, calendar). Adopters extend via the JSON overlay — `models/feature-catalog.adopter.json` — without touching code. PAA still computes per-user signals; the legacy 434-dim zero-padding and "PROTOTYPE MODE" warning have been removed. See `docs/FEATURES.md` for the catalogue and compute-op reference.
 2. **Two model artefacts exist.** `models/fraud_model.onnx` is the deployed PaySim-trained model whose F1 = 0.999 numbers are inflated by balance-delta label leakage. `mla-service/models/fraud_model_v1.0.onnx` is the IEEE-CIS-trained candidate (F1 = 0.554, AUC = 0.911) — the more honest signal.
 3. **FIA is not yet in `docker-compose.yml`.** The LLM weights and accelerator selection are environment-specific; FIA runs from its own Python venv on the host today.
 4. **Single-host benchmarks.** The performance numbers above describe one RDA replica on a developer workstation. The reference deployment runs three replicas behind NGINX; multi-host load testing is left to adopters who can size for their own traffic profile.

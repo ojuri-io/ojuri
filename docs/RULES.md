@@ -147,7 +147,7 @@ Set `tenantId` on the rule; only requests with a matching
 
 ```bash
 curl -X PATCH http://localhost:3000/v1/admin/rules/<id> \
-  -H "X-Admin-Token: $RDA_ADMIN_TOKEN" \
+  -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
   -d '{ "isActive": false }'
 ```

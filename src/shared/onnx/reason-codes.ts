@@ -49,6 +49,16 @@ const FEATURES: FeatureSpec[] = [
   { index: 11, code: "TRANSACTION_TYPE",   description: "Transaction type associated with elevated risk", baseline: 0,   scale: 4,    weight:  0.05 },
 ];
 
+/**
+ * Public catalogue of reason codes. Exposed to admin UIs (Audit log
+ * filter chips) so they don't ship hardcoded lists. Each entry is
+ * `{ code, description }`; weights/baselines are deliberately private
+ * (callers don't need them and they may shift between model versions).
+ */
+export const REASON_CODE_CATALOGUE: Array<{ code: string; description: string }> = FEATURES.map(
+  (f) => ({ code: f.code, description: f.description })
+);
+
 export function explain(features: Float32Array, topN = 3): ReasonCode[] {
   const contributions: ReasonCode[] = [];
 

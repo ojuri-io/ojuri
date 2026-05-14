@@ -1,363 +1,352 @@
 """
-Model registry for MinIO S3-compatible storage.
-Handles model versioning, upload, download, and retrieval.
+Model registry — filesystem-backed.
+
+MinIO has been retired from the self-hosted distribution. The flow is
+now:
+
+  1. Training writes `models/versions/<version>/{model.onnx,model.pkl,
+     scaler.npz,meta.json}` under the repo-root `models/` directory
+     (shared bind-mount with RDA).
+  2. MLA POSTs `/v1/admin/models` against RDA to record the version
+     with `sourceUri = "models/versions/<version>/model.onnx"` (a
+     relative path that resolves identically from RDA's container
+     WORKDIR and MLA's host cwd).
+  3. On McNemar success, MLA POSTs
+     `/v1/admin/models/<version>/status` with `ACTIVE` — RDA's
+     `ModelRegistryService` fires its `onActiveChange` listener and
+     `OnnxService` hot-swaps the loaded session.
+
+Operators can list/retire/delete versions via the admin UI; deleting a
+RETIRED row also removes the on-disk version directory. There is no
+S3 / object-storage step in this path; the `models/` directory IS the
+registry.
 """
 
-from minio import Minio
-from minio.error import S3Error
+import hashlib
+import json
 import logging
 import os
-import json
 import pickle
+import shutil
+import time
 from datetime import datetime
-from typing import Optional, Dict, List
+from pathlib import Path
+from typing import Any, Dict, Optional
 
-from src.config import config
+import requests
+
+from src.features.catalog import load_catalog
+
 
 logger = logging.getLogger(__name__)
 
 
+def _sha256_file(path: str) -> str:
+    h = hashlib.sha256()
+    with open(path, "rb") as f:
+        for chunk in iter(lambda: f.read(8192), b""):
+            h.update(chunk)
+    return h.hexdigest()
+
+
 class ModelRegistry:
     """
-    Upload/download models from MinIO S3-compatible storage.
-    
-    Features:
-    - Versioned model storage
-    - Metadata tracking
-    - Scaler parameter storage
-    - Both ONNX (for RDA) and pickle (for MLA) storage
+    Filesystem model registry. Writes to
+    ``<MODEL_OUTPUT_DIR>/versions/<version>/`` and, when configured,
+    registers the version with RDA via the admin API.
+
+    The contract mirrors the old MinIO-backed class so ``main.py``
+    didn't need to change — same method names, same return shapes.
     """
-    
+
     def __init__(self, config):
-        """Initialize MinIO client and create bucket if needed."""
-        try:
-            self.client = Minio(
-                config.MINIO_ENDPOINT,
-                access_key=config.MINIO_ACCESS_KEY,
-                secret_key=config.MINIO_SECRET_KEY,
-                secure=config.MINIO_SECURE
+        self.config = config
+
+        # Repo-root `models/` is the canonical location — shared with
+        # RDA via bind-mount in docker-compose. Default points there;
+        # operators can override via MODEL_OUTPUT_DIR for tests.
+        self.root = Path(config.MODEL_OUTPUT_DIR).resolve()
+        self.versions_dir = self.root / "versions"
+        self.versions_dir.mkdir(parents=True, exist_ok=True)
+
+        # Optional RDA bridge. When unset, MLA still writes locally
+        # so the operator can `cp` manually or activate via the UI.
+        self.rda_api_url: Optional[str] = (
+            getattr(config, "RDA_API_URL", None) or os.getenv("RDA_API_URL") or None
+        )
+        self.rda_token: Optional[str] = (
+            getattr(config, "MLA_SERVICE_TOKEN", None)
+            or os.getenv("MLA_SERVICE_TOKEN")
+            or None
+        )
+
+        logger.info("ModelRegistry (filesystem) ready at %s", self.root)
+        if not self.rda_api_url or not self.rda_token:
+            logger.warning(
+                "RDA_API_URL / MLA_SERVICE_TOKEN not configured — "
+                "MLA will write versions locally but won't auto-register "
+                "with RDA. Activate manually via the admin UI."
             )
-            
-            self.bucket = config.MINIO_BUCKET
-            
-            # Create bucket if it doesn't exist
-            if not self.client.bucket_exists(self.bucket):
-                self.client.make_bucket(self.bucket)
-                logger.info(f"Created MinIO bucket: {self.bucket}")
-            
-            logger.info(f"✅ ModelRegistry connected: {config.MINIO_ENDPOINT}/{self.bucket}")
-            
-        except S3Error as e:
-            logger.error(f"❌ MinIO connection failed: {e}")
-            raise
-        except Exception as e:
-            logger.warning(f"⚠️  MinIO not available: {e}")
-            logger.warning("   Running in local-only mode (models saved locally)")
-            self.client = None
-            self.bucket = None
-    
+
+    # ───────────────────────────────────────────────────────────
+    # Public API (matches the old MinIO-backed class)
+    # ───────────────────────────────────────────────────────────
     def upload_model(
-        self, 
-        model, 
-        model_path: str, 
-        version: str, 
-        metadata: dict
+        self, model, model_path: str, version: str, metadata: dict
     ) -> str:
         """
-        Upload model to registry with versioning.
-        
-        Uploads THREE files:
-        1. ONNX model (for RDA inference)
-        2. Pickled XGBoost (for MLA A/B testing)
-        3. Metadata JSON
-        
-        Args:
-            model: Trained XGBoost model object
-            model_path: Local path to .onnx file
-            version: Model version (e.g., "v1.0")
-            metadata: Model metadata dict
-        
-        Returns:
-            Base object name (without extension)
+        Materialise a versioned model directory and, if configured,
+        register the version with RDA + flip to ACTIVE.
+
+        Returns the version label (used by callers for logging).
         """
-        timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-        base_name = f"fraud_model_{timestamp}_{version}"
-        
-        logger.info(f"Uploading model to registry...")
-        logger.info(f"  Version: {version}")
-        
-        # If MinIO not available, save locally only
-        if self.client is None:
-            logger.warning("MinIO not available - saving locally only")
-            return self._save_locally(model, model_path, version, metadata)
-        
-        logger.info(f"  Bucket: {self.bucket}")
-        
-        try:
-            # 1. Upload ONNX file (for RDA)
-            onnx_object_name = f"{base_name}.onnx"
-            self.client.fput_object(
-                bucket_name=self.bucket,
-                object_name=onnx_object_name,
-                file_path=model_path,
-                content_type='application/octet-stream'
-            )
-            logger.info(f"  ✅ ONNX: {onnx_object_name}")
-            
-            # 2. Upload pickled model (for MLA A/B testing)
-            pickle_path = model_path.replace('.onnx', '.pkl')
-            with open(pickle_path, 'wb') as f:
-                pickle.dump(model, f)
-            
-            pickle_object_name = f"{base_name}.pkl"
-            self.client.fput_object(
-                bucket_name=self.bucket,
-                object_name=pickle_object_name,
-                file_path=pickle_path
-            )
-            logger.info(f"  ✅ Pickle: {pickle_object_name}")
-            
-            # 3. Upload metadata
-            metadata_name = f"{base_name}_metadata.json"
-            metadata_path = model_path.replace('.onnx', '_metadata.json')
-            
-            with open(metadata_path, 'w') as f:
-                json.dump(metadata, f, indent=2, default=str)
-            
-            self.client.fput_object(
-                bucket_name=self.bucket,
-                object_name=metadata_name,
-                file_path=metadata_path,
-                content_type='application/json'
-            )
-            logger.info(f"  ✅ Metadata: {metadata_name}")
-            
-            # 4. Upload scaler if exists
-            scaler_path = model_path.replace('.onnx', '_scaler.npz')
-            if os.path.exists(scaler_path):
-                scaler_name = f"{base_name}_scaler.npz"
-                self.client.fput_object(
-                    bucket_name=self.bucket,
-                    object_name=scaler_name,
-                    file_path=scaler_path
-                )
-                logger.info(f"  ✅ Scaler: {scaler_name}")
-            
-            logger.info(f"✅ Model upload complete: {base_name}")
-            
-            return base_name
-            
-        except S3Error as e:
-            logger.error(f"❌ Upload failed: {e}")
-            raise
-    
-    def _save_locally(
-        self,
-        model,
-        model_path: str,
-        version: str,
-        metadata: dict
-    ) -> str:
-        """Save model locally when MinIO is not available."""
-        base_name = f"fraud_model_{version}"
-        
-        # Save pickle
-        pickle_path = model_path.replace('.onnx', '.pkl')
-        with open(pickle_path, 'wb') as f:
+        version_dir = self.versions_dir / version
+        version_dir.mkdir(parents=True, exist_ok=True)
+
+        onnx_dst = version_dir / "model.onnx"
+        pickle_dst = version_dir / "model.pkl"
+        scaler_dst = version_dir / "scaler.npz"
+        meta_dst = version_dir / "meta.json"
+
+        # 1. ONNX — the artefact RDA loads.
+        shutil.copyfile(model_path, onnx_dst)
+        sha256 = _sha256_file(str(onnx_dst))
+        logger.info("  ✅ ONNX:    %s (sha256 %s)", onnx_dst, sha256[:12])
+
+        # 2. Pickle — needed for A/B test on the next retrain cycle.
+        with open(pickle_dst, "wb") as f:
             pickle.dump(model, f)
-        logger.info(f"  ✅ Pickle: {pickle_path}")
-        
-        # Save metadata
-        metadata_path = model_path.replace('.onnx', '_metadata.json')
-        with open(metadata_path, 'w') as f:
-            json.dump(metadata, f, indent=2, default=str)
-        logger.info(f"  ✅ Metadata: {metadata_path}")
-        
-        return base_name
-    
-    def list_models(self) -> List[Dict]:
+        logger.info("  ✅ Pickle:  %s", pickle_dst)
+
+        # 3. Scaler — co-located so RDA-side ONNX inputs match.
+        scaler_src = model_path.replace(".onnx", "_scaler.npz")
+        if os.path.exists(scaler_src):
+            shutil.copyfile(scaler_src, scaler_dst)
+            logger.info("  ✅ Scaler:  %s", scaler_dst)
+
+        # 4. Metadata — full training context for the audit trail.
+        # `feature_schema_version` is the contract RDA enforces on
+        # load: it embeds the base catalogue version plus a SHA of
+        # any adopter overlay. If an operator changes the overlay,
+        # this string changes, the model bakes the new value into
+        # meta.json, and RDA refuses to ACTIVATE older models whose
+        # baked version doesn't match the running catalogue.
+        catalog = load_catalog()
+        meta_payload = {
+            **metadata,
+            "version": version,
+            "sha256": sha256,
+            "feature_schema_version": catalog.schema_version,
+            "feature_input_dimension": catalog.input_dimension,
+            "uploaded_at": datetime.utcnow().isoformat() + "Z",
+        }
+        with open(meta_dst, "w") as f:
+            json.dump(meta_payload, f, indent=2, default=str)
+        logger.info("  ✅ Meta:    %s (schema %s)", meta_dst, catalog.schema_version)
+
+        # 5. RDA registration. The `sourceUri` is a repo-relative path
+        # so the same value resolves from both RDA's container WORKDIR
+        # and MLA's native cwd. Pass the schema version along so RDA's
+        # registry row carries it (the OnnxService check then has the
+        # value at hand without round-tripping to disk).
+        source_uri = str((Path("models/versions") / version / "model.onnx"))
+        self._register_with_rda(
+            version=version,
+            source_uri=source_uri,
+            sha256=sha256,
+            metrics=metadata,
+            metadata={
+                "feature_schema_version": catalog.schema_version,
+                "feature_input_dimension": catalog.input_dimension,
+                "trained_at": time.time(),
+            },
+        )
+
+        logger.info("✅ Model %s materialised at %s", version, version_dir)
+        return version
+
+    def get_latest_model(self) -> Optional[Dict[str, Any]]:
         """
-        List all models in registry.
-        
-        Returns:
-            List of model info dicts
+        Return the most recent version on disk. Prefers an ACTIVE row
+        from the RDA registry when available; otherwise falls back to
+        a filesystem mtime scan so cold-start training without an RDA
+        connection still picks up the previous run.
         """
-        if self.client is None:
-            return self._list_local_models()
-        
-        try:
-            objects = self.client.list_objects(self.bucket, prefix='fraud_model_')
-            
-            models = []
-            for obj in objects:
-                if obj.object_name.endswith('.onnx'):
-                    models.append({
-                        'name': obj.object_name,
-                        'size_mb': obj.size / (1024 * 1024),
-                        'modified': obj.last_modified.strftime('%Y-%m-%d %H:%M:%S'),
-                        'version': self._extract_version(obj.object_name)
-                    })
-            
-            # Sort by modification time (newest first)
-            models.sort(key=lambda x: x['modified'], reverse=True)
-            
-            return models
-            
-        except S3Error as e:
-            logger.error(f"Error listing models: {e}")
-            return []
-    
-    def _list_local_models(self) -> List[Dict]:
-        """List models from local directory."""
-        models = []
-        model_dir = config.MODEL_OUTPUT_DIR
-        
-        if not os.path.exists(model_dir):
-            return models
-        
-        for filename in os.listdir(model_dir):
-            if filename.endswith('.onnx'):
-                filepath = os.path.join(model_dir, filename)
-                stat = os.stat(filepath)
-                models.append({
-                    'name': filename,
-                    'size_mb': stat.st_size / (1024 * 1024),
-                    'modified': datetime.fromtimestamp(stat.st_mtime).strftime('%Y-%m-%d %H:%M:%S'),
-                    'version': self._extract_version(filename)
-                })
-        
-        models.sort(key=lambda x: x['modified'], reverse=True)
-        return models
-    
-    def get_latest_model(self) -> Optional[Dict]:
-        """
-        Get info about the latest (most recent) model.
-        
-        Returns:
-            Dict with model info or None if no models found
-        """
-        models = self.list_models()
-        
-        if not models:
-            logger.warning("No models found in registry")
+        active = self._rda_get_active()
+        if active is not None:
+            local_path = self._resolve_local(active.get("sourceUri"))
+            if local_path and local_path.exists():
+                stat = local_path.stat()
+                return {
+                    "name": active.get("version"),
+                    "version": active.get("version"),
+                    "size_mb": stat.st_size / (1024 * 1024),
+                    "modified": datetime.fromtimestamp(stat.st_mtime),
+                    "sha256": active.get("sha256"),
+                    "metadata": active.get("metrics") or active.get("metadata") or {},
+                }
+
+        # Local-only fallback — pick the newest directory by mtime.
+        if not self.versions_dir.exists():
             return None
-        
-        latest = models[0]  # Already sorted by newest first
-        
-        # Try to load metadata
-        if self.client:
-            metadata_name = latest['name'].replace('.onnx', '_metadata.json')
+        candidates = [d for d in self.versions_dir.iterdir() if d.is_dir()]
+        if not candidates:
+            return None
+        latest = max(candidates, key=lambda d: d.stat().st_mtime)
+        onnx_path = latest / "model.onnx"
+        if not onnx_path.exists():
+            return None
+        meta = {}
+        meta_path = latest / "meta.json"
+        if meta_path.exists():
             try:
-                response = self.client.get_object(self.bucket, metadata_name)
-                metadata = json.loads(response.read().decode('utf-8'))
-                latest['metadata'] = metadata
+                meta = json.loads(meta_path.read_text())
             except Exception as e:
-                logger.warning(f"Could not load metadata for {latest['name']}: {e}")
-                latest['metadata'] = {}
-        else:
-            # Load from local file
-            metadata_path = os.path.join(
-                config.MODEL_OUTPUT_DIR,
-                latest['name'].replace('.onnx', '_metadata.json')
-            )
-            if os.path.exists(metadata_path):
-                with open(metadata_path) as f:
-                    latest['metadata'] = json.load(f)
-            else:
-                latest['metadata'] = {}
-        
-        return latest
-    
+                logger.warning("Couldn't parse %s: %s", meta_path, e)
+        return {
+            "name": latest.name,
+            "version": meta.get("version", latest.name),
+            "size_mb": onnx_path.stat().st_size / (1024 * 1024),
+            "modified": datetime.fromtimestamp(onnx_path.stat().st_mtime),
+            "sha256": meta.get("sha256"),
+            "metadata": meta,
+        }
+
     def download_model(
-        self, 
-        object_name: str, 
+        self,
+        object_name: str,
         local_path: str,
-        download_pickle: bool = True
-    ) -> str:
+        download_pickle: bool = True,
+    ) -> None:
         """
-        Download model from registry.
-        
-        Args:
-            object_name: S3 object name (e.g., 'fraud_model_20240417_v1.2.onnx')
-            local_path: Where to save locally
-            download_pickle: Also download pickled version for A/B testing
-        
-        Returns:
-            Local path to downloaded file
+        Place the ONNX (and optionally pickle) for `object_name` at
+        `local_path`. With the filesystem registry "download" is just
+        a copy — kept name-compatible with the old MinIO interface.
+
+        `object_name` is the version label (e.g. ``v1.2.0``).
         """
-        if self.client is None:
-            logger.warning("MinIO not available - checking local files")
-            return self._copy_local_model(object_name, local_path)
-        
+        src_dir = self.versions_dir / object_name
+        onnx_src = src_dir / "model.onnx"
+        if not onnx_src.exists():
+            raise FileNotFoundError(f"Model {object_name} not found at {onnx_src}")
+
+        os.makedirs(os.path.dirname(local_path) or ".", exist_ok=True)
+        shutil.copyfile(onnx_src, local_path)
+        logger.info("  Copied %s → %s", onnx_src, local_path)
+
+        if download_pickle:
+            pickle_src = src_dir / "model.pkl"
+            if pickle_src.exists():
+                pickle_dst = local_path.replace(".onnx", ".pkl")
+                shutil.copyfile(pickle_src, pickle_dst)
+                logger.info("  Copied %s → %s", pickle_src, pickle_dst)
+
+    # ───────────────────────────────────────────────────────────
+    # RDA bridge (best-effort; service stays usable when offline)
+    # ───────────────────────────────────────────────────────────
+    def _rda_headers(self) -> Dict[str, str]:
+        return {
+            "Content-Type": "application/json",
+            "Authorization": f"Bearer {self.rda_token}",
+        }
+
+    def _register_with_rda(
+        self,
+        version: str,
+        source_uri: str,
+        sha256: str,
+        metrics: Dict[str, Any],
+        metadata: Optional[Dict[str, Any]] = None,
+    ) -> None:
+        """
+        POST /v1/admin/models to create a CANDIDATE row, then POST the
+        status transition to ACTIVE. Failures are warnings, not
+        exceptions — local-only mode is still useful for adopters who
+        haven't wired up a service account yet.
+        """
+        if not self.rda_api_url or not self.rda_token:
+            return
+
+        register_url = f"{self.rda_api_url.rstrip('/')}/v1/admin/models"
         try:
-            # Create directory
-            os.makedirs(os.path.dirname(local_path) or '.', exist_ok=True)
-            
-            # Download ONNX
-            self.client.fget_object(
-                bucket_name=self.bucket,
-                object_name=object_name,
-                file_path=local_path
+            resp = requests.post(
+                register_url,
+                headers=self._rda_headers(),
+                json={
+                    "version": version,
+                    "sourceUri": source_uri,
+                    "sha256": sha256,
+                    # `defaultThreshold` deliberately omitted — keeps
+                    # whatever the operator set, falls back to env.
+                    "metrics": {k: v for k, v in metrics.items() if isinstance(v, (int, float, str, bool))},
+                    "metadata": metadata or {"trained_at": time.time()},
+                },
+                timeout=10,
             )
-            logger.info(f"✅ Downloaded ONNX: {local_path}")
-            
-            # Download pickle if requested
-            if download_pickle:
-                pickle_object = object_name.replace('.onnx', '.pkl')
-                pickle_path = local_path.replace('.onnx', '.pkl')
-                
-                try:
-                    self.client.fget_object(
-                        bucket_name=self.bucket,
-                        object_name=pickle_object,
-                        file_path=pickle_path
-                    )
-                    logger.info(f"✅ Downloaded pickle: {pickle_path}")
-                except Exception as e:
-                    logger.warning(f"Could not download pickle version: {e}")
-            
-            # Download scaler
-            scaler_object = object_name.replace('.onnx', '_scaler.npz')
-            scaler_path = local_path.replace('.onnx', '_scaler.npz')
-            
-            try:
-                self.client.fget_object(
-                    bucket_name=self.bucket,
-                    object_name=scaler_object,
-                    file_path=scaler_path
+            if resp.status_code not in (200, 201, 409):
+                logger.warning(
+                    "RDA register returned %s: %s — version is on disk; activate via UI",
+                    resp.status_code,
+                    resp.text[:200],
                 )
-                logger.info(f"✅ Downloaded scaler: {scaler_path}")
-            except Exception as e:
-                logger.warning(f"Could not download scaler: {e}")
-            
-            return local_path
-            
-        except S3Error as e:
-            logger.error(f"❌ Download failed: {e}")
-            raise
-    
-    def _copy_local_model(self, object_name: str, local_path: str) -> str:
-        """Copy model from local models directory."""
-        import shutil
-        
-        source_path = os.path.join(config.MODEL_OUTPUT_DIR, object_name)
-        
-        if os.path.exists(source_path):
-            os.makedirs(os.path.dirname(local_path) or '.', exist_ok=True)
-            shutil.copy2(source_path, local_path)
-            logger.info(f"✅ Copied local model: {local_path}")
-            return local_path
-        else:
-            raise FileNotFoundError(f"Model not found: {source_path}")
-    
-    def _extract_version(self, object_name: str) -> str:
-        """Extract version string from object name."""
+                return
+            logger.info("  ✅ RDA register: %s (%s)", version, resp.status_code)
+
+            activate_url = (
+                f"{self.rda_api_url.rstrip('/')}/v1/admin/models/{version}/status"
+            )
+            resp = requests.post(
+                activate_url,
+                headers=self._rda_headers(),
+                json={"status": "ACTIVE"},
+                timeout=10,
+            )
+            if resp.status_code != 200:
+                logger.warning(
+                    "RDA activate returned %s: %s — model registered but not ACTIVE",
+                    resp.status_code,
+                    resp.text[:200],
+                )
+                return
+            logger.info("  ✅ RDA activate: %s ACTIVE", version)
+        except requests.RequestException as e:
+            logger.warning(
+                "RDA bridge unreachable (%s) — model is on disk; activate via UI",
+                e,
+            )
+
+    def _rda_get_active(self) -> Optional[Dict[str, Any]]:
+        if not self.rda_api_url or not self.rda_token:
+            return None
         try:
-            # Format: fraud_model_20240417_143025_v1.2.onnx
-            parts = object_name.split('_')
-            for part in parts:
-                if part.startswith('v'):
-                    return part.replace('.onnx', '').replace('.pkl', '')
-            return 'unknown'
-        except:
-            return 'unknown'
+            resp = requests.get(
+                f"{self.rda_api_url.rstrip('/')}/v1/admin/models",
+                headers=self._rda_headers(),
+                timeout=10,
+            )
+            if resp.status_code != 200:
+                return None
+            payload = resp.json()
+            rows = payload.get("data") if isinstance(payload, dict) else payload
+            if not isinstance(rows, list):
+                return None
+            for r in rows:
+                if r.get("status") == "ACTIVE":
+                    return r
+            return None
+        except requests.RequestException:
+            return None
+
+    def _resolve_local(self, source_uri: Optional[str]) -> Optional[Path]:
+        if not source_uri:
+            return None
+        if source_uri.startswith("file://"):
+            return Path(source_uri[len("file://"):])
+        if source_uri.startswith("/"):
+            return Path(source_uri)
+        # Treat as repo-root-relative. MLA runs from `mla-service/`
+        # natively, so resolve against the parent directory unless
+        # MODEL_OUTPUT_DIR is set to an absolute path that already
+        # includes `models/`.
+        repo_root = self.root.parent if self.root.name == "models" else Path.cwd()
+        return repo_root / source_uri

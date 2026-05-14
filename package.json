@@ -11,7 +11,7 @@
     "build": "tsc",
     "postbuild": "copyfiles -u 1 \"src/**/*.yaml\" dist",
     "prepare": "husky install",
-    "test": "NODE_ENV=test jest --runInBand --passWithNoTests",
+    "test": "NODE_ENV=test jest --runInBand --passWithNoTests --forceExit",
     "lint": "eslint --ignore-path .eslintignore --ext .ts .",
     "lint:fix": "eslint . --ext .ts --fix",
     "knex": "ts-node -r dotenv/config ./node_modules/knex/bin/cli.js",
@@ -23,7 +23,9 @@
     "replay": "ts-node -r dotenv/config scripts/replay.ts"
   },
   "devDependencies": {
+    "@types/bcrypt": "^6.0.0",
     "@types/jest": "^30.0.0",
+    "@types/jsonwebtoken": "^9.0.10",
     "@types/node": "^25.0.2",
     "@types/opossum": "^8.1.9",
     "@types/stream-to-array": "^2.3.3",
@@ -58,7 +60,6 @@
     "dotenv": "^17.2.3",
     "event-dispatch": "~0.4.1",
     "fastify": "^5.6.2",
-    "fastify-multer": "^2.0.3",
     "fastify-plugin": "^5.1.0",
     "google-auth-library": "^10.5.0",
     "graphology": "^0.26.0",

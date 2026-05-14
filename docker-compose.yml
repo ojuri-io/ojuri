@@ -37,7 +37,12 @@ services:
       - REDIS_HOST=redis
       - REDIS_PORT=6379
       - REDIS_PASSWORD=${REDIS_PASSWORD:-}
-      - KAFKA_BROKERS=kafka:9092
+      # Use the INTERNAL listener (advertised as kafka:29092) for
+      # container-to-container traffic. Port 9092 is the EXTERNAL
+      # listener that advertises localhost:9092 for host clients —
+      # which from inside this container resolves to its own loopback
+      # and produces the "Consumer crashed → restart" flap.
+      - KAFKA_BROKERS=kafka:29092
       - KAFKA_TOPIC=transactions.completed
       - KAFKA_BLOCKED_TOPIC=transactions.blocked
       - MODEL_PATH=/app/models/fraud_model.onnx
@@ -45,6 +50,20 @@ services:
       - LOG_LEVEL=info
       - DB_CLIENT=pg
       - DB_URL=postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-postgres}@postgres:5432/${POSTGRES_DB:-fraud_db}
+      # Service-health fan-out. Defaults in HealthService point at
+      # 127.0.0.1 which can't reach sibling containers from inside RDA;
+      # set the Docker-network URLs explicitly. MLA runs natively on
+      # the host (not in compose by design), so its URL uses
+      # host.docker.internal — override with `MLA_HEALTH_URL=` when
+      # MLA is deliberately disabled.
+      - PAA_HEALTH_URL=${PAA_HEALTH_URL:-http://paa-1:9090}
+      - FIA_HEALTH_URL=${FIA_HEALTH_URL:-http://fia:9094}
+      - MLA_HEALTH_URL=${MLA_HEALTH_URL:-http://host.docker.internal:9095}
+    extra_hosts:
+      # Required on Linux hosts so `host.docker.internal` resolves
+      # for the MLA health probe. macOS Docker Desktop already
+      # provides it implicitly.
+      - "host.docker.internal:host-gateway"
     volumes:
       - ./models:/app/models:ro
     depends_on:
@@ -72,7 +91,12 @@ services:
       - REDIS_HOST=redis
       - REDIS_PORT=6379
       - REDIS_PASSWORD=${REDIS_PASSWORD:-}
-      - KAFKA_BROKERS=kafka:9092
+      # Use the INTERNAL listener (advertised as kafka:29092) for
+      # container-to-container traffic. Port 9092 is the EXTERNAL
+      # listener that advertises localhost:9092 for host clients —
+      # which from inside this container resolves to its own loopback
+      # and produces the "Consumer crashed → restart" flap.
+      - KAFKA_BROKERS=kafka:29092
       - KAFKA_TOPIC=transactions.completed
       - KAFKA_BLOCKED_TOPIC=transactions.blocked
       - MODEL_PATH=/app/models/fraud_model.onnx
@@ -107,7 +131,12 @@ services:
       - REDIS_HOST=redis
       - REDIS_PORT=6379
       - REDIS_PASSWORD=${REDIS_PASSWORD:-}
-      - KAFKA_BROKERS=kafka:9092
+      # Use the INTERNAL listener (advertised as kafka:29092) for
+      # container-to-container traffic. Port 9092 is the EXTERNAL
+      # listener that advertises localhost:9092 for host clients —
+      # which from inside this container resolves to its own loopback
+      # and produces the "Consumer crashed → restart" flap.
+      - KAFKA_BROKERS=kafka:29092
       - KAFKA_TOPIC=transactions.completed
       - KAFKA_BLOCKED_TOPIC=transactions.blocked
       - MODEL_PATH=/app/models/fraud_model.onnx
@@ -146,7 +175,12 @@ services:
       - REDIS_HOST=redis
       - REDIS_PORT=6379
       - REDIS_PASSWORD=${REDIS_PASSWORD:-}
-      - KAFKA_BROKERS=kafka:9092
+      # Use the INTERNAL listener (advertised as kafka:29092) for
+      # container-to-container traffic. Port 9092 is the EXTERNAL
+      # listener that advertises localhost:9092 for host clients —
+      # which from inside this container resolves to its own loopback
+      # and produces the "Consumer crashed → restart" flap.
+      - KAFKA_BROKERS=kafka:29092
       - KAFKA_TOPIC=transactions.completed
       - KAFKA_CONSUMER_GROUP=pattern-analysis
       - KAFKA_CLIENT_ID=paa-1
@@ -184,7 +218,12 @@ services:
       - REDIS_HOST=redis
       - REDIS_PORT=6379
       - REDIS_PASSWORD=${REDIS_PASSWORD:-}
-      - KAFKA_BROKERS=kafka:9092
+      # Use the INTERNAL listener (advertised as kafka:29092) for
+      # container-to-container traffic. Port 9092 is the EXTERNAL
+      # listener that advertises localhost:9092 for host clients —
+      # which from inside this container resolves to its own loopback
+      # and produces the "Consumer crashed → restart" flap.
+      - KAFKA_BROKERS=kafka:29092
       - KAFKA_TOPIC=transactions.completed
       - KAFKA_CONSUMER_GROUP=pattern-analysis
       - KAFKA_CLIENT_ID=paa-2
@@ -226,7 +265,12 @@ services:
       dockerfile: Dockerfile
     container_name: fraud-fia
     environment:
-      - KAFKA_BROKERS=kafka:9092
+      # Use the INTERNAL listener (advertised as kafka:29092) for
+      # container-to-container traffic. Port 9092 is the EXTERNAL
+      # listener that advertises localhost:9092 for host clients —
+      # which from inside this container resolves to its own loopback
+      # and produces the "Consumer crashed → restart" flap.
+      - KAFKA_BROKERS=kafka:29092
       - KAFKA_BLOCKED_TOPIC=transactions.blocked
       - KAFKA_CONSUMER_GROUP=fraud-investigation
       - KAFKA_AUTO_OFFSET_RESET=earliest
@@ -263,13 +307,20 @@ services:
     networks:
       - fraud-network
     restart: unless-stopped
+    # Standalone `docker compose up` ignores deploy.resources (those
+    # are Swarm-only). Use top-level mem_limit so the container
+    # actually gets the headroom. Phi-3-mini in fp32 on CPU needs
+    # ~15 GB resident; cap at 16 GiB to leave the host breathing room
+    # but not OOM-kill the load step the way the old 8 GiB cap did.
+    mem_limit: 16g
+    mem_reservation: 6g
     deploy:
       resources:
         limits:
           cpus: "2"
-          memory: 8G
+          memory: 16G
         reservations:
-          memory: 4G
+          memory: 6G
 
   # ============================================
   # Redis

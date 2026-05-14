@@ -13,7 +13,7 @@ services:
       - REDIS_HOST=redis
       - REDIS_PORT=6379
       - REDIS_PASSWORD=${REDIS_PASSWORD:-}
-      - KAFKA_BROKERS=kafka:9092
+      - KAFKA_BROKERS=kafka:29092
       - KAFKA_TOPIC=transactions.completed
       - KAFKA_BLOCKED_TOPIC=transactions.blocked
       - MODEL_PATH=/app/models/fraud_model.onnx
@@ -53,7 +53,7 @@ services:
       - REDIS_HOST=redis
       - REDIS_PORT=6379
       - REDIS_PASSWORD=${REDIS_PASSWORD:-}
-      - KAFKA_BROKERS=kafka:9092
+      - KAFKA_BROKERS=kafka:29092
       - KAFKA_TOPIC=transactions.completed
       - KAFKA_CONSUMER_GROUP=pattern-analysis
       - KAFKA_CLIENT_ID=paa-dev
@@ -89,7 +89,7 @@ services:
       dockerfile: Dockerfile.dev
     container_name: fraud-fia-dev
     environment:
-      - KAFKA_BROKERS=kafka:9092
+      - KAFKA_BROKERS=kafka:29092
       - KAFKA_BLOCKED_TOPIC=transactions.blocked
       - KAFKA_CONSUMER_GROUP=fraud-investigation-dev
       - KAFKA_AUTO_OFFSET_RESET=earliest

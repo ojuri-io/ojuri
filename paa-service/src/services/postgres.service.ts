@@ -52,6 +52,12 @@ class PostgresService {
         timestamp: event.timestamp,
         fraudLabel: event.fraud,
         fraudProbability: event.fraud_probability,
+        // Persist what drove the decision so MLA can exclude
+        // rule-driven rows from its training set. Pre-rules-engine
+        // events won't carry this field — leave NULL and let MLA
+        // treat NULL as "ML" for backward compatibility.
+        decisionSource: event.decision_source ?? null,
+        ruleName: event.rule_name ?? null,
         deviceFingerprint: JSON.stringify(event.device_fingerprint || {}),
       }));
 

@@ -92,6 +92,48 @@ class WebhookDeliveryRepo extends BaseRepository<IWebhookDelivery, WebhookDelive
       .select("id")) as unknown as Pick<WebhookDelivery, "id">[];
     return rows.map((r) => r.id);
   }
+
+  /**
+   * Recent delivery rows joined with their subscription URL. Used by
+   * the admin dashboard. Bounded by `limit` so a busy webhook can't
+   * blow up the response — sort by `createdAt DESC` so the freshest
+   * attempts surface first.
+   */
+  async listRecent(opts: { limit?: number; status?: string }): Promise<RecentDelivery[]> {
+    const limit = Math.min(Math.max(opts.limit ?? 50, 1), 500);
+    const query = WebhookDelivery.query()
+      .alias("d")
+      .join(`${WebhookSubscription.tableName} as s`, "s.id", "d.subscriptionId")
+      .orderBy("d.createdAt", "desc")
+      .limit(limit)
+      .select(
+        "d.id as id",
+        "d.status as status",
+        "d.event as event",
+        "d.attempts as attempts",
+        "d.lastResponseCode as lastResponseCode",
+        "d.lastAttemptedAt as lastAttemptedAt",
+        "d.nextAttemptAt as nextAttemptAt",
+        "d.createdAt as createdAt",
+        "s.url as url",
+        "s.maxRetries as maxRetries"
+      );
+    if (opts.status) query.where("d.status", opts.status);
+    return query as unknown as Promise<RecentDelivery[]>;
+  }
+}
+
+export interface RecentDelivery {
+  id: string;
+  status: string;
+  event: string;
+  attempts: number;
+  lastResponseCode: number | null;
+  lastAttemptedAt: Date | null;
+  nextAttemptAt: Date | null;
+  createdAt: Date;
+  url: string;
+  maxRetries: number;
 }
 
 export default WebhookDeliveryRepo;

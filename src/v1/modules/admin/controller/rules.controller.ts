@@ -17,8 +17,27 @@ class RulesController {
       const row = await this.rulesService.create(req.body);
       return res.code(httpStatus.CREATED).send(SuccessResponse("Rule created", row));
     } catch (err) {
-      log.error("create", "Failed", { err: String(err) });
-      return res.code(httpStatus.INTERNAL_SERVER_ERROR).send(ErrorResponse("Failed to create rule"));
+      // Capture the full error context (message, code, stack, and the
+      // sanitized body) so the next 500 in production logs surfaces
+      // the actual cause. Common offenders for this endpoint:
+      // - Objection rejects unknown column (frontend sends scratch fields)
+      // - PG rejects malformed jsonb in `expression`
+      // - tenantId / priority arriving as the wrong shape after JSON parse
+      const e = err as Error & { code?: string; detail?: string };
+      log.error("create", "Failed to create rule", {
+        message: e?.message,
+        code: e?.code,
+        detail: (e as any)?.detail,
+        stack: e?.stack,
+        bodyKeys: Object.keys(req.body || {}),
+      });
+      // Surface the underlying message to the client so the UI's
+      // toast is actionable. Trim to 300 chars so we don't leak a
+      // full SQL stack to end users.
+      const safeMessage = (e?.message || "Failed to create rule").slice(0, 300);
+      return res
+        .code(httpStatus.INTERNAL_SERVER_ERROR)
+        .send(ErrorResponse(`Failed to create rule: ${safeMessage}`));
     }
   };
 

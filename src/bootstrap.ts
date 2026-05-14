@@ -5,7 +5,6 @@ import loggerPlugin from "@shared/utils/logger/plugin";
 import { ErrorResponse } from "@shared/utils/response.util";
 import initializeDatabase from "./database";
 import { FastifyInstance } from "fastify";
-import multer from "fastify-multer";
 
 import Validator from "validatorjs";
 import "./shared/subscribers/audit-log.subscriber";
@@ -18,8 +17,6 @@ function bootstrapApp(fastify: FastifyInstance) {
   registerCustomValidationRules();
 
   setErrorHandler(fastify);
-
-  registerFileHandler(fastify);
 }
 
 function registerThirdPartyModules(fastify) {
@@ -87,10 +84,6 @@ function registerCustomValidationRules() {
     },
     "The :attribute field is invalid"
   );
-}
-
-function registerFileHandler(fastify: FastifyInstance) {
-  fastify.register(multer.contentParser);
 }
 
 function setErrorHandler(fastify) {

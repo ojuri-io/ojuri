@@ -192,6 +192,34 @@ class PredictController {
     return res.send(SuccessResponse("Review queue", rows));
   };
 
+  /**
+   * Recent decisions, newest-first, optionally bounded by `since`.
+   * Powers the Live decisions page's polling feed. We cap `limit` at
+   * 200 so a misconfigured client can't pull the whole table.
+   */
+  recentDecisions = async (
+    req: FastifyRequest<{ Querystring: { since?: string; limit?: string } }>,
+    res: FastifyReply
+  ) => {
+    const limit = Math.min(Math.max(Number.parseInt(req.query.limit || "50", 10) || 50, 1), 200);
+    const since = req.query.since ? new Date(req.query.since) : null;
+    const rows = await this.decisionAudit.listRecentSince(since, limit);
+    return res.send(SuccessResponse("Recent decisions", rows));
+  };
+
+  /**
+   * Audit rows that share sender or receiver with the supplied audit
+   * row. Powers the "Similar cases" panel on the Review queue.
+   */
+  similarDecisions = async (
+    req: FastifyRequest<{ Params: { auditId: string }; Querystring: { limit?: string } }>,
+    res: FastifyReply
+  ) => {
+    const limit = Math.min(Math.max(Number.parseInt(req.query.limit || "5", 10) || 5, 1), 20);
+    const rows = await this.decisionAudit.listSimilar(req.params.auditId, limit);
+    return res.send(SuccessResponse("Similar decisions", rows));
+  };
+
   getMetrics = async (_req: FastifyRequest, res: FastifyReply): Promise<void> => {
     try {
       const metrics = await metricsService.getMetrics();

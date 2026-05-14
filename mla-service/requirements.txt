@@ -19,8 +19,11 @@ onnxconverter-common==1.12.0
 skl2onnx==1.15.0
 onnxruntime==1.16.3
 
-# Model Registry (MinIO S3)
-minio==7.2.0
+# Model Registry — filesystem-backed. MinIO retired from the
+# self-hosted distribution; MLA writes `models/versions/<version>/`
+# directly and POSTs to RDA's admin API. The `requests` dep below
+# replaces the minio S3 client.
+requests==2.31.0
 
 # Statistical Testing
 statsmodels==0.14.1

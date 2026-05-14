@@ -10,50 +10,39 @@ import type CircuitBreaker from "opossum";
 const featureLogger = createServiceLogger("FeatureService");
 
 /**
- * Feature schema - 434 dimensions total
- * This interface represents the key features stored in Redis
+ * Raw Redis hash for a sender. Keys are catalogue-feature names; the
+ * Redis writer (PAA) is responsible for matching them.
+ *
+ * `predict.service.ts` consumes this map and hands it to the
+ * catalogue-driven `buildFeatures()` to produce the ONNX input
+ * tensor. This service stays narrow: fetch + circuit-break, nothing
+ * else.
  */
-export interface UserFeatures {
-  velocity_1h: number;
-  velocity_24h: number;
-  velocity_7d: number;
-  avg_amount_30d: number;
-  std_amount_30d: number;
-  pagerank: number;
-  clustering_coef: number;
-  time_since_last_txn: number;
-  is_weekend: number;
-  hour_of_day: number;
-  // Additional engineered features would be here (424 more)
-  [key: string]: number;
-}
+export type RedisFeatureSnapshot = Record<string, unknown>;
 
 /**
- * Default features (population averages) used as fallback
+ * Default snapshot returned on Redis miss / breaker-open. These are
+ * population averages for the legacy catalogue names; the feature
+ * builder reads missing keys as catalogue defaults, but seeding
+ * sensible non-zero numbers keeps demo predictions plausible when no
+ * sender has been seen.
  */
-const DEFAULT_FEATURES: UserFeatures = {
+const DEFAULT_REDIS_SNAPSHOT: RedisFeatureSnapshot = {
   velocity_1h: 2.5,
   velocity_24h: 15.0,
   velocity_7d: 75.0,
-  avg_amount_30d: 25000.0,
-  std_amount_30d: 15000.0,
-  pagerank: 0.15,
-  clustering_coef: 0.35,
-  time_since_last_txn: 3600,
-  is_weekend: 0,
-  hour_of_day: 12,
+  amount_mean_30d: 25000.0,
+  amount_std_30d: 15000.0,
+  graph_pagerank: 0.15,
+  graph_clustering_coef: 0.35,
+  pair_time_since_last_send: 3600,
 };
 
-/**
- * Feature retrieval service for Redis
- * Includes circuit breaker for fault tolerance
- */
 @injectable()
 class FeatureService {
   private redisClient: Redis;
   private featureCircuitBreaker: CircuitBreaker<any[], any>;
   private readonly featureTimeout: number;
-  private readonly featureDimensions = 434;
 
   constructor(redisClient: RedisClient) {
     this.redisClient = redisClient.get();
@@ -73,46 +62,36 @@ class FeatureService {
           featureLogger.warn("fallback", "Using default features due to Redis circuit breaker fallback", {
             traceId: TraceContext.getTraceId(),
           });
-          return this.getDefaultFeatures();
+          return { ...DEFAULT_REDIS_SNAPSHOT };
         },
       }
     );
   }
 
   /**
-   * Get features for a user with circuit breaker protection
-   * @param senderId - The sender's user ID
-   * @param timestamp - Transaction timestamp for time-based features
-   * @returns Feature vector and metadata
+   * Fetch the `features:{senderId}` Redis hash. Returns the raw
+   * snapshot and a flag for whether the values came from Redis or
+   * the population-default fallback.
+   *
+   * Catalogue-aligned vector construction happens downstream in
+   * `predict.service.ts` via `buildFeatures()`. This service stays
+   * narrow: I/O only.
    */
   async getFeatures(
     senderId: string,
-    timestamp: number
-  ): Promise<{ features: Float32Array; isDefault: boolean }> {
+    _timestamp: number
+  ): Promise<{ snapshot: RedisFeatureSnapshot; isDefault: boolean }> {
     const traceId = TraceContext.getTraceId();
-    
-    featureLogger.entry("getFeatures", "Fetching user features from Redis", {
-      traceId,
-      senderId,
-      timestamp,
-    });
 
     try {
-      const userFeatures = await this.featureCircuitBreaker.fire(senderId);
-      const isDefault = this.isDefaultFeatures(userFeatures);
-
-      // Enrich with time-based features
-      const enrichedFeatures = this.enrichWithTimeFeatures(userFeatures, timestamp);
-
-      // Convert to Float32Array for ONNX
-      const featureVector = this.toFeatureVector(enrichedFeatures);
+      const snapshot: RedisFeatureSnapshot = await this.featureCircuitBreaker.fire(senderId);
+      const isDefault = this.isDefaultSnapshot(snapshot);
 
       if (!isDefault) {
         metricsService.recordCacheHit();
         featureLogger.success("getFeatures", "Features retrieved from Redis cache", {
           traceId,
           senderId,
-          featureCount: this.featureDimensions,
         });
       } else {
         metricsService.recordCacheMiss();
@@ -122,7 +101,7 @@ class FeatureService {
         });
       }
 
-      return { features: featureVector, isDefault };
+      return { snapshot, isDefault };
     } catch (err) {
       featureLogger.error("getFeatures", "Error retrieving features", {
         traceId,
@@ -130,24 +109,19 @@ class FeatureService {
         error: err instanceof Error ? err.message : String(err),
       });
       metricsService.recordCacheMiss();
-
-      // Return default features on error
-      const defaultFeatures = this.getDefaultFeatures();
-      const enrichedFeatures = this.enrichWithTimeFeatures(defaultFeatures, timestamp);
-      const featureVector = this.toFeatureVector(enrichedFeatures);
-
-      return { features: featureVector, isDefault: true };
+      return { snapshot: { ...DEFAULT_REDIS_SNAPSHOT }, isDefault: true };
     }
   }
 
   /**
-   * Fetch features from Redis
+   * Fetch features from Redis. Keys are stored as catalogue feature
+   * names; values are stringified numerics that the feature builder
+   * coerces.
    */
-  private async fetchFeaturesFromRedis(senderId: string): Promise<UserFeatures> {
+  private async fetchFeaturesFromRedis(senderId: string): Promise<RedisFeatureSnapshot> {
     const key = `features:${senderId}`;
     const traceId = TraceContext.getTraceId();
 
-    // Use HGETALL with timeout
     const features = await Promise.race([
       this.redisClient.hgetall(key),
       this.timeout(this.featureTimeout),
@@ -159,95 +133,30 @@ class FeatureService {
         senderId,
         key,
       });
-      return this.getDefaultFeatures();
+      return { ...DEFAULT_REDIS_SNAPSHOT };
     }
 
-    // Parse numeric values
-    const parsedFeatures: UserFeatures = {} as UserFeatures;
-    for (const [key, value] of Object.entries(features)) {
-      parsedFeatures[key] = parseFloat(value) || 0;
-    }
-
-    return parsedFeatures;
+    return features as RedisFeatureSnapshot;
   }
 
   /**
-   * Get default features (population averages)
+   * "Default" here means "we got nothing meaningful from Redis". A
+   * snapshot matching the seeded defaults still rides the same code
+   * path as a cache miss — neither has real per-sender values.
    */
-  private getDefaultFeatures(): UserFeatures {
-    return { ...DEFAULT_FEATURES };
-  }
-
-  /**
-   * Check if features are default
-   */
-  private isDefaultFeatures(features: UserFeatures): boolean {
+  private isDefaultSnapshot(snapshot: RedisFeatureSnapshot): boolean {
     return (
-      features.velocity_1h === DEFAULT_FEATURES.velocity_1h &&
-      features.velocity_24h === DEFAULT_FEATURES.velocity_24h
+      Number(snapshot.velocity_1h) === DEFAULT_REDIS_SNAPSHOT.velocity_1h &&
+      Number(snapshot.velocity_24h) === DEFAULT_REDIS_SNAPSHOT.velocity_24h
     );
   }
 
-  /**
-   * Enrich features with time-based calculations
-   */
-  private enrichWithTimeFeatures(features: UserFeatures, timestamp: number): UserFeatures {
-    const date = new Date(timestamp);
-    const dayOfWeek = date.getUTCDay();
-    const hourOfDay = date.getUTCHours();
-
-    return {
-      ...features,
-      is_weekend: dayOfWeek === 0 || dayOfWeek === 6 ? 1 : 0,
-      hour_of_day: hourOfDay,
-    };
-  }
-
-  /**
-   * Convert features object to Float32Array for ONNX
-   */
-  private toFeatureVector(features: UserFeatures): Float32Array {
-    const vector = new Float32Array(this.featureDimensions);
-
-    // Map known features to their positions
-    const featureOrder = [
-      "velocity_1h",
-      "velocity_24h",
-      "velocity_7d",
-      "avg_amount_30d",
-      "std_amount_30d",
-      "pagerank",
-      "clustering_coef",
-      "time_since_last_txn",
-      "is_weekend",
-      "hour_of_day",
-    ];
-
-    featureOrder.forEach((key, index) => {
-      vector[index] = features[key] || 0;
-    });
-
-    // Fill remaining dimensions with derived features or zeros
-    // In production, this would include all 434 engineered features
-    for (let i = featureOrder.length; i < this.featureDimensions; i++) {
-      vector[i] = 0;
-    }
-
-    return vector;
-  }
-
-  /**
-   * Timeout promise helper
-   */
   private timeout(ms: number): Promise<never> {
     return new Promise((_, reject) => {
       setTimeout(() => reject(new Error(`Feature retrieval timeout (${ms}ms)`)), ms);
     });
   }
 
-  /**
-   * Check if Redis is connected
-   */
   isReady(): boolean {
     return this.redisClient.status === "ready";
   }
