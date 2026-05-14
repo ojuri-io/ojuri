@@ -165,6 +165,33 @@ load is logged at ERROR level with both version strings.
 | MLA retrains under a new overlay; RDA's overlay file is stale. | Silent column misalignment in the other direction. | RDA refuses the new model. Operator must sync the overlay first. |
 | Two RDA replicas with mismatched overlays. | One replica predicts wrong, no signal. | The one with the wrong overlay refuses to load — `/readyz` stays UP for the predict path but the model is the previous version; metrics show the divergence. |
 
+## Inspecting the running catalogue
+
+`GET /v1/admin/features/catalog` (requires `models:read`) returns the
+catalogue RDA is currently using, with every feature's index, name,
+category, source, dtype, default, and adopter compute op when present.
+The Sentinel dashboard's **Features** page (Config → Features) calls
+this endpoint and renders a filterable table — read-only, because
+editing the catalogue from the UI would require atomic re-fit of every
+deployed model.
+
+```bash
+curl -s http://localhost:3000/v1/admin/features/catalog \
+  -H "Authorization: Bearer $JWT" | jq '.data | { schemaVersion, inputDimension, adopterSha256 }'
+```
+
+```json
+{
+  "schemaVersion": "v1",
+  "inputDimension": 64,
+  "adopterSha256": null
+}
+```
+
+When an overlay is present the `schemaVersion` carries the 12-char
+SHA prefix and `adopterSha256` returns the full digest; that's the
+exact value baked into model `meta.json` files.
+
 ## What ships in Phase 1
 
 - `models/feature-catalog.v1.json` — the base catalogue (this file
@@ -178,17 +205,46 @@ load is logged at ERROR level with both version strings.
 - `OnnxService.applyActiveVersion` schema-version enforcement.
 - This document.
 
+## Phase 2 — RDA enrichment
+
+- `src/shared/features/feature-builder.ts` resolves every catalogue
+  feature into a single `Float32Array`. Base features have hand-written
+  resolvers; adopter features delegate to `compute-op-executor.ts`.
+- `src/v1/modules/rda/services/feature.service.ts` no longer ships a
+  434-dim default vector — it returns the raw Redis snapshot and lets
+  the builder do the layout. Defaults are per-feature in the catalogue.
+
+## Phase 3 — MLA training
+
+- `mla-service/src/training/data_loader.py` builds the training matrix
+  by iterating `catalog.features` and materialising each column from
+  Postgres (`transactions`, `velocitySnapshots`, `graphMetadata`). No
+  more 411-zero pad. Output dimension = `catalog.input_dimension`.
+- `convert_to_onnx(num_features=catalog.input_dimension)` so the
+  exported model's input shape matches the catalogue.
+- Reviewer overrides write `groundTruthFraud` on the matching
+  transaction row; the training query prefers it via `COALESCE`.
+
+## Phase 4 — PAA Redis writes
+
+- `paa-service/src/services/redis-update.service.ts` writes the
+  canonical catalogue names (`amount_mean_30d`,
+  `pair_time_since_last_send`, `graph_pagerank`, `graph_clustering_coef`,
+  `graph_community_id`, `graph_in_degree`, `graph_out_degree`). The
+  internal `CombinedFeatures` type keeps its old names — the rename is
+  contained to the Redis wire boundary.
+
+## Phase 5 — Sentinel "Features" page
+
+- Read-only listing of the running catalogue with filters by category
+  and source, plus a free-text search. Adopter-overlay features are
+  flagged with an `overlay` pill so operators can see at a glance which
+  rows are user-extension vs base.
+- New admin endpoint `GET /v1/admin/features/catalog` documented above.
+
 ## What's coming next
 
-- **Phase 2** — RDA's `feature.service.ts` reads the catalogue instead
-  of its hardcoded 12-column path. New 64-dim enrichment pipeline,
-  plus the compute-op executor for adopter features.
-- **Phase 3** — MLA's `data_loader.py` + `preprocessor.py` build the
-  training matrix from the catalogue; no more 411-zero pad. Retrain
-  produces a 64-dim (or 64+N-dim) ONNX.
-- **Phase 4** — PAA writes named Redis hash fields matching the
-  catalogue. Today's hardcoded names work but only by convention.
-- **Phase 5** — Frontend Model Registry page renders the catalogue
-  and shows live feature values for a selected `sender_id`.
 - **Phase 6 (optional)** — Code-based custom features with parity
-  testing.
+  testing for adopters who need ops the declarative compute algebra
+  can't express (rare; most real-world features fit in `ratio`,
+  `lookup`, `bool_and`, or `from_redis`).
