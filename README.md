@@ -28,38 +28,93 @@ The four services:
 
 ## Architecture
 
-```
-                    ┌─────────────┐
-                    │   NGINX     │
-                    │   (LB)      │
-                    └──────┬──────┘
-                           │
-         ┌─────────────────┼─────────────────┐
-         │                 │                 │
-    ┌────▼────┐      ┌────▼────┐      ┌────▼────┐
-    │  RDA-1  │      │  RDA-2  │      │  RDA-3  │
-    └────┬────┘      └────┬────┘      └────┬────┘
-         │                 │                 │
-         └─────────────────┼─────────────────┘
-                           │
-              ┌────────────┼────────────┐
-              │            │            │
-         ┌────▼────┐  ┌────▼────┐  ┌────▼────┐
-         │  Redis  │  │  Kafka  │  │ Postgres│
-         └─────────┘  └────┬────┘  └─────────┘
-                           │
-              ┌────────────┼────────────┬──────────┐
-              │            │            │          │
-         ┌────▼────┐  ┌────▼────┐  ┌────▼────┐  ┌──▼──┐
-         │  PAA-1  │  │  PAA-2  │  │   MLA   │  │ FIA │
-         └─────────┘  └─────────┘  └─────────┘  └─────┘
+```mermaid
+---
+config:
+  theme: mc
+---
+flowchart TB
+    Client(["Server-side caller<br/>(PSP, wallet, gateway)"])
+    Operator(["Operator / Analyst"])
+
+    Client -->|"POST /v1/predict<br/>X-Api-Key + Idempotency-Key"| RDA
+    RDA -->|"ACCEPT / DECLINE / REVIEW<br/>reason codes + audit_id"| Client
+
+    Operator -->|HTTPS| UI
+
+    subgraph FE ["Sentinel Dashboard (Vite + React)"]
+        UI["Review queue · Rules · Models<br/>Features catalogue · Audit log<br/>Investigations · Users / Roles"]
+    end
+
+    UI -.->|"JWT  /v1/admin/*"| RDA
+    UI -.->|"/v1/reports*"| FIA
+
+    subgraph S1 ["Real-Time Detection Agent (RDA)"]
+        RDA["Fastify HTTP API"]
+        Rules["Rules Engine<br/>PRE / POST · hot-reload 30s"]
+        Builder["Feature Builder<br/>catalogue-driven 64 + N dims"]
+        ONNX["ONNX Runtime<br/>XGBoost · segment thresholds"]
+        Reasons["Reason Codes"]
+        Audit["Decision Audit"]
+        RDA --> Rules --> Builder --> ONNX --> Reasons --> Audit
+    end
+
+    subgraph S2 ["Pattern Analysis Agent (PAA)"]
+        PAA["Kafka consumer"]
+        Graph["Transaction graph<br/>+ velocity windows"]
+        PAA --> Graph
+    end
+
+    subgraph S3 ["Model Learning Agent (MLA)"]
+        MLA["Drift monitor<br/>F1 + PSI"]
+        Train["XGBoost + SMOTE<br/>McNemar A/B"]
+        Conv["ONNX export<br/>+ feature_schema_version"]
+        MLA --> Train --> Conv
+    end
+
+    subgraph S4 ["Fraud Investigation Agent (FIA)"]
+        FIA["HTTP API + Kafka consumer"]
+        LLM["Phi-3-mini-4k-instruct (LoRA)<br/>rule-based fallback"]
+        FIA --> LLM
+    end
+
+    Redis[("Redis<br/>features:{senderId}")]
+    Kafka[["Apache Kafka"]]
+    PG[("PostgreSQL — fraud_db")]
+    Models[("models/versions/&lt;v&gt;/<br/>filesystem registry<br/>shared bind-mount")]
+
+    Builder <-->|"hgetall (catalogue-named keys)"| Redis
+    RDA -->|"transactions.completed<br/>(keyed by sender_id)"| Kafka
+    RDA -->|"transactions.blocked<br/>(keyed by transaction_id, DECLINE only)"| Kafka
+    Audit -->|decisionAuditLog| PG
+
+    Kafka -->|"transactions.completed"| PAA
+    Kafka -->|"transactions.completed"| MLA
+    Kafka -->|"transactions.blocked"| FIA
+
+    Graph -->|"catalogue-named keys"| Redis
+    Graph -->|"graphMetadata · velocitySnapshots"| PG
+
+    MLA <-->|"COALESCE(groundTruthFraud, fraudLabel)"| PG
+    Conv -->|"write {model.onnx, meta.json, scaler.npz}"| Models
+    Conv -->|"POST /v1/admin/models &rarr; ACTIVE"| RDA
+    Models -.->|"onActiveChange &rarr; hot-swap session"| ONNX
+
+    LLM -->|"investigationReports (UNIQUE on transactionId)"| PG
+
+    UI -->|"reviewer override (Accept / Decline)"| RDA
+    Audit -->|"groundTruthFraud<br/>(closes the training loop)"| PG
+
+    RDA -->|"HMAC-signed POST<br/>decision.created · decision.overridden · model.activated"| Subs([Subscriber endpoints])
+
+    style FE fill:#E8F0FA,stroke:#1F4E8C,stroke-width:1px,color:#0F2C52
+    style S4 fill:#FAECE7,stroke:#993C1D,stroke-width:2px,color:#4A1B0C
+    style FIA fill:#FAECE7,stroke:#D85A30,stroke-width:1px,color:#4A1B0C
+    style LLM fill:#F5C4B3,stroke:#D85A30,stroke-width:1px,color:#4A1B0C
+    style Models fill:#FFF4D1,stroke:#8B6914,stroke-width:1px,color:#5C4500
 ```
 
-PAA + MLA consume `transactions.completed` (keyed by `sender_id`).
-FIA consumes a separate `transactions.blocked` topic (keyed by
-`transaction_id`) — published by RDA only when the decision is `DECLINE`.
-The dual-publish keeps FIA's seconds-per-LLM-call latency away from PAA's
-millisecond pipeline.
+**Reading the diagram.** The synchronous path is `Client → RDA → ACCEPT/DECLINE/REVIEW` — everything else is async. RDA publishes every scored event to `transactions.completed` keyed by `sender_id` (consumed by PAA + MLA for per-user ordering) and, on `DECLINE`, additionally to `transactions.blocked` keyed by `transaction_id` (consumed only by FIA — keeps seconds-per-LLM-call latency off PAA's millisecond pipeline). The model registry is filesystem-backed (`models/versions/<v>/`) and shared between RDA and MLA via bind-mount; MLA writes a new version, RDA's `OnnxService` hot-swaps the session via `onActiveChange`. Reviewer overrides in the dashboard write `groundTruthFraud` on the matching transaction row, which MLA prefers via `COALESCE` over the system's own prior decision — that's the loop that prevents the model from learning to reproduce its own past decisions.
 
 ## Prerequisites
 
