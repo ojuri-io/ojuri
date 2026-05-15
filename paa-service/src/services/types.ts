@@ -1,7 +1,13 @@
 /**
- * Transaction event from Kafka
+ * Transaction event from Kafka.
+ *
+ * Mirrors RDA's `KafkaProducer.TransactionEvent`. The optional context
+ * block is everything PAA persists into `transactions` so MLA can train
+ * on it. Pre-2026-05 events without these fields parse fine — missing
+ * values map to NULL.
  */
 export interface TransactionEvent {
+  // ── Core ────────────────────────────────────────────────────
   transaction_id: string;
   sender_id: string;
   receiver_id: string;
@@ -28,6 +34,36 @@ export interface TransactionEvent {
     screen_resolution?: string;
   };
   processed_at: number;
+
+  // ── Optional request context (DTO mirror) ────────────────────
+  customer_dob?: string;
+  customer_nationality?: string;
+  customer_type?: string;
+  customer_id_type?: string;
+  account_age_days?: number;
+  is_authenticated?: boolean;
+  channel?: string;
+  currency?: string;
+  is_inflow?: boolean;
+  is_recurring?: boolean;
+  wallet_balance?: number;
+  customer_latitude?: number;
+  customer_longitude?: number;
+  transaction_country?: string;
+  destination_country?: string;
+  ip_country?: string;
+  transaction_lat?: number;
+  transaction_lng?: number;
+  ip_is_vpn?: boolean;
+  device_is_trusted?: boolean;
+  device_type?: string;
+  session_to_txn_seconds?: number;
+  agent_id?: string;
+  recipient_nationality?: string;
+  recipient_id_type?: string;
+  customer_fi?: string;
+  recipient_fi?: string;
+  request_context?: Record<string, unknown>;
 }
 
 /**

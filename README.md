@@ -29,37 +29,61 @@ The four services:
 ## Architecture
 
 ```
-                    ┌─────────────┐
-                    │   NGINX     │
-                    │   (LB)      │
-                    └──────┬──────┘
-                           │
-         ┌─────────────────┼─────────────────┐
-         │                 │                 │
-    ┌────▼────┐      ┌────▼────┐      ┌────▼────┐
-    │  RDA-1  │      │  RDA-2  │      │  RDA-3  │
-    └────┬────┘      └────┬────┘      └────┬────┘
-         │                 │                 │
-         └─────────────────┼─────────────────┘
-                           │
-              ┌────────────┼────────────┐
-              │            │            │
-         ┌────▼────┐  ┌────▼────┐  ┌────▼────┐
-         │  Redis  │  │  Kafka  │  │ Postgres│
-         └─────────┘  └────┬────┘  └─────────┘
-                           │
-              ┌────────────┼────────────┬──────────┐
-              │            │            │          │
-         ┌────▼────┐  ┌────▼────┐  ┌────▼────┐  ┌──▼──┐
-         │  PAA-1  │  │  PAA-2  │  │   MLA   │  │ FIA │
-         └─────────┘  └─────────┘  └─────────┘  └─────┘
+                  ┌──────────────┐                            ┌──────────────┐
+                  │   Clients    │── POST /v1/predict ─────▶  │   Sentinel   │
+                  │ (PSP / SDK)  │   X-Api-Key                │   dashboard  │
+                  └──────┬───────┘   Idempotency-Key          │ React / Vite │
+                         │                                    └──────┬───────┘
+                         ▼                                           │  JWT
+                  ┌──────────────┐                                   │  /v1/admin/*
+                  │    NGINX     │ ◄─────────────────────────────────┤  /v1/reports*
+                  │     (LB)     │                                   │
+                  └──────┬───────┘                                   │
+                         │                                           │
+       ┌─────────────────┼─────────────────┐                         │
+       │                 │                 │                         │
+  ┌────▼────┐       ┌────▼────┐       ┌────▼────┐                    │
+  │  RDA-1  │       │  RDA-2  │       │  RDA-3  │  ─── Fastify API   │
+  │         │       │         │       │         │  ─── Rules (PRE / POST, hot-reload)
+  │         │       │         │       │         │  ─── Feature builder (catalogue · 64+N)
+  │         │       │         │       │         │  ─── ONNX inference + segment thresholds
+  │         │       │         │       │         │  ─── Reason codes + decision audit
+  └────┬────┘       └────┬────┘       └────┬────┘
+       │                 │                 │   ─── HMAC webhooks ──▶ subscriber endpoints
+       └─────────────────┼─────────────────┘
+                         │
+     ┌────────────┬──────┴──────┬─────────────┬──────────────────┐
+     │            │             │             │                  │
+ ┌───▼───┐    ┌──▼──┐       ┌──▼──┐     ┌────▼────┐      ┌──────▼──────┐
+ │ Redis │    │Kafka│       │ PG  │     │ models/ │      │     FIA     │
+ │feature│    │     │       │fraud│     │versions │      │  Phi-3-mini │
+ │  hash │    │     │       │ _db │     │  (FS)   │      │   + LoRA    │
+ └───▲───┘    └──┬──┘       └──▲──┘     └────▲────┘      │ HTTP :9094  │
+     │           │              │             │          └──────▲──────┘
+     │   ┌───────┴───────┐      │             │                 │
+     │   │ completed     │ blocked (DECLINE only,               │
+     │   │ (key=         │ key=transaction_id)                  │
+     │   │  sender_id)   │                                      │
+     │   ▼               └──────────────────────────────────────┘
+     │ ┌──────┐   ┌──────┐                       (FIA consumes blocked)
+     │ │ PAA  │   │ MLA  │── writes new version ─▶ models/versions/<v>/
+     │ │graph │   │drift │   then POST /v1/admin/models → ACTIVE
+     │ │+ vel │   │+SMOTE│
+     │ └──┬───┘   └──┬───┘◄── onActiveChange ─── hot-swap session in RDA ONNX
+     │    │          │
+     └────┘          │  COALESCE(groundTruthFraud, fraudLabel)
+       refresh       │  ▲
+       features      │  │  Sentinel reviewer overrides write
+                     │  │  groundTruthFraud on the matching txn —
+                     │  └─ closes the train loop so the model
+                     │     doesn't learn from its own past decisions
+                     ▼
+                  ┌──────┐
+                  │  PG  │
+                  └──────┘
 ```
 
-PAA + MLA consume `transactions.completed` (keyed by `sender_id`).
-FIA consumes a separate `transactions.blocked` topic (keyed by
-`transaction_id`) — published by RDA only when the decision is `DECLINE`.
-The dual-publish keeps FIA's seconds-per-LLM-call latency away from PAA's
-millisecond pipeline.
+**Key components.** Real-time path: client `→` NGINX `→` RDA replicas, each running rules (PRE/POST, hot-reloaded every 30 s), a catalogue-driven feature builder, ONNX inference with per-segment thresholds, reason codes, and a decision-audit writer. Async fan-out: RDA publishes to `transactions.completed` (keyed by `sender_id`, consumed by PAA + MLA) and additionally to `transactions.blocked` on `DECLINE` (keyed by `transaction_id`, consumed only by FIA — keeps LLM latency off PAA's hot path). MLA writes new model versions into the filesystem registry under `models/versions/<v>/` (shared bind-mount with RDA) and posts `/v1/admin/models` then flips to `ACTIVE` — RDA's `OnnxService` hot-swaps the session via `onActiveChange`. Reviewer overrides from the Sentinel UI write `groundTruthFraud` on the matching transaction row; MLA's training query prefers it via `COALESCE` over the system's own prior decision. Outbound HMAC-signed webhooks (`decision.created`, `decision.overridden`, `model.activated`) deliver to subscriber endpoints with retry + ledger.
 
 ## Prerequisites
 

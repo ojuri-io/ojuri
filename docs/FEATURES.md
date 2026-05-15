@@ -129,13 +129,82 @@ The compute-op execution lands in **Phase 2** (RDA enrichment) and
 | `numeric_bucket` | `field`, `boundaries: number[]` | uint8 (bucket index) | Boundaries are inclusive upper bounds. |
 | `bool_and` / `bool_or` | `refs: string[]` (other feature names) | bool | Refs must be prior features in the same overlay (no forward refs). |
 | `from_redis` | `key: string` | float | Reads from `features:{senderId}` Redis hash. PAA writes the same key; train-side pulls it from the persisted feature snapshot. |
+| `custom` | `resolver: string` | float | Delegates to a code-based resolver registered on both sides. See below. |
 
-Op set kept deliberately small — every op is auditable, has a
-well-defined train-side implementation, and can't reach external
-services. Anything more elaborate (calling an embedding model,
-hitting an external API) is the **code-based** extension hook, which
-is a Phase 4 concern (`feature-catalog.adopter.code.json` with paired
-TS + Python modules and a parity-check command).
+Op set kept deliberately small — every declarative op is auditable,
+has a well-defined train-side implementation, and can't reach external
+services. The `custom` op is the escape hatch for cases the algebra
+can't express.
+
+### Code-based custom resolvers (the `custom` op)
+
+When a feature needs control flow the declarative ops can't express —
+a multi-field heuristic, a call into another service, mixing Redis +
+request + a lookup — wire a `custom` op and register a resolver of the
+same name on **both** the RDA side and the MLA side. They MUST produce
+the same value for the same inputs; the `feature_schema_version`
+mechanism can't catch resolver drift (the catalogue file is identical),
+so write a parity unit test.
+
+Catalogue (`feature-catalog.adopter.json`):
+
+```json
+{
+  "extends": "v1",
+  "features": [
+    {
+      "index": 64,
+      "name": "merchant_velocity_anomaly",
+      "category": "adopter",
+      "source": "rda:derived",
+      "dtype": "float32",
+      "default": 0,
+      "description": "Adopter-side merchant-velocity heuristic.",
+      "compute": { "type": "custom", "resolver": "merchant_velocity_anomaly" }
+    }
+  ]
+}
+```
+
+RDA side (any file imported during boot — typical convention is
+`src/custom-features/index.ts` imported from `src/bootstrap.ts`):
+
+```ts
+import { registerCustomFeature } from "@shared/features/custom-features";
+
+registerCustomFeature("merchant_velocity_anomaly", (ctx, spec) => {
+  const last5m = Number(ctx.redisFeatures["merchant_velocity_5m"] ?? 0);
+  const baseline = Number(ctx.redisFeatures["merchant_velocity_30d_avg"] ?? 0);
+  if (baseline <= 0) return Number(spec.default);
+  return last5m / baseline;
+});
+```
+
+MLA side (`mla-service/src/adopter/features.py`, imported from
+`src/main.py` so registration happens before training starts):
+
+```python
+import numpy as np
+import pandas as pd
+from src.features.custom_features import register_custom_feature
+
+def merchant_velocity_anomaly(df: pd.DataFrame, spec):
+    last5m = pd.to_numeric(df.get("merchant_velocity_5m", 0), errors="coerce").fillna(0)
+    baseline = pd.to_numeric(df.get("merchant_velocity_30d_avg", 0), errors="coerce").fillna(0)
+    out = np.where(baseline > 0, last5m / baseline.replace(0, np.nan), spec.default)
+    return out
+
+register_custom_feature("merchant_velocity_anomaly", merchant_velocity_anomaly)
+```
+
+Failure modes are non-fatal by design: a missing or throwing resolver
+logs once and returns the catalogue default for that feature — the
+prediction still completes, the audit log still records, the model
+trains on the same default in MLA.
+
+Use `request_context` (the jsonb overflow column on `transactions`) to
+carry adopter-only fields the catalogue resolver needs at train time
+without adding a new migration each time.
 
 ## Schema versioning
 

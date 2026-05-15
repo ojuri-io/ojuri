@@ -1,64 +1,93 @@
 Figure 1 — System overview
----
-config:
-  theme: mc
----
+
+```mermaid
 flowchart TB
-    Client(["Mobile Money Client"])
+    Client(["Server-side caller (PSP / wallet / gateway)"])
+    Operator(["Operator / Analyst"])
+    Subs(["Subscriber endpoints"])
 
-    Client -->|HTTP POST /predict| RDA
-    RDA -->|Accept / Decline| Client
+    Client -->|"POST /v1/predict + X-Api-Key + Idempotency-Key"| RDA
+    RDA -->|"ACCEPT / DECLINE / REVIEW + reason codes"| Client
 
-    subgraph S1 ["Service 1: Real-Time Detection"]
-        RDA["Real-Time Detection Agent"]
-        ONNX["XGBoost Model via ONNX Runtime"]
-        RDA --> ONNX
+    Operator -->|HTTPS| UI
+
+    subgraph FE ["Sentinel Dashboard"]
+        UI["Review queue, Rules, Models, Features,<br/>Audit log, Investigations, Users / Roles"]
     end
 
-    Redis[("Redis Feature Cache")]
+    UI -.->|"JWT /v1/admin/*"| RDA
+    UI -.->|"/v1/reports*"| FIA
 
-    RDA <-->|Feature lookup| Redis
-    RDA -->|Async publish| Kafka
+    subgraph S1 ["Real-Time Detection Agent (RDA)"]
+        RDA["Fastify HTTP API"]
+        Rules["Rules Engine<br/>PRE / POST, hot-reload 30s"]
+        Builder["Feature Builder<br/>catalogue-driven (64 + N dims)"]
+        ONNX["ONNX Runtime<br/>XGBoost, segment thresholds"]
+        Reasons["Reason Codes"]
+        Audit["Decision Audit"]
+        RDA --> Rules
+        Rules --> Builder
+        Builder --> ONNX
+        ONNX --> Reasons
+        Reasons --> Audit
+    end
 
-    Kafka[["Apache Kafka Event Bus"]]
-
-    subgraph S2 ["Service 2: Pattern Analysis"]
-        PAA["Pattern Analysis Agent"]
-        Graph["Graph Analytics & Velocity Metrics"]
+    subgraph S2 ["Pattern Analysis Agent (PAA)"]
+        PAA["Kafka consumer"]
+        Graph["Transaction graph<br/>+ velocity windows"]
         PAA --> Graph
     end
 
-    subgraph S3 ["Service 3: Model Learning"]
-        MLA["Model Learning Agent"]
-        Drift["Concept Drift Detection"]
-        Train["XGBoost Retraining"]
-        Conv["ONNX Export"]
-        MLA --> Drift --> Train --> Conv
+    subgraph S3 ["Model Learning Agent (MLA)"]
+        MLA["Drift monitor (F1 + PSI)"]
+        Train["XGBoost + SMOTE<br/>McNemar A/B"]
+        Conv["ONNX export<br/>+ feature_schema_version"]
+        MLA --> Train
+        Train --> Conv
     end
 
-    subgraph S4 ["Service 4: Fraud Investigation  ✦ New"]
-        FIA["Fraud Investigation Agent"]
-        LLM["Fine-tuned Phi-3-mini via LoRA"]
+    subgraph S4 ["Fraud Investigation Agent (FIA)"]
+        FIA["HTTP API + Kafka consumer"]
+        LLM["Phi-3-mini-4k (LoRA)<br/>rule-based fallback"]
         FIA --> LLM
     end
 
-    Kafka --> PAA
-    Kafka --> MLA
-    Kafka -->|transactions.blocked| FIA
+    Redis[("Redis<br/>features hash per sender")]
+    Kafka[["Apache Kafka"]]
+    PG[("PostgreSQL — fraud_db")]
+    Models[("models/versions/ on disk<br/>shared bind-mount")]
 
-    Graph -->|Refresh features| Redis
-    Conv -->|Push versioned model| Registry
-    LLM -->|Store investigation reports| PG
-    MLA -->|Query labeled data| PG
-    PAA -->|Store graph metadata| PG
-    Registry -->|Hot-swap model| RDA
+    Builder <-->|"hgetall catalogue keys"| Redis
+    RDA -->|"transactions.completed (key=sender_id)"| Kafka
+    RDA -->|"transactions.blocked (DECLINE only, key=transaction_id)"| Kafka
+    Audit -->|"decisionAuditLog"| PG
 
-    Registry[("Model Registry - MinIO")]
-    PG[("PostgreSQL 14")]
+    Kafka -->|"transactions.completed"| PAA
+    Kafka -->|"transactions.completed"| MLA
+    Kafka -->|"transactions.blocked"| FIA
 
-    style S4 fill:#FAECE7,stroke:#993C1D,stroke-width:2px,color:#4A1B0C
-    style FIA fill:#FAECE7,stroke:#D85A30,stroke-width:1px,color:#4A1B0C
-    style LLM fill:#F5C4B3,stroke:#D85A30,stroke-width:1px,color:#4A1B0C
+    Graph -->|"catalogue keys"| Redis
+    Graph -->|"graphMetadata, velocitySnapshots"| PG
+
+    MLA <-->|"COALESCE groundTruthFraud, fraudLabel"| PG
+    Conv -->|"write model.onnx + meta.json"| Models
+    Conv -->|"POST /v1/admin/models then ACTIVE"| RDA
+    Models -.->|"onActiveChange hot-swap"| ONNX
+
+    LLM -->|"investigationReports (UNIQUE on transactionId)"| PG
+
+    UI -->|"reviewer override Accept / Decline"| RDA
+    Audit -->|"groundTruthFraud (closes the loop)"| PG
+
+    RDA -->|"HMAC-signed webhooks"| Subs
+
+    classDef fiaTone fill:#FAECE7,stroke:#993C1D,stroke-width:2px,color:#4A1B0C
+    classDef feTone fill:#E8F0FA,stroke:#1F4E8C,stroke-width:1px,color:#0F2C52
+    classDef storeTone fill:#FFF4D1,stroke:#8B6914,stroke-width:1px,color:#5C4500
+    class FIA,LLM fiaTone
+    class UI feTone
+    class Models storeTone
+```
 
 Figure 2
 

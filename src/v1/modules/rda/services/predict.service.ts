@@ -288,6 +288,10 @@ class PredictService {
     ruleName?: string | null,
     auditId?: string | null
   ): void {
+    // Promote every DTO field PAA needs to persist to `transactions`.
+    // Empty values pass through as undefined so the PAA writer maps
+    // them to NULL — the loader will fall back to the catalogue
+    // default for any feature whose column is NULL.
     const event: TransactionEvent = {
       transaction_id: request.transaction_id,
       sender_id: request.sender_id,
@@ -303,6 +307,52 @@ class PredictService {
       audit_id: auditId ?? undefined,
       device_fingerprint: request.device_fingerprint,
       processed_at: Date.now(),
+
+      // Identity
+      customer_dob: request.customer_dob,
+      customer_nationality: request.customer_nationality,
+      customer_type: request.customer_type,
+      customer_id_type: request.customer_id_type,
+      account_age_days: request.account_age_days,
+      is_authenticated: request.is_authenticated,
+
+      // Channel / currency
+      channel: request.channel,
+      currency: request.currency,
+      is_inflow: request.is_inflow,
+      is_recurring: request.is_recurring,
+
+      // Wallet
+      wallet_balance: request.wallet_balance,
+
+      // Geographic
+      customer_latitude: request.customer_latitude,
+      customer_longitude: request.customer_longitude,
+      transaction_country: request.transaction_country,
+      destination_country: request.destination_country,
+      ip_country: request.ip_country,
+      transaction_lat: request.transaction_lat,
+      transaction_lng: request.transaction_lng,
+
+      // Device / session
+      ip_is_vpn: request.ip_is_vpn,
+      device_is_trusted: request.device_is_trusted,
+      device_type: request.device_type,
+      session_to_txn_seconds: request.session_to_txn_seconds,
+
+      // Agent (only presence flag — lat/lng/battery are not persisted)
+      agent_id: request.agent_id,
+
+      // Receiver (no recipient_dob — minimal sender-side fraud signal)
+      recipient_nationality: request.recipient_nationality,
+      recipient_id_type: request.recipient_id_type,
+      customer_fi: request.customer_fi,
+      recipient_fi: request.recipient_fi,
+
+      // Adopter overflow (read by the custom-feature hook on both sides)
+      request_context: (request as unknown as Record<string, unknown>).request_context as
+        | Record<string, unknown>
+        | undefined,
     };
 
     this.kafkaProducer.publishAsync(event);
