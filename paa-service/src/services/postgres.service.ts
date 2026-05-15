@@ -59,6 +59,50 @@ class PostgresService {
         decisionSource: event.decision_source ?? null,
         ruleName: event.rule_name ?? null,
         deviceFingerprint: JSON.stringify(event.device_fingerprint || {}),
+
+        // ── Identity ──────────────────────────────────────────
+        customerDob: event.customer_dob ?? null,
+        customerNationality: event.customer_nationality ?? null,
+        customerType: event.customer_type ?? null,
+        customerIdType: event.customer_id_type ?? null,
+        accountAgeDays: event.account_age_days ?? null,
+        isAuthenticated: event.is_authenticated ?? null,
+
+        // ── Channel + currency ────────────────────────────────
+        channel: event.channel ?? null,
+        currency: event.currency ?? null,
+        isInflow: event.is_inflow ?? null,
+        isRecurring: event.is_recurring ?? null,
+
+        // ── Wallet ────────────────────────────────────────────
+        walletBalance: event.wallet_balance ?? null,
+
+        // ── Geographic ────────────────────────────────────────
+        customerLatitude: event.customer_latitude ?? null,
+        customerLongitude: event.customer_longitude ?? null,
+        transactionCountry: event.transaction_country ?? null,
+        destinationCountry: event.destination_country ?? null,
+        ipCountry: event.ip_country ?? null,
+        transactionLat: event.transaction_lat ?? null,
+        transactionLng: event.transaction_lng ?? null,
+
+        // ── Device / session ──────────────────────────────────
+        ipIsVpn: event.ip_is_vpn ?? null,
+        deviceIsTrusted: event.device_is_trusted ?? null,
+        deviceType: event.device_type ?? null,
+        sessionToTxnSeconds: event.session_to_txn_seconds ?? null,
+
+        // ── Agent (presence flag only) ────────────────────────
+        agentId: event.agent_id ?? null,
+
+        // ── Receiver ──────────────────────────────────────────
+        recipientNationality: event.recipient_nationality ?? null,
+        recipientIdType: event.recipient_id_type ?? null,
+        customerFi: event.customer_fi ?? null,
+        recipientFi: event.recipient_fi ?? null,
+
+        // ── Adopter overflow ──────────────────────────────────
+        requestContext: event.request_context ? JSON.stringify(event.request_context) : null,
       }));
 
       await knex("transactions").insert(records).onConflict("transactionId").ignore();

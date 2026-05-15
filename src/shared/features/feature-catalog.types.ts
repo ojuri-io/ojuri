@@ -96,7 +96,23 @@ export type ComputeOp =
     }
   | { type: "bool_and"; refs: string[] }
   | { type: "bool_or"; refs: string[] }
-  | { type: "from_redis"; key: string };
+  | { type: "from_redis"; key: string }
+  /**
+   * Delegate to a code-based resolver registered via
+   * `registerCustomFeature(name, fn)` (TS) and
+   * `register_custom_feature(name, fn)` (Python). Use this when the
+   * declarative algebra above can't express the feature — e.g. a
+   * lookup against an external service, a multi-field heuristic that
+   * mixes Redis + request + a lookup table, or anything that needs
+   * conditional control flow.
+   *
+   * Parity is the adopter's responsibility: both the RDA-side and
+   * MLA-side resolver must produce the same value for the same
+   * inputs. If they drift, the `feature_schema_version` mechanism
+   * won't catch it (the catalogue file is identical) — write a
+   * unit test that pins the contract.
+   */
+  | { type: "custom"; resolver: string };
 
 export interface FeatureCatalogFile {
   version: string;

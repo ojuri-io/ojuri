@@ -17,8 +17,11 @@ default — that's the honest signal until adopters extend the
 `transactions` schema with the columns they care about.
 """
 
+import json
 import logging
+import os
 import time
+from pathlib import Path
 from typing import Callable, Dict, List, Tuple
 
 import numpy as np
@@ -27,6 +30,51 @@ from sqlalchemy import create_engine, text
 
 from src.config import config
 from src.features.catalog import load_catalog, FeatureSpec
+from src.features.custom_features import get_custom_feature
+from src.features.encoders import (
+    age_days_series,
+    encode_channel,
+    encode_country,
+    encode_currency,
+    encode_device_type,
+    encode_id_type,
+    encode_transaction_type,
+    haversine_km,
+    safe_bool_series,
+    safe_number_series,
+)
+
+
+_LOOKUP_DIR = Path(
+    os.environ.get(
+        "FEATURE_LOOKUP_DIR",
+        str(Path(__file__).resolve().parents[3] / "models" / "lookups"),
+    )
+)
+_LOOKUP_CACHE: Dict[str, Dict[str, float]] = {}
+
+
+def _load_lookup(name: str) -> Dict[str, float]:
+    """
+    Mirror of `src/shared/features/lookup-table.ts`. Reads
+    `models/lookups/<name>` (e.g. `country_risk.json`) and caches the
+    parsed dict. Returns an empty dict when the file is missing — the
+    catalogue default takes over downstream.
+    """
+    if name in _LOOKUP_CACHE:
+        return _LOOKUP_CACHE[name]
+    path = _LOOKUP_DIR / name
+    if not path.exists():
+        _LOOKUP_CACHE[name] = {}
+        return _LOOKUP_CACHE[name]
+    try:
+        raw = json.loads(path.read_text())
+        normalised = {str(k).upper(): float(v) for k, v in raw.items()}
+        _LOOKUP_CACHE[name] = normalised
+        return normalised
+    except Exception:
+        _LOOKUP_CACHE[name] = {}
+        return _LOOKUP_CACHE[name]
 
 logger = logging.getLogger(__name__)
 
@@ -76,6 +124,10 @@ class DataLoader:
         # DESC` puts the verified rows first within `limit`, so when
         # the table gets big the model trains on real ground truth
         # before falling back to system labels.
+        # New optional columns added 2026-05-15 are wrapped in `to_jsonb`
+        # / typed casts that tolerate NULL so backfills don't blow up.
+        # Anything not yet populated falls back to the catalogue default
+        # in `_materialise_column`.
         query = text(
             """
             SELECT
@@ -88,7 +140,51 @@ class DataLoader:
                 COALESCE("groundTruthFraud", "fraudLabel") as fraud_label,
                 "groundTruthFraud" IS NOT NULL as is_ground_truth,
                 "fraudProbability" as fraud_probability,
-                "deviceFingerprint" as device_fingerprint
+                "deviceFingerprint" as device_fingerprint,
+
+                -- Identity
+                "customerDob" as customer_dob,
+                "customerNationality" as customer_nationality,
+                "customerType" as customer_type,
+                "customerIdType" as customer_id_type,
+                "accountAgeDays" as account_age_days,
+                "isAuthenticated" as is_authenticated,
+
+                -- Channel / currency
+                "channel" as channel,
+                "currency" as currency,
+                "isInflow" as is_inflow_raw,
+                "isRecurring" as is_recurring,
+
+                -- Wallet
+                "walletBalance" as wallet_balance,
+
+                -- Geographic
+                "customerLatitude" as customer_latitude,
+                "customerLongitude" as customer_longitude,
+                "transactionCountry" as transaction_country,
+                "destinationCountry" as destination_country,
+                "ipCountry" as ip_country,
+                "transactionLat" as transaction_lat,
+                "transactionLng" as transaction_lng,
+
+                -- Device / session
+                "ipIsVpn" as ip_is_vpn,
+                "deviceIsTrusted" as device_is_trusted,
+                "deviceType" as device_type,
+                "sessionToTxnSeconds" as session_to_txn_seconds,
+
+                -- Agent
+                "agentId" as agent_id,
+
+                -- Receiver
+                "recipientNationality" as recipient_nationality,
+                "recipientIdType" as recipient_id_type,
+                "customerFi" as customer_fi,
+                "recipientFi" as recipient_fi,
+
+                -- Adopter overflow (consumed by the custom-feature hook)
+                "requestContext" as request_context
             FROM transactions
             WHERE COALESCE("groundTruthFraud", "fraudLabel") IS NOT NULL
               AND ("decisionSource" IS NULL OR "decisionSource" = 'ML')
@@ -322,6 +418,43 @@ class DataLoader:
         else:
             default_value = float(spec.default)
 
+        # Adopter overlay features declare a `compute` block. The
+        # declarative ops are handled by hand-rolled mappings against
+        # the existing columns; `{type: custom, resolver: NAME}`
+        # delegates to a registered Python resolver so the same code
+        # path runs at train time and predict time (mirror of the TS
+        # `getCustomFeature` switch in compute-op-executor.ts).
+        if spec.compute and isinstance(spec.compute, dict) and spec.compute.get("type") == "custom":
+            resolver_name = str(spec.compute.get("resolver", ""))
+            fn = get_custom_feature(resolver_name)
+            if not fn:
+                logger.warning(
+                    "no custom resolver registered for '%s' — training '%s' on catalogue default",
+                    resolver_name, spec.name,
+                )
+                return np.full(n, default_value, dtype=np.float32)
+            try:
+                arr = fn(df, spec)
+                arr = np.asarray(arr, dtype=np.float32)
+                if arr.shape[0] != n:
+                    logger.warning(
+                        "custom resolver '%s' returned length %d, expected %d — using default",
+                        resolver_name, arr.shape[0], n,
+                    )
+                    return np.full(n, default_value, dtype=np.float32)
+                # Replace non-finite values with the catalogue default.
+                bad = ~np.isfinite(arr)
+                if bad.any():
+                    arr = arr.copy()
+                    arr[bad] = default_value
+                return arr
+            except Exception as err:
+                logger.warning(
+                    "custom resolver '%s' raised — defaulting '%s': %s",
+                    resolver_name, spec.name, err,
+                )
+                return np.full(n, default_value, dtype=np.float32)
+
         if spec.source == "paa:redis":
             if "sender_id" not in df.columns:
                 return np.full(n, default_value, dtype=np.float32)
@@ -335,6 +468,7 @@ class DataLoader:
         if spec.name == "amount":
             return df["amount"].astype("float32").values
 
+        # ── Calendar (timestamp-derived) ─────────────────────────
         if spec.name == "hour_of_day":
             return self._safe_time_field(df, lambda ts: ts.dt.hour, default_value)
         if spec.name == "day_of_week":
@@ -353,15 +487,95 @@ class DataLoader:
                 lambda ts: ((ts.dt.hour <= 5) | (ts.dt.hour == 23)).astype("int8"),
                 default_value,
             )
+
+        # ── Categorical encoders ─────────────────────────────────
         if spec.name == "transaction_type_code":
             return self._encode_transaction_type(df).astype("float32")
-        if spec.name == "is_inflow":
-            if "transaction_type" not in df.columns:
-                return np.full(n, default_value, dtype=np.float32)
-            return (
-                df["transaction_type"].astype(str).str.upper() == "CASH_IN"
-            ).astype("float32").values
+        if spec.name == "channel_code" and "channel" in df.columns:
+            return encode_channel(df["channel"]).astype("float32").values
+        if spec.name == "currency_code" and "currency" in df.columns:
+            return encode_currency(df["currency"]).astype("float32").values
+        if spec.name == "device_type_code" and "device_type" in df.columns:
+            return encode_device_type(df["device_type"]).astype("float32").values
+        if spec.name == "id_type_code" and "customer_id_type" in df.columns:
+            return encode_id_type(df["customer_id_type"]).astype("float32").values
+        if spec.name == "sender_country_code" and "customer_nationality" in df.columns:
+            return encode_country(df["customer_nationality"]).astype("float32").values
 
+        # ── is_inflow: prefer the explicit column when present ──
+        if spec.name == "is_inflow":
+            if "is_inflow_raw" in df.columns and df["is_inflow_raw"].notna().any():
+                return safe_bool_series(df["is_inflow_raw"]).astype("float32").values
+            if "transaction_type" in df.columns:
+                return (
+                    df["transaction_type"].astype(str).str.upper() == "CASH_IN"
+                ).astype("float32").values
+            return np.full(n, default_value, dtype=np.float32)
+
+        # ── KYC / identity ───────────────────────────────────────
+        if spec.name == "has_kyc_id" and "customer_id_type" in df.columns:
+            return df["customer_id_type"].notna().astype("float32").values
+        if spec.name == "recipient_has_kyc_id" and "recipient_id_type" in df.columns:
+            return df["recipient_id_type"].notna().astype("float32").values
+        if spec.name == "customer_is_corporate" and "customer_type" in df.columns:
+            return (
+                df["customer_type"].fillna("").astype(str).str.upper() == "CORPORATE"
+            ).astype("float32").values
+        if spec.name == "is_agent_assisted" and "agent_id" in df.columns:
+            return df["agent_id"].notna().astype("float32").values
+
+        if spec.name == "customer_age_days":
+            if "customer_dob" not in df.columns:
+                return np.full(n, default_value, dtype=np.float32)
+            now_ts = self._row_now_ts(df)
+            return age_days_series(df["customer_dob"], now_ts).astype("float32").values
+
+        # ── FI / nationality match ───────────────────────────────
+        if spec.name == "recipient_same_fi":
+            a = df.get("customer_fi", pd.Series([""] * n)).fillna("").astype(str)
+            b = df.get("recipient_fi", pd.Series([""] * n)).fillna("").astype(str)
+            mask = (a != "") & (b != "") & (a == b)
+            return mask.astype("float32").values
+        if spec.name == "recipient_nationality_match":
+            a = df.get("customer_nationality", pd.Series([""] * n)).fillna("").astype(str).str.upper()
+            b = df.get("recipient_nationality", a).fillna("").astype(str).str.upper()
+            # Default catalogue value is 1 (assume match when unknown).
+            both_present = (a != "") & (b != "")
+            match = both_present & (a == b)
+            return np.where(both_present, match.astype("int8"), int(default_value)).astype("float32")
+
+        # ── Geographic ──────────────────────────────────────────
+        if spec.name == "customer_to_txn_distance_km":
+            return haversine_km(
+                df.get("customer_latitude", pd.Series([np.nan] * n)),
+                df.get("customer_longitude", pd.Series([np.nan] * n)),
+                df.get("transaction_lat", pd.Series([np.nan] * n)),
+                df.get("transaction_lng", pd.Series([np.nan] * n)),
+            ).astype("float32").values
+        if spec.name == "ip_country_mismatch":
+            home = df.get("customer_nationality", pd.Series([""] * n)).fillna("").astype(str).str.upper()
+            ip = df.get("ip_country", home).fillna("").astype(str).str.upper()
+            mismatch = (home != "") & (ip != "") & (home != ip)
+            return mismatch.astype("float32").values
+        if spec.name == "is_cross_border_dest":
+            txn = df.get("transaction_country", pd.Series([""] * n)).fillna("").astype(str).str.upper()
+            dst = df.get("destination_country", txn).fillna("").astype(str).str.upper()
+            cross = (txn != "") & (dst != "") & (txn != dst)
+            return cross.astype("float32").values
+        if spec.name == "txn_country_risk_band":
+            lookup = _load_lookup("country_risk.json")
+            if "transaction_country" not in df.columns or not lookup:
+                return np.full(n, default_value, dtype=np.float32)
+            keys = df["transaction_country"].fillna("").astype(str).str.upper()
+            return keys.map(lookup).fillna(default_value).astype("float32").values
+
+        # ── Booleans (rda:request) ──────────────────────────────
+        if spec.name in {"is_authenticated", "is_recurring", "ip_is_vpn", "device_is_trusted"}:
+            if spec.name in df.columns:
+                return safe_bool_series(df[spec.name]).astype("float32").values
+            return np.full(n, default_value, dtype=np.float32)
+
+        # ── Generic name-match fallback (numeric columns) ───────
         if spec.name in df.columns:
             return (
                 pd.to_numeric(df[spec.name], errors="coerce")
@@ -371,6 +585,24 @@ class DataLoader:
             )
 
         return np.full(n, default_value, dtype=np.float32)
+
+    @staticmethod
+    def _row_now_ts(df: pd.DataFrame) -> float:
+        """
+        Epoch reference for age computations. Use the row's own
+        timestamp when present (so age is computed at-decision-time, not
+        at-train-time — important when retraining over a multi-month
+        window). Falls back to `time.time()` for any row without a
+        usable timestamp.
+        """
+        if "timestamp" in df.columns:
+            try:
+                ts = pd.to_datetime(df["timestamp"])
+                if not ts.empty and ts.notna().any():
+                    return float(ts.max().timestamp())
+            except Exception:
+                pass
+        return time.time()
 
     def _safe_time_field(
         self,

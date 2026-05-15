@@ -9,9 +9,16 @@ import path from "path";
 const log = createServiceLogger("KafkaProducer");
 
 /**
- * Transaction event payload for Kafka
+ * Transaction event payload for Kafka.
+ *
+ * Carries the full optional request context (added 2026-05-15) so PAA
+ * can persist it to `transactions` and MLA can train on the same fields
+ * RDA evaluated at inference time. Pre-2026-05 events without these
+ * fields still parse — every optional value just lands as undefined and
+ * the PAA writer maps undefined to NULL.
  */
 export interface TransactionEvent {
+  // ── Core (always present) ────────────────────────────────────
   transaction_id: string;
   sender_id: string;
   receiver_id: string;
@@ -37,6 +44,56 @@ export interface TransactionEvent {
     screen_resolution?: string;
   };
   processed_at: number;
+
+  // ── Optional request context (DTO mirror) ────────────────────
+  // Identity
+  customer_dob?: string;
+  customer_nationality?: string;
+  customer_type?: string;
+  customer_id_type?: string;
+  account_age_days?: number;
+  is_authenticated?: boolean;
+
+  // Channel / currency
+  channel?: string;
+  currency?: string;
+  is_inflow?: boolean;
+  is_recurring?: boolean;
+
+  // Wallet
+  wallet_balance?: number;
+
+  // Geographic
+  customer_latitude?: number;
+  customer_longitude?: number;
+  transaction_country?: string;
+  destination_country?: string;
+  ip_country?: string;
+  transaction_lat?: number;
+  transaction_lng?: number;
+
+  // Device / session
+  ip_is_vpn?: boolean;
+  device_is_trusted?: boolean;
+  device_type?: string;
+  session_to_txn_seconds?: number;
+
+  // Agent (mobile-money) — only the agent_id presence flag survives
+  // persistence; lat/lng/battery were dropped on review.
+  agent_id?: string;
+
+  // Receiver — no recipient_dob (low fraud signal).
+  recipient_nationality?: string;
+  recipient_id_type?: string;
+  customer_fi?: string;
+  recipient_fi?: string;
+
+  /**
+   * Adopter overflow — arbitrary JSON the adopter wants persisted with
+   * the row but doesn't want a dedicated column for. The custom-feature
+   * hook reads from this at both predict-time and train-time.
+   */
+  request_context?: Record<string, unknown>;
 }
 
 /**

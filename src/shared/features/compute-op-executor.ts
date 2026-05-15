@@ -15,6 +15,7 @@
 import { ComputeOp, FeatureSpec } from "./feature-catalog.types";
 import { lookupValue } from "./lookup-table";
 import { safeBool, safeNumber } from "./encoders";
+import { getCustomFeature } from "./custom-features";
 
 /**
  * Context handed to each compute call.
@@ -94,6 +95,45 @@ export function executeComputeOp(
     case "from_redis":
       return coerceToFeatureValue(ctx.redisFeatures[op.key], spec);
 
+    case "custom": {
+      // Adopter-defined resolver. Catalogue validation already ensured
+      // `op.resolver` is a string; the registry returns undefined when
+      // no one called `registerCustomFeature(op.resolver, ...)` at
+      // boot. That's a configuration mistake, not a per-request bug —
+      // fall back to the catalogue default and log loudly so the
+      // operator notices on the first predict.
+      const fn = getCustomFeature(op.resolver);
+      if (!fn) {
+        if (!warnedMissingResolvers.has(op.resolver)) {
+          warnedMissingResolvers.add(op.resolver);
+          // eslint-disable-next-line no-console
+          console.warn(
+            `[feature-catalog] no custom resolver registered for '${op.resolver}' — using default for '${spec.name}'`
+          );
+        }
+        return spec.default === true ? 1 : spec.default === false ? 0 : Number(spec.default);
+      }
+      try {
+        const v = fn(ctx, spec);
+        return Number.isFinite(v) ? v : Number(spec.default);
+      } catch (err) {
+        // A buggy resolver shouldn't bring the predict path down. Log
+        // once per feature name and return the catalogue default; the
+        // model trains on default for the same row in MLA so the
+        // behaviour at train + serve stays consistent under failure.
+        if (!warnedFailingResolvers.has(op.resolver)) {
+          warnedFailingResolvers.add(op.resolver);
+          // eslint-disable-next-line no-console
+          console.warn(
+            `[feature-catalog] custom resolver '${op.resolver}' threw — using default for '${spec.name}': ${
+              err instanceof Error ? err.message : String(err)
+            }`
+          );
+        }
+        return spec.default === true ? 1 : spec.default === false ? 0 : Number(spec.default);
+      }
+    }
+
     default: {
       // Exhaustiveness check: TS narrows the union to `never` if we
       // covered every variant. Adding a new op breaks compile here.
@@ -102,6 +142,11 @@ export function executeComputeOp(
     }
   }
 }
+
+// Module-scoped so we only warn once per missing/failing resolver,
+// rather than spamming the log on every request.
+const warnedMissingResolvers = new Set<string>();
+const warnedFailingResolvers = new Set<string>();
 
 function coerceToFeatureValue(raw: unknown, spec: FeatureSpec): number {
   if (raw == null) {
