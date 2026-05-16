@@ -51,9 +51,16 @@ function normaliseRow(r) {
 
 function AuditLog({ toast, nav, queue, rules, fromTweak, toTweak }) {
   // Committed (applied) filters — drive the fetch.
+  //
+  // We intentionally start with NO date range (and no decision /
+  // reason / flag narrowing) so the page loads "everything" on first
+  // visit. The Tweaks panel's `fromTweak` / `toTweak` are available
+  // for one-click application but are no longer auto-applied — earlier
+  // behaviour preloaded the last-7-days range, which surprised users
+  // who expected an empty filter.
   const [filters, setFilters] = useState({
-    from: fromTweak || '',
-    to: toTweak || '',
+    from: '',
+    to: '',
     search: '',
     decisions: new Set(['ACCEPT', 'DECLINE', 'REVIEW']),
     model: '',
@@ -111,15 +118,10 @@ function AuditLog({ toast, nav, queue, rules, fromTweak, toTweak }) {
     };
   }, []);
 
-  // Keep state in sync with the Tweaks defaults when they change. We push
-  // the value into both filters (applied) and the local panel draft so the
-  // first render shows them already lit up.
-  useEffect(() => {
-    if (fromTweak) setFilters((f) => ({ ...f, from: fromTweak }));
-  }, [fromTweak]);
-  useEffect(() => {
-    if (toTweak) setFilters((f) => ({ ...f, to: toTweak }));
-  }, [toTweak]);
+  // (The Tweaks panel's date range used to auto-sync into the filter
+  // here. It now stays available as a manual one-click shortcut from
+  // the filters panel but doesn't preload on mount — the default view
+  // is unfiltered.)
 
   // Fetch only when a committed filter, page, or search changes.
   useEffect(() => {

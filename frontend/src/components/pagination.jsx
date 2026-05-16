@@ -1,7 +1,14 @@
 // Shared pagination bar — used by Audit log, Transactions, Reports,
-// Users, and Investigations. Renders nothing when there's only one page
-// (or none), so empty / short lists don't get a useless "0 of 0 · 1 / 1"
-// row. Two visual flavours via `variant`:
+// Users, and Investigations.
+//
+// Previous behaviour hid the entire footer when there was only one page
+// of results — which made the count indicator disappear on short lists
+// and made the dashboard feel inconsistent ("sometimes I see pagination,
+// sometimes I don't"). It now ALWAYS renders the row when there's at
+// least one row of data, and disables the chevrons when there's nothing
+// to navigate. Empty lists still hide it (no row to count).
+//
+// Two visual flavours via `variant`:
 //
 //   - "numbered" — chevron + page numbers (1, 2, 3, … N). Matches what
 //     Transactions used; preferred for client-paged lists where the
@@ -22,13 +29,16 @@ export function Pagination({
   onChange,
   variant = 'compact',
 }) {
-  const totalPages = Math.max(1, Math.ceil((total || 0) / pageSize));
-  // Hide entirely when there's nothing meaningful to navigate.
-  if (totalPages <= 1) return null;
+  // Nothing to show when the table is empty. Empty-state copy is the
+  // page's responsibility — the footer would just say "0 of 0".
+  if (!total || total <= 0) return null;
 
+  const totalPages = Math.max(1, Math.ceil(total / pageSize));
   const from = Math.min((page - 1) * pageSize + 1, total);
   const to = Math.min(page * pageSize, total);
   const setPage = (n) => onChange(Math.max(1, Math.min(totalPages, n)));
+  const atFirst = page <= 1;
+  const atLast = page >= totalPages;
 
   return (
     <div
@@ -47,7 +57,7 @@ export function Pagination({
       <div style={{ display: 'flex', gap: 4, alignItems: 'center' }}>
         <button
           style={{ fontSize: 11, padding: '4px 8px', minWidth: 28 }}
-          disabled={page === 1}
+          disabled={atFirst}
           onClick={() => setPage(page - 1)}
           aria-label="Previous page"
         >
@@ -62,7 +72,7 @@ export function Pagination({
         )}
         <button
           style={{ fontSize: 11, padding: '4px 8px', minWidth: 28 }}
-          disabled={page === totalPages}
+          disabled={atLast}
           onClick={() => setPage(page + 1)}
           aria-label="Next page"
         >
