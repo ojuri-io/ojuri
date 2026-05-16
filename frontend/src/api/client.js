@@ -25,8 +25,16 @@ const getApiKey = () => {
   }
 };
 
-const adminHeaders = () => {
-  const h = { 'content-type': 'application/json' };
+/**
+ * Headers for admin requests. By default sets `content-type:
+ * application/json` because most callers ship a JSON body. Pass
+ * `{ body: false }` for DELETE / GET-with-no-body — Fastify's JSON
+ * parser throws 400 on an empty body when content-type is application/
+ * json, which silently broke every delete-style request in the UI.
+ */
+const adminHeaders = ({ body = true } = {}) => {
+  const h = {};
+  if (body) h['content-type'] = 'application/json';
   const t = getJwt();
   if (t) h['authorization'] = `Bearer ${t}`;
   return h;
@@ -73,7 +81,7 @@ export const login = ({ username, password, tenantId }) =>
   }).then(unwrap);
 
 export const logout = () =>
-  fetch('/v1/auth/logout', { method: 'POST', headers: adminHeaders() }).then(unwrap);
+  fetch('/v1/auth/logout', { method: 'POST', headers: adminHeaders({ body: false }) }).then(unwrap);
 
 export const me = () => fetch('/v1/auth/me', { headers: adminHeaders() }).then(unwrap);
 
@@ -121,7 +129,7 @@ export const updateUser = (id, body) =>
 export const deleteUser = (id) =>
   fetch(`/v1/admin/users/${encodeURIComponent(id)}`, {
     method: 'DELETE',
-    headers: adminHeaders(),
+    headers: adminHeaders({ body: false }),
   }).then(unwrap);
 
 export const assignUserRole = (userId, roleId) =>
@@ -134,7 +142,7 @@ export const assignUserRole = (userId, roleId) =>
 export const unassignUserRole = (userId, roleId) =>
   fetch(
     `/v1/admin/users/${encodeURIComponent(userId)}/roles/${encodeURIComponent(roleId)}`,
-    { method: 'DELETE', headers: adminHeaders() },
+    { method: 'DELETE', headers: adminHeaders({ body: false }) },
   ).then(unwrap);
 
 // ──────── Roles + Permissions (admin) ────────
@@ -164,7 +172,7 @@ export const updateRole = (id, body) =>
 export const deleteRole = (id) =>
   fetch(`/v1/admin/roles/${encodeURIComponent(id)}`, {
     method: 'DELETE',
-    headers: adminHeaders(),
+    headers: adminHeaders({ body: false }),
   }).then(unwrap);
 
 // ──────── Predict (RDA) ────────
@@ -276,7 +284,7 @@ export const setRuleActive = (id, isActive) =>
 export const deleteRule = (id) =>
   fetch(`/v1/admin/rules/${encodeURIComponent(id)}`, {
     method: 'DELETE',
-    headers: adminHeaders(),
+    headers: adminHeaders({ body: false }),
   }).then(unwrap);
 
 // ──────── Models (admin) ────────
@@ -342,7 +350,7 @@ export const setModelStatus = (version, status) =>
 export const deleteModel = (version) =>
   fetch(`/v1/admin/models/${encodeURIComponent(version)}`, {
     method: 'DELETE',
-    headers: adminHeaders(),
+    headers: adminHeaders({ body: false }),
   }).then(unwrap);
 
 // ──────── Webhooks (admin) ────────
@@ -366,7 +374,7 @@ export const subscribeWebhook = (sub) =>
 export const deleteWebhook = (id) =>
   fetch(`/v1/admin/webhooks/${encodeURIComponent(id)}`, {
     method: 'DELETE',
-    headers: adminHeaders(),
+    headers: adminHeaders({ body: false }),
   }).then(unwrap);
 
 // ──────── FIA (investigation reports) ────────
@@ -539,7 +547,7 @@ export const updateSavedReport = (id, body) =>
 export const deleteSavedReport = (id) =>
   fetch(`/v1/admin/saved-reports/${encodeURIComponent(id)}`, {
     method: 'DELETE',
-    headers: adminHeaders(),
+    headers: adminHeaders({ body: false }),
   }).then(unwrap);
 
 export const runSavedReport = (id, { limit = 100, offset = 0, override } = {}) => {
@@ -818,7 +826,7 @@ export const updateDriftConfig = ({ driftF1Threshold, driftPsiThreshold, driftWi
 export const triggerManualRetrain = () =>
   fetch('/mla/v1/admin/retrain', {
     method: 'POST',
-    headers: adminHeaders(),
+    headers: adminHeaders({ body: false }),
   }).then(unwrap);
 
 export const listRetrainRuns = () =>
