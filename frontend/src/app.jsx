@@ -355,6 +355,7 @@ function AuthenticatedApp({ user, connection, setConnection, onLogout }) {
     PageBody = (
       <Investigations
         toast={toast}
+        nav={nav}
         reports={reports}
         setReports={setReports}
         reportsLive={reportsLive}

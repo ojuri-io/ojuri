@@ -20,7 +20,7 @@ import { Pagination } from '../components/pagination.jsx';
 
 const REPORTS_PER_PAGE = 10;
 
-function Investigations({ toast, reports, setReports, reportsLive, setReportsLive }) {
+function Investigations({ toast, nav, reports, setReports, reportsLive, setReportsLive }) {
   const [verdict, setVerdict] = useState('ALL');
   const [sort, setSort] = useState('Newest');
   const [search, setSearch] = useState('');
@@ -228,6 +228,7 @@ function Investigations({ toast, reports, setReports, reportsLive, setReportsLiv
             expanded={expanded === r.id}
             onToggle={() => setExpanded(e => e === r.id ? null : r.id)}
             toast={toast}
+            nav={nav}
           />
         ))}
         {total === 0 && !isLoading && (
@@ -251,7 +252,7 @@ function Investigations({ toast, reports, setReports, reportsLive, setReportsLiv
 }
 
 // ──────── Report Card ────────
-function ReportCard({ r, expanded, onToggle, toast }) {
+function ReportCard({ r, expanded, onToggle, toast, nav }) {
   // Live FIA rows may omit some optional fields — normalise into safe
   // defaults so a missing `llmModelVersion` / `keyIndicators` / etc.
   // doesn't crash the card.
@@ -308,7 +309,20 @@ function ReportCard({ r, expanded, onToggle, toast }) {
           </div>
           <div style={{display:'flex', alignItems:'center', gap:8, whiteSpace:'nowrap'}}>
             <span style={{color:'var(--color-text-tertiary)'}}>{r.ageLabel}</span>
-            <button style={{padding:'3px 8px', fontSize:11}} onClick={()=>toast(`Opening transaction detail for ${truncId(r.transactionId || '', 10)}`)}>Open<Ti name="chevron-right" size={11}/></button>
+            <button
+              style={{padding:'3px 8px', fontSize:11}}
+              disabled={!r.transactionId || !nav}
+              title={r.transactionId ? 'Open transaction detail' : 'No transaction id on this report'}
+              onClick={() => {
+                if (!r.transactionId) {
+                  toast && toast('Report has no transaction id');
+                  return;
+                }
+                if (nav) nav('txn:' + r.transactionId);
+              }}
+            >
+              Open<Ti name="chevron-right" size={11}/>
+            </button>
           </div>
         </div>
       </div>
