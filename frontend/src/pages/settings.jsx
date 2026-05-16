@@ -99,11 +99,13 @@ function FraudThresholdCard({ toast, canWrite }) {
         <p style={{ marginTop: 6 }}><b>Higher</b> = fewer false declines, more fraud accepted. <b>Lower</b> = more declines, more false positives. Reasonable production range: <code>0.55 – 0.80</code>.</p>
       </Help>
 
-      {loading && <Muted>Loading…</Muted>}
+      {/* Show placeholder only when we have nothing to render —
+          otherwise keep the existing row visible across refetches. */}
+      {loading && !row && <Muted>Loading…</Muted>}
 
       {!loading && !row && <Muted>RDA admin unreachable.</Muted>}
 
-      {!loading && row && (
+      {row && (
         <Row>
           <Field
             label={`Threshold (${BOUNDS.fraud_threshold.min}–${BOUNDS.fraud_threshold.max})`}
@@ -208,11 +210,11 @@ function DriftCard({ toast, canWrite }) {
         </p>
       </Help>
 
-      {loading && <Muted>Loading…</Muted>}
+      {loading && !server && <Muted>Loading…</Muted>}
 
       {!loading && !server && <Muted>MLA admin unreachable.</Muted>}
 
-      {!loading && server && (
+      {server && (
         <>
           <Row>
             <Field
@@ -281,6 +283,10 @@ function RetrainCard({ toast, canTrigger }) {
   const [loading, setLoading] = useState(true);
   const [confirming, setConfirming] = useState(false);
   const [triggering, setTriggering] = useState(false);
+  // Expanded retrain-run id. Click a row to reveal the full A/B
+  // breakdown — F1/AUC/precision/recall side-by-side, deltas, p-value,
+  // and the validator's textual reasons. Only one row open at a time.
+  const [expandedId, setExpandedId] = useState(null);
 
   const refresh = useCallback(async () => {
     setLoading(true);
@@ -334,12 +340,17 @@ function RetrainCard({ toast, canTrigger }) {
         </button>
       </div>
 
-      {loading && <Muted>Loading run history…</Muted>}
+      {/* Stale-while-revalidate: the 8s poll re-runs `refresh` and used
+          to flip the whole table to "Loading…" each time. Now the
+          placeholder only renders when there's nothing to keep visible,
+          and the existing rows stay on screen across refetches. */}
+      {loading && runs.length === 0 && <Muted>Loading run history…</Muted>}
       {!loading && runs.length === 0 && <Muted>No retrain runs yet.</Muted>}
-      {!loading && runs.length > 0 && (
+      {runs.length > 0 && (
         <table style={{ width: '100%', fontSize: 13, borderCollapse: 'collapse' }}>
           <thead>
             <tr style={{ borderBottom: '1px solid var(--color-border-default)' }}>
+              <Th style={{ width: 22 }}></Th>
               <Th>Started</Th>
               <Th>Trigger</Th>
               <Th>By</Th>
@@ -347,22 +358,62 @@ function RetrainCard({ toast, canTrigger }) {
               <Th>Model</Th>
               <Th>F1</Th>
               <Th>AUC</Th>
-              <Th>Failure</Th>
+              <Th>Reason</Th>
             </tr>
           </thead>
           <tbody>
-            {runs.map((r) => (
-              <tr key={r.id} style={{ borderBottom: '1px solid var(--color-border-subtle)' }}>
-                <Td mono>{fmtTime(r.startedAt)}</Td>
-                <Td>{r.trigger}</Td>
-                <Td>{r.triggeredBy || '—'}</Td>
-                <Td><StatusPill status={r.status} /></Td>
-                <Td mono>{r.modelVersion || '—'}</Td>
-                <Td mono>{r.metrics?.f1_score?.toFixed?.(3) ?? '—'}</Td>
-                <Td mono>{r.metrics?.auc_roc?.toFixed?.(3) ?? '—'}</Td>
-                <Td style={{ color: 'var(--color-text-secondary)' }}>{r.failureReason || ''}</Td>
-              </tr>
-            ))}
+            {runs.map((r) => {
+              const isOpen = expandedId === r.id;
+              // Any run carries either an `ab_test` blob (deployed or
+              // rejected runs) or a `failureReason`. We expose the
+              // chevron only when there's something worth expanding.
+              const expandable = !!(r.metrics?.ab_test || r.failureReason);
+              const toggle = () => {
+                if (!expandable) return;
+                setExpandedId((id) => (id === r.id ? null : r.id));
+              };
+              return (
+                <React.Fragment key={r.id}>
+                  <tr
+                    style={{
+                      borderBottom: '1px solid var(--color-border-subtle)',
+                      cursor: expandable ? 'pointer' : 'default',
+                      background: isOpen ? 'var(--color-background-secondary)' : 'transparent',
+                    }}
+                    onClick={toggle}
+                    title={expandable ? 'Click for A/B breakdown' : ''}
+                  >
+                    <Td>
+                      {expandable && (
+                        <Ti
+                          name={isOpen ? 'chevron-down' : 'chevron-right'}
+                          size={12}
+                          style={{ color: 'var(--color-text-tertiary)' }}
+                        />
+                      )}
+                    </Td>
+                    <Td mono>{fmtTime(r.startedAt)}</Td>
+                    <Td>{r.trigger}</Td>
+                    <Td>{r.triggeredBy || '—'}</Td>
+                    <Td><StatusPill status={r.status} /></Td>
+                    <Td mono>{r.modelVersion || '—'}</Td>
+                    <Td mono>{r.metrics?.f1_score?.toFixed?.(3) ?? '—'}</Td>
+                    <Td mono>{r.metrics?.auc_roc?.toFixed?.(3) ?? '—'}</Td>
+                    <Td style={{ color: 'var(--color-text-secondary)' }}>
+                      {summariseReason(r)}
+                    </Td>
+                  </tr>
+                  {isOpen && (
+                    <tr style={{ background: 'var(--color-background-secondary)' }}>
+                      <td />
+                      <td colSpan={8} style={{ padding: '8px 14px 14px' }}>
+                        <RetrainRunDetails run={r} />
+                      </td>
+                    </tr>
+                  )}
+                </React.Fragment>
+              );
+            })}
           </tbody>
         </table>
       )}
@@ -460,8 +511,8 @@ function StatusPill({ status }) {
   );
 }
 
-function Th({ children }) {
-  return <th style={{ textAlign: 'left', padding: '6px 8px', fontWeight: 500, fontSize: 11, color: 'var(--color-text-tertiary)', textTransform: 'uppercase', letterSpacing: 0.5 }}>{children}</th>;
+function Th({ children, style }) {
+  return <th style={{ textAlign: 'left', padding: '6px 8px', fontWeight: 500, fontSize: 11, color: 'var(--color-text-tertiary)', textTransform: 'uppercase', letterSpacing: 0.5, ...style }}>{children}</th>;
 }
 
 function Td({ children, mono, style }) {
@@ -483,6 +534,138 @@ function btnStyle(active) {
 function fmtTime(iso) {
   if (!iso) return '—';
   try { return new Date(iso).toLocaleString(); } catch { return iso; }
+}
+
+/**
+ * One-line headline shown in the table's "Reason" column. Prefers the
+ * server-provided `failureReason`; falls back to the validator's
+ * `ab_test.decision`. Deployed runs have nothing useful to summarise.
+ */
+function summariseReason(run) {
+  if (run.failureReason) return run.failureReason;
+  const ab = run.metrics?.ab_test;
+  if (ab?.decision && ab.decision !== 'DEPLOY_NEW_MODEL') {
+    return ab.decision.replace(/_/g, ' ').toLowerCase();
+  }
+  return '';
+}
+
+/**
+ * Expanded details for a single retrain row. Renders:
+ *  - Plain-English explanation of `failureReason` / rejection
+ *  - Side-by-side metric table (current vs candidate) with delta column
+ *  - Validator's own textual reasons + p-value when present
+ */
+function RetrainRunDetails({ run }) {
+  const ab = run.metrics?.ab_test || null;
+  const a = ab?.model_a;
+  const b = ab?.model_b;
+  const improvements = ab?.improvements || {};
+  const pValue = ab?.p_value;
+  const isSignificant = !!ab?.is_significant;
+  const decision = ab?.decision;
+  const reasons = Array.isArray(ab?.reasons) ? ab.reasons : [];
+
+  return (
+    <div style={{ fontSize: 12, color: 'var(--color-text-secondary)', lineHeight: 1.5 }}>
+      {run.failureReason && (
+        <div
+          style={{
+            padding: '8px 10px',
+            marginBottom: ab ? 10 : 0,
+            background: 'var(--color-background-warning)',
+            color: 'var(--color-text-warning)',
+            borderRadius: 6,
+            fontSize: 12,
+          }}
+        >
+          <strong>Why this run didn't deploy:</strong> {run.failureReason}
+        </div>
+      )}
+
+      {ab && a && b && (
+        <>
+          <div style={{ fontSize: 11, color: 'var(--color-text-tertiary)', textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 6 }}>
+            A/B test — current production vs new candidate (held-out test set)
+          </div>
+          <table style={{ width: '100%', borderCollapse: 'collapse', marginBottom: 10 }}>
+            <thead>
+              <tr style={{ borderBottom: '1px solid var(--color-border-default)' }}>
+                <Th>Metric</Th>
+                <Th>Current</Th>
+                <Th>Candidate</Th>
+                <Th>Δ</Th>
+              </tr>
+            </thead>
+            <tbody>
+              <MetricRow label="F1"        a={a.f1_score}   b={b.f1_score}   d={improvements.f1_score} />
+              <MetricRow label="AUC"       a={a.auc_roc}    b={b.auc_roc}    d={improvements.auc_roc} />
+              <MetricRow label="Precision" a={a.precision}  b={b.precision}  d={(b.precision ?? 0) - (a.precision ?? 0)} />
+              <MetricRow label="Recall"    a={a.recall}     b={b.recall}     d={(b.recall ?? 0) - (a.recall ?? 0)} />
+            </tbody>
+          </table>
+
+          <div style={{ display: 'flex', gap: 16, flexWrap: 'wrap', marginBottom: 8, fontSize: 12 }}>
+            <span>
+              <strong>Decision:</strong>{' '}
+              <code className="mono">{decision || '—'}</code>
+            </span>
+            <span>
+              <strong>p-value:</strong>{' '}
+              <code className="mono">
+                {typeof pValue === 'number' ? pValue.toFixed(4) : '—'}
+              </code>{' '}
+              {typeof pValue === 'number' && (
+                <em style={{ color: 'var(--color-text-tertiary)' }}>
+                  ({isSignificant ? 'significant' : 'not significant'} at p &lt; 0.05)
+                </em>
+              )}
+            </span>
+          </div>
+
+          {reasons.length > 0 && (
+            <div>
+              <div style={{ fontSize: 11, color: 'var(--color-text-tertiary)', textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 4 }}>
+                Validator notes
+              </div>
+              <ul style={{ margin: 0, paddingLeft: 16 }}>
+                {reasons.map((r, i) => (
+                  <li key={i} style={{ marginBottom: 2 }}>{r}</li>
+                ))}
+              </ul>
+            </div>
+          )}
+        </>
+      )}
+
+      {!ab && !run.failureReason && (
+        <Muted>No A/B comparison recorded for this run.</Muted>
+      )}
+    </div>
+  );
+}
+
+function MetricRow({ label, a, b, d }) {
+  const sign = typeof d === 'number' && d > 0 ? '+' : '';
+  const tone =
+    typeof d !== 'number'
+      ? 'var(--color-text-tertiary)'
+      : d > 0
+      ? 'var(--color-text-success)'
+      : d < 0
+      ? 'var(--color-text-danger)'
+      : 'var(--color-text-tertiary)';
+  const fmt = (n) => (typeof n === 'number' ? n.toFixed(4) : '—');
+  return (
+    <tr style={{ borderBottom: '1px solid var(--color-border-subtle)' }}>
+      <Td>{label}</Td>
+      <Td mono>{fmt(a)}</Td>
+      <Td mono>{fmt(b)}</Td>
+      <Td mono style={{ color: tone }}>
+        {typeof d === 'number' ? `${sign}${d.toFixed(4)}` : '—'}
+      </Td>
+    </tr>
+  );
 }
 
 function ConfirmModal({ title, body, onConfirm, onCancel }) {

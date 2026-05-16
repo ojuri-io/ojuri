@@ -69,9 +69,9 @@ function Dashboard({ toast, queue, models, reports, webhooks, nav }) {
   const formatLatency = (v) =>
     typeof v === 'number' && Number.isFinite(v) ? `${v.toFixed(1)} ms` : '—';
 
-  // Recent declines — uses the live review queue (when reachable), falling
-  // back to whatever the parent passed in (which is itself seeded from MOCK
-  // until the API responds). Normalises both shapes.
+  // Recent declines — uses the live review queue when reachable, falling
+  // back to whatever the parent passed in (an empty array when the API
+  // is offline). Normalises both shapes.
   const recent = sourceQueue.slice(0, 4).map((q) => {
     const reasonCodes = (q.reasonCodes || []).map((c) =>
       typeof c === 'string' ? c : c?.code || '',

@@ -173,7 +173,10 @@ function Users({ toast, currentUser, user }) {
           <span>STATUS</span>
           <span></span>
         </div>
-        {loading && (
+        {/* Initial load — only render the placeholder when we have
+            no rows yet. Subsequent refetches keep the existing rows
+            visible to avoid the layout flicker the user reported. */}
+        {loading && pageRows.length === 0 && (
           <div
             style={{
               padding: 40,

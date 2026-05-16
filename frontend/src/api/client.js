@@ -1,23 +1,13 @@
 // API client for the Sentinel dashboard.
 //
-// Talks to the RDA HTTP API (root `/v1`) for admin resources, and to the
-// FIA HTTP API (root `/fia`) for investigation reports / messages. Both
-// paths are proxied in development by `vite.config.js`.
+// Talks to the RDA HTTP API (root `/v1`) for admin resources, and to
+// the FIA HTTP API (root `/fia`) for investigation reports / messages.
+// Both paths are proxied in development by `vite.config.js`.
 //
-// Every call falls back to the in-tree mock data if the backing service
-// is unreachable so the dashboard remains demoable when the stack isn't
-// running. Set `localStorage.setItem('sentinel.useMock', '1')` to force
-// the mock path (useful for offline design review).
-
-import { MOCK } from '../data/mock.js';
-
-const useMockOverride = () => {
-  try {
-    return typeof localStorage !== 'undefined' && localStorage.getItem('sentinel.useMock') === '1';
-  } catch {
-    return false;
-  }
-};
+// No mock fallback — when a call fails, `safe()` returns the empty
+// fallback the caller supplied (typically `[]` or `null`). The per-
+// page empty-state copy explains what's missing; we never paper over
+// an unreachable backend with fake rows the operator can't action.
 
 const getJwt = () => {
   try {
@@ -64,12 +54,11 @@ const unwrap = async (res) => {
  * fall back to `fallback`. Exposed so individual pages can opt in.
  */
 export async function safe(live, fallback) {
-  if (useMockOverride()) return typeof fallback === 'function' ? fallback() : fallback;
   try {
     return await live();
   } catch (err) {
     if (typeof console !== 'undefined') {
-      console.warn('[sentinel] API call failed, using mock fallback:', err.message);
+      console.warn('[sentinel] API call failed, using empty fallback:', err.message);
     }
     return typeof fallback === 'function' ? fallback() : fallback;
   }
@@ -245,7 +234,7 @@ export const revokeApiKey = (id, reason) =>
 export const listRules = () =>
   safe(
     () => fetch('/v1/admin/rules', { headers: adminHeaders() }).then(unwrap),
-    () => MOCK.rules,
+    () => [],
   );
 
 /**
@@ -393,9 +382,6 @@ export const listReports = async ({
   search,
   status,
 } = {}) => {
-  if (useMockOverride()) {
-    return { reports: MOCK.reports, total: MOCK.reports.length, live: false };
-  }
   const qs = new URLSearchParams();
   qs.set('limit', String(limit));
   qs.set('offset', String(offset));
@@ -749,7 +735,7 @@ export const listReviewQueue = ({ limit = 25, offset = 0, order = 'newest', sear
   if (search) qs.set('search', search);
   return safe(
     () => fetch(`/v1/review-queue?${qs.toString()}`, { headers: adminHeaders() }).then(unwrap),
-    () => ({ rows: MOCK.queue, total: MOCK.queue.length, limit, offset }),
+    () => ({ rows: [], total: 0, limit, offset }),
   );
 };
 
@@ -773,14 +759,15 @@ export const loadDashboardBundle = async () => {
     listReports(),
   ]);
   return {
-    queue: MOCK.queue,
-    rules: MOCK.rules,
+    // Every list starts empty when the API is unreachable. The
+    // per-page empty-state copy tells the operator what to do next
+    // (start RDA, run a migration, etc.) instead of populating fake
+    // rows the operator can't actually action.
+    queue: [],
+    rules: [],
     models,
     segmentThresholds: [],
     reports: reportsRes.reports,
-    // apiKeys / webhooks / deliveries deliberately do NOT fall back
-    // to MOCK — adopters saw fake credentials on Integrations and
-    // were confused. Empty arrays let the UI render its empty state.
     apiKeys: [],
     webhooks,
     deliveries: [],
