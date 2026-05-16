@@ -251,10 +251,33 @@ class MLAService:
         self._run_training_pipeline(drift_metrics)
 
     def _run_training_pipeline(self, drift_metrics):
-        """Run the full training pipeline."""
+        """Run the full training pipeline.
+
+        Returns a dict so the *caller* can tell the difference between a
+        full deployment and an A/B-rejected attempt:
+
+            {"deployed": bool,
+             "metrics": {...training_metrics, "ab_test": {...}|None},
+             "reason": "deployed" | "ab_rejected" | "failed",
+             "failure_reason": str | None,
+             "model_version": str | None}
+
+        The drift / scheduled-loop callers ignore the return value (the
+        existing logging path is preserved), but the manual-retrain
+        wrapper uses it to populate the `retrainRuns` row with the
+        correct status + metrics instead of unconditionally marking
+        every attempt "succeeded".
+        """
         self.retraining_in_progress = True
         self._stats["retrainings_started"] += 1
         self._stats["last_retraining_started_at"] = time.time()
+        result: Dict[str, Any] = {
+            "deployed": False,
+            "metrics": None,
+            "reason": "failed",
+            "failure_reason": None,
+            "model_version": None,
+        }
 
         try:
             logger.info("")
@@ -301,7 +324,17 @@ class MLAService:
                     logger.warning("   No deployment will occur")
                     logger.warning("=" * 70)
                     self.retraining_in_progress = False
-                    return
+                    result["metrics"] = {**training_metrics, "ab_test": comparison}
+                    result["reason"] = "ab_rejected"
+                    result["failure_reason"] = (
+                        f"A/B test decision={comparison.get('decision')} — "
+                        "new model did not meet the deployment bar"
+                    )
+                    # Surface the metrics from the candidate even when not
+                    # deployed so the operator can see WHY it was rejected.
+                    self._stats["last_f1"] = training_metrics.get("f1_score")
+                    self._stats["last_auc"] = training_metrics.get("auc_roc") or training_metrics.get("auc")
+                    return result
 
                 logger.info("✅ New model is significantly better - proceeding with deployment")
 
@@ -374,6 +407,14 @@ class MLAService:
             self._stats["retrainings_succeeded"] += 1
             self._stats["last_retraining_completed_at"] = time.time()
             self._stats["last_deployed_model_version"] = self.current_model_version
+            self._stats["last_f1"] = training_metrics.get("f1_score")
+            self._stats["last_auc"] = training_metrics.get("auc_roc") or training_metrics.get("auc")
+
+            result["deployed"] = True
+            result["metrics"] = training_metrics
+            result["reason"] = "deployed"
+            result["model_version"] = self.current_model_version
+            return result
 
         except Exception as e:
             logger.error("=" * 70)
@@ -383,9 +424,13 @@ class MLAService:
             logger.error("=" * 70)
             self._stats["retrainings_failed"] += 1
             self._stats["last_error"] = str(e)
+            result["reason"] = "failed"
+            result["failure_reason"] = str(e)
 
         finally:
             self.retraining_in_progress = False
+
+        return result
 
     # ════════════════════════════════════════════════════════════════
     # HTTP surface — consumed by the operator dashboard
@@ -487,16 +532,43 @@ class MLAService:
             from src.api.settings_repo import complete_retrain_run
             try:
                 drift_metrics = {"reason": "manual", "triggered_by": triggered_by, "run_id": run_id}
-                self._run_training_pipeline(drift_metrics)
-                metrics = {
-                    "f1_score": self._stats.get("last_f1"),
-                    "auc_roc": self._stats.get("last_auc"),
+                outcome = self._run_training_pipeline(drift_metrics) or {}
+                # Three terminal states surfaced explicitly so the UI
+                # can stop reading "succeeded" for an A/B rejection:
+                #   - deployed    → status="succeeded"
+                #   - ab_rejected → status="rejected" (metrics still attached)
+                #   - failed      → status="failed"   (failure_reason set)
+                reason = outcome.get("reason", "failed")
+                pipeline_metrics = outcome.get("metrics") or {}
+                # Persist the FULL metrics blob (precision/recall/F1/AUC,
+                # plus the A/B comparison when present). The frontend
+                # already keys on `f1_score` / `auc_roc` — we keep
+                # those at the top level and tuck the rest underneath.
+                metrics_payload = {
+                    "f1_score": pipeline_metrics.get("f1_score"),
+                    "auc_roc": pipeline_metrics.get("auc_roc") or pipeline_metrics.get("auc"),
+                    "precision": pipeline_metrics.get("precision"),
+                    "recall": pipeline_metrics.get("recall"),
+                    "ab_test": pipeline_metrics.get("ab_test"),
                 }
-                complete_retrain_run(
-                    self.db_engine, run_id, status="succeeded",
-                    metrics=metrics,
-                    model_version=self.current_model_version,
-                )
+                if reason == "deployed":
+                    complete_retrain_run(
+                        self.db_engine, run_id, status="succeeded",
+                        metrics=metrics_payload,
+                        model_version=outcome.get("model_version") or self.current_model_version,
+                    )
+                elif reason == "ab_rejected":
+                    complete_retrain_run(
+                        self.db_engine, run_id, status="rejected",
+                        metrics=metrics_payload,
+                        failure_reason=outcome.get("failure_reason"),
+                    )
+                else:
+                    complete_retrain_run(
+                        self.db_engine, run_id, status="failed",
+                        metrics=metrics_payload if pipeline_metrics else None,
+                        failure_reason=outcome.get("failure_reason") or "Training pipeline failed",
+                    )
             except Exception as err:
                 logger.exception("Manual retrain failed")
                 complete_retrain_run(
