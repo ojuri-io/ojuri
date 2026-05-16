@@ -5,6 +5,7 @@ import React, { useState, useEffect, useCallback } from 'react';
 import { Ti, PageHead, Modal, hasPermission, permLock } from '../components/shell.jsx';
 import { SearchInput } from '../components/search-input.jsx';
 import { Pagination } from '../components/pagination.jsx';
+import { PasswordInput } from '../components/password-input.jsx';
 
 const USERS_PER_PAGE = 25;
 import {
@@ -523,8 +524,7 @@ function CreateUserModal({ roles, onClose, onSubmit }) {
         label="Starting password"
         hint="At least 8 characters. The user can change it any time after signing in."
       >
-        <input
-          type="password"
+        <PasswordInput
           value={form.password}
           onChange={(e) => setForm({ ...form, password: e.target.value })}
         />
@@ -646,8 +646,7 @@ function EditUserModal({ user, onClose, onSubmit }) {
         />
       </Field>
       <Field label="New password" hint="Leave blank to keep the current password.">
-        <input
-          type="password"
+        <PasswordInput
           value={form.password}
           onChange={(e) => setForm({ ...form, password: e.target.value })}
           placeholder="••••••••"

@@ -7,6 +7,7 @@
 
 import React, { useMemo, useState } from 'react';
 import { Ti } from '../components/shell.jsx';
+import { PasswordInput } from '../components/password-input.jsx';
 import { changePassword as apiChangePassword, me as apiMe } from '../api/client.js';
 import {
   evaluatePassword,
@@ -127,37 +128,31 @@ function ChangePassword({ user, onSuccess, onLogout }) {
         </div>
 
         <Field id="cp-current" label="CURRENT PASSWORD" autoFocus>
-          <input
+          <PasswordInput
             id="cp-current"
-            type="password"
             autoComplete="current-password"
             value={current}
             onChange={(e) => setCurrent(e.target.value)}
-            style={{ width: '100%' }}
           />
         </Field>
 
         <Field id="cp-new" label={`NEW PASSWORD · MIN ${MIN_LENGTH} CHARS`}>
-          <input
+          <PasswordInput
             id="cp-new"
-            type="password"
             autoComplete="new-password"
             value={next}
             onChange={(e) => setNext(e.target.value)}
-            style={{ width: '100%' }}
           />
           {next && <StrengthMeter score={policy.score} />}
           {next && <PolicyChecklist checks={policy.checks} />}
         </Field>
 
         <Field id="cp-confirm" label="CONFIRM NEW PASSWORD">
-          <input
+          <PasswordInput
             id="cp-confirm"
-            type="password"
             autoComplete="new-password"
             value={confirm}
             onChange={(e) => setConfirm(e.target.value)}
-            style={{ width: '100%' }}
           />
           {mismatch && (
             <p style={{ margin: '4px 0 0', fontSize: 11, color: 'var(--color-text-danger)' }}>

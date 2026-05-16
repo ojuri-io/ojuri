@@ -4,6 +4,7 @@
 
 import React, { useState } from 'react';
 import { Ti } from '../components/shell.jsx';
+import { PasswordInput } from '../components/password-input.jsx';
 import { login as apiLogin } from '../api/client.js';
 
 function Login({ onSuccess }) {
@@ -127,13 +128,12 @@ function Login({ onSuccess }) {
         >
           PASSWORD
         </label>
-        <input
+        <PasswordInput
           id="login-password"
-          type="password"
           autoComplete="current-password"
           value={password}
           onChange={(e) => setPassword(e.target.value)}
-          style={{ width: '100%', marginBottom: 14 }}
+          style={{ marginBottom: 14 }}
         />
 
         {error && (
