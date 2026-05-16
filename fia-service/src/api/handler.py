@@ -51,6 +51,7 @@ class FIAHttpHandler(BaseHTTPRequestHandler):
         if self.path.startswith("/v1/reports"):
             return self._do_get_report()
 
+
         return self._respond(404, {"error": "not found"})
 
     def do_POST(self):  # noqa: N802
@@ -74,24 +75,46 @@ class FIAHttpHandler(BaseHTTPRequestHandler):
                 return self._respond(404, {"error": "report not found"})
             return self._respond(200, report)
 
-        if self.path == "/v1/reports":
-            limit, offset, status = self._list_params()
+        if self.path.split("?", 1)[0] == "/v1/reports":
+            params = self._list_params()
+            payload = self.service.list_reports(**params)
+            # `service.list_reports` now returns `{rows, total}` — keep
+            # the legacy `reports` key for the existing frontend
+            # bundles, plus expose `total` for proper pagination chrome.
             return self._respond(
                 200,
-                {"reports": self.service.list_reports(status=status, limit=limit, offset=offset)},
+                {
+                    "reports": payload.get("rows", []),
+                    "total": payload.get("total", 0),
+                    "limit": params["limit"],
+                    "offset": params["offset"],
+                },
             )
 
         return self._respond(404, {"error": "not found"})
 
-    def _list_params(self) -> Tuple[int, int, Optional[str]]:
+    def _list_params(self) -> Dict[str, Any]:
         # http.server doesn't parse query strings — do it manually.
         from urllib.parse import urlparse, parse_qs
 
         q = parse_qs(urlparse(self.path).query)
-        limit = int((q.get("limit", ["50"])[0]))
-        offset = int((q.get("offset", ["0"])[0]))
-        status = q.get("status", [None])[0]
-        return min(limit, 200), max(offset, 0), status
+
+        def first(name: str) -> Optional[str]:
+            v = q.get(name, [None])[0]
+            if v is None:
+                return None
+            v = v.strip()
+            return v or None
+
+        limit = int(first("limit") or "25")
+        offset = int(first("offset") or "0")
+        return {
+            "limit": min(max(limit, 1), 200),
+            "offset": max(offset, 0),
+            "status": first("status"),
+            "verdict": first("verdict"),
+            "search": first("search"),
+        }
 
     # ─────────────────────────────────────────────────────────
     # POST /v1/reports

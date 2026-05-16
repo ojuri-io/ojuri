@@ -15,7 +15,6 @@ import {
   useTweaks,
 } from './components/tweaks-panel.jsx';
 
-import { MOCK } from './data/mock.js';
 import {
   listApiKeys,
   listModels,
@@ -28,6 +27,7 @@ import {
 } from './api/client.js';
 
 import Login from './pages/login.jsx';
+import ChangePassword from './pages/change-password.jsx';
 import Dashboard from './pages/dashboard.jsx';
 import LiveDecisions from './pages/live-decisions.jsx';
 import TransactionsList from './pages/transactions-list.jsx';
@@ -38,6 +38,7 @@ import AuditLog from './pages/audit-log.jsx';
 import RuleEditor from './pages/rule-editor.jsx';
 import ModelRegistry from './pages/model-registry.jsx';
 import Features from './pages/features.jsx';
+import Settings from './pages/settings.jsx';
 import Metrics from './pages/metrics.jsx';
 import Reports from './pages/reports.jsx';
 import ServiceHealth from './pages/service-health.jsx';
@@ -65,6 +66,7 @@ function loadRoute() {
     'audit',
     'models',
     'features',
+    'settings',
     'metrics',
     'reports',
     'health',
@@ -161,24 +163,44 @@ function App() {
     );
   }
 
+  const doLogout = () => {
+    try {
+      localStorage.removeItem('sentinel.jwt');
+      localStorage.removeItem('sentinel.user');
+    } catch {
+      /* ignore */
+    }
+    apiLogout().catch(() => {
+      /* stateless logout — server response doesn't matter */
+    });
+    setAuthUser(false);
+    location.hash = '';
+  };
+
+  // First-login gate. The seeded admin and any user created with a temp
+  // password lands here on next sign-in; server middleware refuses every
+  // admin endpoint until they rotate. The /auth/change-password and
+  // /auth/me routes stay reachable so this flow can complete.
+  if (authUser?.mustChangePassword) {
+    return (
+      <ChangePassword
+        user={authUser}
+        onSuccess={(refreshed) => {
+          // /me returned with the cleared flag — swap in the fresh payload.
+          setAuthUser(refreshed);
+          setConnection('live');
+        }}
+        onLogout={doLogout}
+      />
+    );
+  }
+
   return (
     <AuthenticatedApp
       user={authUser}
       connection={connection}
       setConnection={setConnection}
-      onLogout={() => {
-        try {
-          localStorage.removeItem('sentinel.jwt');
-          localStorage.removeItem('sentinel.user');
-        } catch {
-          /* ignore */
-        }
-        apiLogout().catch(() => {
-          /* stateless logout — server response doesn't matter */
-        });
-        setAuthUser(false);
-        location.hash = '';
-      }}
+      onLogout={doLogout}
     />
   );
 }
@@ -188,8 +210,10 @@ function AuthenticatedApp({ user, connection, setConnection, onLogout }) {
   const [toastNode, toast] = useToasts();
   const [t, setTweak] = useTweaks(TWEAK_DEFAULTS);
 
-  // Shared state — seeded from mocks, then patched from the API in the background.
-  const [queue, setQueue] = useState(MOCK.queue);
+  // Shared state — all start empty and are hydrated from the API. No
+  // mock seeding; an unreachable backend renders the empty state for
+  // the page rather than a fake row the operator can't actually action.
+  const [queue, setQueue] = useState([]);
   // `queueCount` is the **server-side** total of pending review items
   // (`/v1/admin/audit?pending=1&decision=DECLINE`). We track it
   // separately from `queue.length` because the review-queue endpoint
@@ -206,20 +230,16 @@ function AuthenticatedApp({ user, connection, setConnection, onLogout }) {
     const t = setInterval(refreshQueueCount, 30_000);
     return () => clearInterval(t);
   }, [refreshQueueCount]);
-  const [rules, setRules] = useState(MOCK.rules);
-  // Models and per-segment thresholds are DB-backed; no seed fallback.
-  // The Models page starts empty and is hydrated by the boot effect
-  // (`listModels`) and the page's own `listSegmentThresholds` call.
+  const [rules, setRules] = useState([]);
   const [models, setModels] = useState([]);
   const [segmentThresholds, setSegmentThresholds] = useState([]);
-  const [reports, setReports] = useState(MOCK.reports);
+  const [reports, setReports] = useState([]);
   // `reportsLive` is `null` while the boot probe hasn't finished, `true`
   // once the FIA call returned, `false` if it errored. The Investigations
-  // page uses this to choose between an empty-state and the seed-data
-  // design preview.
+  // page renders an "unreachable" banner when this is `false`.
   const [reportsLive, setReportsLive] = useState(null);
-  const [apiKeys, setApiKeys] = useState(MOCK.apiKeys);
-  const [webhooks, setWebhooks] = useState(MOCK.webhooks);
+  const [apiKeys, setApiKeys] = useState([]);
+  const [webhooks, setWebhooks] = useState([]);
 
   useEffect(() => {
     const onHash = () => setRoute(loadRoute());
@@ -229,7 +249,7 @@ function AuthenticatedApp({ user, connection, setConnection, onLogout }) {
 
   // Hydration. We track whether *any* read came back from the live API
   // (vs the safe() fallback) so the mock/live banner is accurate. The
-  // `client.js` `safe()` wrapper swallows errors and returns MOCK; here
+  // `client.js` `safe()` wrapper swallows errors and returns the empty fallback; here
   // we re-fetch the bare endpoint just to learn the HTTP status.
   useEffect(() => {
     let cancelled = false;
@@ -248,38 +268,17 @@ function AuthenticatedApp({ user, connection, setConnection, onLogout }) {
         listReports(),
       ]);
       if (cancelled) return;
-      // Strict overwrite: when the live API returns an array — including an
-      // empty one — that's the truth. The seed mocks only stick if the call
-      // failed and `safe()` returned the mock. The mock/live banner above
-      // tells the user which mode they're in.
-      const isLive = probe && probe.ok;
-      // listReports returns { reports, live } so the Investigations page
-      // can distinguish "FIA returned 0 rows" from "FIA unreachable".
+      // Live results overwrite local state. When the API is unreachable
+      // every list stays empty — the per-page empty-state copy tells the
+      // operator what to do next instead of populating fake rows.
       const repReports = (rep && rep.reports) || [];
       const repLive = rep ? !!rep.live : false;
-      if (isLive) {
-        if (Array.isArray(m)) setModels(m);
-        if (Array.isArray(r)) setRules(r);
-        if (Array.isArray(k)) setApiKeys(k);
-        if (Array.isArray(w)) setWebhooks(w);
-        // Always trust the FIA call's own live flag — RDA being live
-        // doesn't imply FIA is reachable (different service).
-        setReports(repReports);
-        setReportsLive(repLive);
-      } else {
-        if (Array.isArray(m) && m.length) setModels(m);
-        if (Array.isArray(r) && r.length) setRules(r);
-        if (Array.isArray(k) && k.length) setApiKeys(k);
-        if (Array.isArray(w) && w.length) setWebhooks(w);
-        // FIA fell back — keep seeded design preview but flag it as not-live.
-        if (!repLive) {
-          setReports(MOCK.reports);
-          setReportsLive(false);
-        } else {
-          setReports(repReports);
-          setReportsLive(true);
-        }
-      }
+      if (Array.isArray(m)) setModels(m);
+      if (Array.isArray(r)) setRules(r);
+      if (Array.isArray(k)) setApiKeys(k);
+      if (Array.isArray(w)) setWebhooks(w);
+      setReports(repReports);
+      setReportsLive(repLive);
     })();
     return () => {
       cancelled = true;
@@ -332,6 +331,7 @@ function AuthenticatedApp({ user, connection, setConnection, onLogout }) {
     PageBody = (
       <Investigations
         toast={toast}
+        nav={nav}
         reports={reports}
         setReports={setReports}
         reportsLive={reportsLive}
@@ -357,6 +357,9 @@ function AuthenticatedApp({ user, connection, setConnection, onLogout }) {
   } else if (page === 'features') {
     PageBody = <Features toast={toast} />;
     screenLabel = '07a Features';
+  } else if (page === 'settings') {
+    PageBody = <Settings toast={toast} user={user} />;
+    screenLabel = '07b Settings';
   } else if (page === 'metrics') {
     PageBody = <Metrics toast={toast} />;
     screenLabel = '08 Metrics';
@@ -377,7 +380,7 @@ function AuthenticatedApp({ user, connection, setConnection, onLogout }) {
         setApiKeys={setApiKeys}
         webhooks={webhooks}
         setWebhooks={setWebhooks}
-        deliveries={MOCK.deliveries}
+        deliveries={[]}
         user={user}
       />
     );
@@ -487,7 +490,7 @@ function ConnectionBanner({ connection }) {
   if (connection === 'mock') {
     return (
       <div
-        title="The RDA backend is unreachable or unauthorised — pages are showing seeded mock data"
+        title="The RDA backend is unreachable or unauthorised — pages are rendering their empty state instead of fake rows"
         style={{
           display: 'flex',
           alignItems: 'center',
@@ -500,10 +503,10 @@ function ConnectionBanner({ connection }) {
         }}
       >
         <Ti name="alert-triangle" size={11} />
-        <b style={{ fontWeight: 500 }}>MOCK</b>
+        <b style={{ fontWeight: 500 }}>OFFLINE</b>
         <span style={{ color: 'inherit', opacity: 0.85 }}>
-          RDA admin reads failed — using seeded fallback data. Writes will be
-          reflected locally but will not hit the database.
+          RDA admin reads failed — every list will be empty until the backend
+          is reachable. Writes will 401/timeout and toast a failure.
         </span>
       </div>
     );

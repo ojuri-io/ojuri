@@ -4,6 +4,7 @@ import appConfig from "@config/app.config";
 import ModelVersionRepo from "./repositories/model-version.repo";
 import SegmentThresholdRepo from "./repositories/segment-threshold.repo";
 import { ModelVersion } from "./model/model-version.model";
+import RuntimeSettingsService from "@shared/settings/runtime-settings.service";
 
 const log = createServiceLogger("ModelRegistry");
 
@@ -42,7 +43,8 @@ class ModelRegistryService {
 
   constructor(
     private readonly versionRepo: ModelVersionRepo,
-    private readonly thresholdRepo: SegmentThresholdRepo
+    private readonly thresholdRepo: SegmentThresholdRepo,
+    private readonly runtimeSettings: RuntimeSettingsService
   ) {}
 
   /**
@@ -127,8 +129,16 @@ class ModelRegistryService {
     const segmentThresholds = segment ? this.thresholdsBySegment.get(segment) : undefined;
     const segmentSpecific = segmentThresholds?.get(championVersion);
 
+    // Threshold resolution order:
+    //   1. Per-segment override (segmentThresholds table)
+    //   2. The active model's defaultThreshold
+    //   3. Runtime fraud_threshold (operator-editable via Settings UI)
+    //   4. Env-var FRAUD_THRESHOLD (boot-time fallback)
+    const runtimeFraudThreshold = this.runtimeSettings.getFraudThreshold(
+      appConfig.fraud.threshold
+    );
     const threshold =
-      segmentSpecific ?? this.champion?.defaultThreshold ?? appConfig.fraud.threshold;
+      segmentSpecific ?? this.champion?.defaultThreshold ?? runtimeFraudThreshold;
 
     return { championVersion, shadowVersion, threshold };
   }
@@ -146,7 +156,9 @@ class ModelRegistryService {
       sourceUri: input.sourceUri,
       sha256: input.sha256 ?? null,
       status: "CANDIDATE",
-      defaultThreshold: input.defaultThreshold ?? appConfig.fraud.threshold,
+      defaultThreshold:
+        input.defaultThreshold ??
+        this.runtimeSettings.getFraudThreshold(appConfig.fraud.threshold),
       metrics: input.metrics ?? null,
       metadata: input.metadata ?? null,
     });

@@ -21,4 +21,7 @@ export enum DB_TABLES {
   ROLES = "roles",
   USER_ROLES = "userRoles",
   SAVED_REPORTS = "savedReports",
+  RUNTIME_SETTINGS = "runtimeSettings",
+  MLA_SETTINGS = "mlaSettings",
+  RETRAIN_RUNS = "retrainRuns",
 }

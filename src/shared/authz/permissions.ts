@@ -70,6 +70,11 @@ export const PERMISSIONS = [
   { code: "saved_reports:read", description: "List and run saved reports" },
   { code: "saved_reports:write", description: "Create, update, or delete saved reports" },
   { code: "saved_reports:export", description: "Export saved-report results as CSV / JSON" },
+
+  // Runtime settings (Settings page)
+  { code: "settings:read", description: "Read runtime settings (fraud threshold, drift thresholds, retrain history)" },
+  { code: "settings:write", description: "Update runtime settings (fraud threshold)" },
+  { code: "mla:configure", description: "Update MLA drift config and trigger manual retrains" },
 ] as const;
 
 export type PermissionCode = (typeof PERMISSIONS)[number]["code"];
@@ -108,6 +113,7 @@ export const SYSTEM_ROLES = [
       "saved_reports:read",
       "saved_reports:write",
       "saved_reports:export",
+      "settings:read",
     ],
   },
   {
@@ -135,6 +141,9 @@ export const SYSTEM_ROLES = [
       "saved_reports:read",
       "saved_reports:write",
       "saved_reports:export",
+      "settings:read",
+      "settings:write",
+      "mla:configure",
     ],
   },
 ] as const;

@@ -21,6 +21,10 @@ class UserRepo {
     return User.query().where({ tenantId, username }).first();
   }
 
+  async findById(id: string): Promise<User | undefined> {
+    return User.query().findById(id);
+  }
+
   async findByIdWithRoles(id: string): Promise<UserWithRoles | null> {
     const user = await User.query().findById(id);
     if (!user) return null;
@@ -37,12 +41,35 @@ class UserRepo {
     return mapWithRoles(user, rows as unknown as RawRoleRow[]);
   }
 
-  async listWithRoles(tenantId?: string): Promise<UserWithRoles[]> {
-    const usersQuery = User.query().orderBy("createdAt", "desc");
-    if (tenantId) usersQuery.where({ tenantId });
-    const users = await usersQuery;
+  async listWithRoles(opts: {
+    tenantId?: string;
+    search?: string;
+    limit?: number;
+    offset?: number;
+  } = {}): Promise<{ rows: UserWithRoles[]; total: number }> {
+    const baseQuery = User.query();
+    if (opts.tenantId) baseQuery.where({ tenantId: opts.tenantId });
+    if (opts.search && opts.search.trim()) {
+      const s = `%${opts.search.trim()}%`;
+      baseQuery.where((b) => {
+        b.where("username", "ilike", s)
+          .orWhere("fullName", "ilike", s)
+          .orWhere("email", "ilike", s);
+      });
+    }
 
-    if (users.length === 0) return [];
+    const total = (await baseQuery.clone().resultSize()) as unknown as number;
+
+    const limit = Math.min(Math.max(opts.limit ?? 50, 1), 200);
+    const offset = Math.max(opts.offset ?? 0, 0);
+
+    const users = await baseQuery
+      .clone()
+      .orderBy("createdAt", "desc")
+      .limit(limit)
+      .offset(offset);
+
+    if (users.length === 0) return { rows: [], total: Number(total) || 0 };
 
     const userIds = users.map((u) => u.id);
     const roleRows = (await UserRole.query()
@@ -62,7 +89,10 @@ class UserRepo {
       byUser.set(r.userId, arr);
     }
 
-    return users.map((u) => mapWithRoles(u, byUser.get(u.id) ?? []));
+    return {
+      rows: users.map((u) => mapWithRoles(u, byUser.get(u.id) ?? [])),
+      total: Number(total) || 0,
+    };
   }
 
   async create(input: {
@@ -71,6 +101,7 @@ class UserRepo {
     passwordHash: string;
     fullName?: string;
     email?: string;
+    mustChangePassword?: boolean;
   }): Promise<User> {
     return User.query().insert(input).returning("*");
   }
@@ -84,6 +115,7 @@ class UserRepo {
       isActive: boolean;
       disabledReason: string | null;
       lastLoginAt: Date;
+      mustChangePassword: boolean;
     }>
   ): Promise<User | undefined> {
     return User.query().patchAndFetchById(id, patch);

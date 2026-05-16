@@ -27,6 +27,18 @@ const authRoute: FastifyPluginAsync = async (fastify) => {
     preHandler: requireAuth(), // any authenticated subject
     handler: authController.me,
   });
+
+  fastify.route({
+    method: "POST",
+    url: "/auth/change-password",
+    // Any authenticated user can rotate their own password — this is
+    // the only admin-adjacent route allowed while
+    // `mustChangePassword=true`, so callers stuck on the seeded
+    // credential can complete the bootstrap. The handler itself
+    // re-verifies the current password before persisting.
+    preHandler: requireAuth(),
+    handler: authController.changePassword,
+  });
 };
 
 export default authRoute;

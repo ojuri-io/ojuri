@@ -1,23 +1,13 @@
 // API client for the Sentinel dashboard.
 //
-// Talks to the RDA HTTP API (root `/v1`) for admin resources, and to the
-// FIA HTTP API (root `/fia`) for investigation reports / messages. Both
-// paths are proxied in development by `vite.config.js`.
+// Talks to the RDA HTTP API (root `/v1`) for admin resources, and to
+// the FIA HTTP API (root `/fia`) for investigation reports / messages.
+// Both paths are proxied in development by `vite.config.js`.
 //
-// Every call falls back to the in-tree mock data if the backing service
-// is unreachable so the dashboard remains demoable when the stack isn't
-// running. Set `localStorage.setItem('sentinel.useMock', '1')` to force
-// the mock path (useful for offline design review).
-
-import { MOCK } from '../data/mock.js';
-
-const useMockOverride = () => {
-  try {
-    return typeof localStorage !== 'undefined' && localStorage.getItem('sentinel.useMock') === '1';
-  } catch {
-    return false;
-  }
-};
+// No mock fallback — when a call fails, `safe()` returns the empty
+// fallback the caller supplied (typically `[]` or `null`). The per-
+// page empty-state copy explains what's missing; we never paper over
+// an unreachable backend with fake rows the operator can't action.
 
 const getJwt = () => {
   try {
@@ -35,8 +25,16 @@ const getApiKey = () => {
   }
 };
 
-const adminHeaders = () => {
-  const h = { 'content-type': 'application/json' };
+/**
+ * Headers for admin requests. By default sets `content-type:
+ * application/json` because most callers ship a JSON body. Pass
+ * `{ body: false }` for DELETE / GET-with-no-body — Fastify's JSON
+ * parser throws 400 on an empty body when content-type is application/
+ * json, which silently broke every delete-style request in the UI.
+ */
+const adminHeaders = ({ body = true } = {}) => {
+  const h = {};
+  if (body) h['content-type'] = 'application/json';
   const t = getJwt();
   if (t) h['authorization'] = `Bearer ${t}`;
   return h;
@@ -64,12 +62,11 @@ const unwrap = async (res) => {
  * fall back to `fallback`. Exposed so individual pages can opt in.
  */
 export async function safe(live, fallback) {
-  if (useMockOverride()) return typeof fallback === 'function' ? fallback() : fallback;
   try {
     return await live();
   } catch (err) {
     if (typeof console !== 'undefined') {
-      console.warn('[sentinel] API call failed, using mock fallback:', err.message);
+      console.warn('[sentinel] API call failed, using empty fallback:', err.message);
     }
     return typeof fallback === 'function' ? fallback() : fallback;
   }
@@ -84,13 +81,36 @@ export const login = ({ username, password, tenantId }) =>
   }).then(unwrap);
 
 export const logout = () =>
-  fetch('/v1/auth/logout', { method: 'POST', headers: adminHeaders() }).then(unwrap);
+  fetch('/v1/auth/logout', { method: 'POST', headers: adminHeaders({ body: false }) }).then(unwrap);
 
 export const me = () => fetch('/v1/auth/me', { headers: adminHeaders() }).then(unwrap);
 
+// Rotate the caller's own password. Used by the forced-change screen
+// for the seed admin on first login and by any user the backend has
+// flagged with `mustChangePassword=true`. Server-side enforcement at
+// `denyIfPasswordRotation` middleware returns 423 for every other
+// admin route until this succeeds.
+export const changePassword = ({ currentPassword, newPassword }) =>
+  fetch('/v1/auth/change-password', {
+    method: 'POST',
+    headers: adminHeaders(),
+    body: JSON.stringify({ currentPassword, newPassword }),
+  }).then(unwrap);
+
 // ──────── Users (admin) ────────
-export const listUsers = () =>
-  safe(() => fetch('/v1/admin/users', { headers: adminHeaders() }).then(unwrap), () => []);
+// Always paginated: returns `{ rows, total }`. Server-side search
+// across username / fullName / email. The backing table can grow, so
+// unparameterised reads are not supported.
+export const listUsers = ({ limit = 25, offset = 0, search = '' } = {}) => {
+  const qs = new URLSearchParams();
+  qs.set('limit', String(limit));
+  qs.set('offset', String(offset));
+  if (search) qs.set('search', search);
+  return safe(
+    () => fetch(`/v1/admin/users?${qs.toString()}`, { headers: adminHeaders() }).then(unwrap),
+    () => ({ rows: [], total: 0 }),
+  );
+};
 
 export const createUser = (body) =>
   fetch('/v1/admin/users', {
@@ -109,7 +129,7 @@ export const updateUser = (id, body) =>
 export const deleteUser = (id) =>
   fetch(`/v1/admin/users/${encodeURIComponent(id)}`, {
     method: 'DELETE',
-    headers: adminHeaders(),
+    headers: adminHeaders({ body: false }),
   }).then(unwrap);
 
 export const assignUserRole = (userId, roleId) =>
@@ -122,7 +142,7 @@ export const assignUserRole = (userId, roleId) =>
 export const unassignUserRole = (userId, roleId) =>
   fetch(
     `/v1/admin/users/${encodeURIComponent(userId)}/roles/${encodeURIComponent(roleId)}`,
-    { method: 'DELETE', headers: adminHeaders() },
+    { method: 'DELETE', headers: adminHeaders({ body: false }) },
   ).then(unwrap);
 
 // ──────── Roles + Permissions (admin) ────────
@@ -152,7 +172,7 @@ export const updateRole = (id, body) =>
 export const deleteRole = (id) =>
   fetch(`/v1/admin/roles/${encodeURIComponent(id)}`, {
     method: 'DELETE',
-    headers: adminHeaders(),
+    headers: adminHeaders({ body: false }),
   }).then(unwrap);
 
 // ──────── Predict (RDA) ────────
@@ -222,7 +242,7 @@ export const revokeApiKey = (id, reason) =>
 export const listRules = () =>
   safe(
     () => fetch('/v1/admin/rules', { headers: adminHeaders() }).then(unwrap),
-    () => MOCK.rules,
+    () => [],
   );
 
 /**
@@ -264,7 +284,7 @@ export const setRuleActive = (id, isActive) =>
 export const deleteRule = (id) =>
   fetch(`/v1/admin/rules/${encodeURIComponent(id)}`, {
     method: 'DELETE',
-    headers: adminHeaders(),
+    headers: adminHeaders({ body: false }),
   }).then(unwrap);
 
 // ──────── Models (admin) ────────
@@ -330,7 +350,7 @@ export const setModelStatus = (version, status) =>
 export const deleteModel = (version) =>
   fetch(`/v1/admin/models/${encodeURIComponent(version)}`, {
     method: 'DELETE',
-    headers: adminHeaders(),
+    headers: adminHeaders({ body: false }),
   }).then(unwrap);
 
 // ──────── Webhooks (admin) ────────
@@ -354,24 +374,42 @@ export const subscribeWebhook = (sub) =>
 export const deleteWebhook = (id) =>
   fetch(`/v1/admin/webhooks/${encodeURIComponent(id)}`, {
     method: 'DELETE',
-    headers: adminHeaders(),
+    headers: adminHeaders({ body: false }),
   }).then(unwrap);
 
 // ──────── FIA (investigation reports) ────────
-// Returns `{ reports, live }` so the UI can distinguish "FIA returned
-// no reports" from "FIA is unreachable, here's design-time seed data".
-export const listReports = async () => {
-  if (useMockOverride()) {
-    return { reports: MOCK.reports, live: false };
-  }
+// Returns `{ reports, total, live }` so the UI can distinguish
+// "FIA returned no reports" from "FIA is unreachable", and so the
+// Investigations page can render real pagination. Server-side filters
+// (`status`, `verdict`, `search`) are pushed all the way down to the
+// SQL — see fia-service/src/persistence/report_writer.py.
+export const listReports = async ({
+  limit = 25,
+  offset = 0,
+  verdict,
+  search,
+  status,
+} = {}) => {
+  const qs = new URLSearchParams();
+  qs.set('limit', String(limit));
+  qs.set('offset', String(offset));
+  if (verdict) qs.set('verdict', verdict);
+  if (search) qs.set('search', search);
+  if (status) qs.set('status', status);
   try {
-    const data = await fetch('/fia/v1/reports').then(unwrap);
-    return { reports: Array.isArray(data) ? data : [], live: true };
+    const data = await fetch(`/fia/v1/reports?${qs.toString()}`).then(unwrap);
+    const reports = Array.isArray(data?.reports)
+      ? data.reports
+      : Array.isArray(data)
+      ? data
+      : [];
+    const total = Number.isFinite(data?.total) ? data.total : reports.length;
+    return { reports, total, live: true };
   } catch (err) {
     if (typeof console !== 'undefined') {
       console.warn('[sentinel] FIA reports unreachable:', err.message);
     }
-    return { reports: [], live: false };
+    return { reports: [], total: 0, live: false };
   }
 };
 
@@ -509,7 +547,7 @@ export const updateSavedReport = (id, body) =>
 export const deleteSavedReport = (id) =>
   fetch(`/v1/admin/saved-reports/${encodeURIComponent(id)}`, {
     method: 'DELETE',
-    headers: adminHeaders(),
+    headers: adminHeaders({ body: false }),
   }).then(unwrap);
 
 export const runSavedReport = (id, { limit = 100, offset = 0, override } = {}) => {
@@ -694,11 +732,20 @@ export const getStatsToday = ({ since } = {}) =>
   );
 
 // ──────── Review queue + decisions (admin) ────────
-export const listReviewQueue = () =>
-  safe(
-    () => fetch('/v1/review-queue', { headers: adminHeaders() }).then(unwrap),
-    () => MOCK.queue,
+// Always paginated: returns `{ rows, total, limit, offset }`. The
+// backing table can run into the thousands so unpaginated reads are
+// not supported. Callers must request a page slice.
+export const listReviewQueue = ({ limit = 25, offset = 0, order = 'newest', search = '' } = {}) => {
+  const qs = new URLSearchParams();
+  qs.set('limit', String(limit));
+  qs.set('offset', String(offset));
+  if (order) qs.set('order', order);
+  if (search) qs.set('search', search);
+  return safe(
+    () => fetch(`/v1/review-queue?${qs.toString()}`, { headers: adminHeaders() }).then(unwrap),
+    () => ({ rows: [], total: 0, limit, offset }),
   );
+};
 
 export const getDecision = (transactionId) =>
   fetch(`/v1/decisions/${encodeURIComponent(transactionId)}`, {
@@ -720,14 +767,15 @@ export const loadDashboardBundle = async () => {
     listReports(),
   ]);
   return {
-    queue: MOCK.queue,
-    rules: MOCK.rules,
+    // Every list starts empty when the API is unreachable. The
+    // per-page empty-state copy tells the operator what to do next
+    // (start RDA, run a migration, etc.) instead of populating fake
+    // rows the operator can't actually action.
+    queue: [],
+    rules: [],
     models,
     segmentThresholds: [],
     reports: reportsRes.reports,
-    // apiKeys / webhooks / deliveries deliberately do NOT fall back
-    // to MOCK — adopters saw fake credentials on Integrations and
-    // were confused. Empty arrays let the UI render its empty state.
     apiKeys: [],
     webhooks,
     deliveries: [],
@@ -735,3 +783,54 @@ export const loadDashboardBundle = async () => {
     shadowBuckets: new Array(20).fill(0),
   };
 };
+
+// ──────── Settings (admin) ────────
+//
+// Runtime settings live in two places:
+//   • RDA  /v1/admin/settings/runtime/* — the global fraud threshold
+//     used as fallback when neither per-segment nor per-model
+//     defaultThreshold is set.
+//   • MLA  /mla/v1/admin/drift-config — drift detection knobs that
+//     decide when MLA retrains.
+//
+// The Settings page reads both. Writes are role-gated server-side
+// (settings:write for fraud threshold, mla:configure for drift / retrain),
+// so a FRAUD_ANALYST with settings:read can view but not edit.
+
+export const listRuntimeSettings = () =>
+  safe(
+    () => fetch('/v1/admin/settings/runtime', { headers: adminHeaders() }).then(unwrap),
+    () => [],
+  );
+
+export const updateRuntimeSetting = (key, value) =>
+  fetch(`/v1/admin/settings/runtime/${encodeURIComponent(key)}`, {
+    method: 'PUT',
+    headers: adminHeaders(),
+    body: JSON.stringify({ value }),
+  }).then(unwrap);
+
+export const getDriftConfig = () =>
+  safe(
+    () => fetch('/mla/v1/admin/drift-config', { headers: adminHeaders() }).then(unwrap),
+    () => null,
+  );
+
+export const updateDriftConfig = ({ driftF1Threshold, driftPsiThreshold, driftWindowSize, autoRetrainEnabled }) =>
+  fetch('/mla/v1/admin/drift-config', {
+    method: 'PUT',
+    headers: adminHeaders(),
+    body: JSON.stringify({ driftF1Threshold, driftPsiThreshold, driftWindowSize, autoRetrainEnabled }),
+  }).then(unwrap);
+
+export const triggerManualRetrain = () =>
+  fetch('/mla/v1/admin/retrain', {
+    method: 'POST',
+    headers: adminHeaders({ body: false }),
+  }).then(unwrap);
+
+export const listRetrainRuns = () =>
+  safe(
+    () => fetch('/mla/v1/admin/retrain-runs', { headers: adminHeaders() }).then(unwrap),
+    () => [],
+  );

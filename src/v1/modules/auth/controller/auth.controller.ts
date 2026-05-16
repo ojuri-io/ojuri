@@ -1,7 +1,11 @@
 import { FastifyReply, FastifyRequest } from "fastify";
 import httpStatus from "http-status";
 import { injectable } from "tsyringe";
-import AuthService, { InvalidCredentialsError, AuthConfigError } from "@shared/authz/auth.service";
+import AuthService, {
+  InvalidCredentialsError,
+  AuthConfigError,
+  WeakPasswordError,
+} from "@shared/authz/auth.service";
 import UserRepo from "@shared/authz/repositories/user.repo";
 import { ErrorResponse, SuccessResponse } from "@shared/utils/response.util";
 
@@ -9,6 +13,11 @@ export interface LoginDto {
   username: string;
   password: string;
   tenantId?: string;
+}
+
+export interface ChangePasswordDto {
+  currentPassword: string;
+  newPassword: string;
 }
 
 @injectable()
@@ -51,6 +60,10 @@ class AuthController {
       return res.code(httpStatus.UNAUTHORIZED).send(ErrorResponse("User no longer exists"));
     }
 
+    // Re-read the bare user row to pick up `mustChangePassword` — the
+    // roles join doesn't carry it.
+    const bare = await this.users.findById(subject.userId);
+
     return res.send(
       SuccessResponse("Current user", {
         id: detail.id,
@@ -61,8 +74,43 @@ class AuthController {
         isActive: detail.isActive,
         roles: detail.roles.map((r) => ({ id: r.id, name: r.name })),
         permissions: subject.permissions,
+        mustChangePassword: !!bare?.mustChangePassword,
       })
     );
+  };
+
+  changePassword = async (
+    req: FastifyRequest<{ Body: ChangePasswordDto }>,
+    res: FastifyReply
+  ) => {
+    const subject = req.auth;
+    if (!subject) {
+      return res.code(httpStatus.UNAUTHORIZED).send(ErrorResponse("Not authenticated"));
+    }
+    const { currentPassword, newPassword } = req.body || ({} as ChangePasswordDto);
+    if (!currentPassword || !newPassword) {
+      return res
+        .code(httpStatus.BAD_REQUEST)
+        .send(ErrorResponse("currentPassword and newPassword are required"));
+    }
+    try {
+      await this.authService.changePassword({
+        userId: subject.userId,
+        currentPassword,
+        newPassword,
+      });
+      return res.send(SuccessResponse("Password changed"));
+    } catch (err) {
+      if (err instanceof InvalidCredentialsError) {
+        return res
+          .code(httpStatus.UNAUTHORIZED)
+          .send(ErrorResponse("Current password is incorrect"));
+      }
+      if (err instanceof WeakPasswordError) {
+        return res.code(httpStatus.BAD_REQUEST).send(ErrorResponse(err.message));
+      }
+      throw err;
+    }
   };
 }
 

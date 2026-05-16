@@ -13,6 +13,7 @@ export class User extends Model {
   isActive: boolean;
   lastLoginAt: Date | null;
   disabledReason: string | null;
+  mustChangePassword: boolean;
   createdAt: Date;
   updatedAt: Date;
 }

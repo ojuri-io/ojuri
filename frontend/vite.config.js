@@ -20,6 +20,13 @@ export default defineConfig({
         changeOrigin: true,
         rewrite: (p) => p.replace(/^\/fia/, ''),
       },
+      // MLA admin endpoints (drift config + manual retrain). Strip the
+      // /mla prefix so the upstream sees /v1/admin/* like RDA does.
+      '/mla': {
+        target: process.env.VITE_MLA_URL || 'http://127.0.0.1:9095',
+        changeOrigin: true,
+        rewrite: (p) => p.replace(/^\/mla/, ''),
+      },
     },
   },
   test: {

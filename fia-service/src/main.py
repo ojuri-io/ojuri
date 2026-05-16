@@ -262,8 +262,21 @@ class FIAService:
             return None
         return self._enrich_with_conversation(report)
 
-    def list_reports(self, status: Optional[str], limit: int, offset: int) -> List[Dict[str, Any]]:
-        return self._writer.list_reports(status=status, limit=limit, offset=offset)
+    def list_reports(
+        self,
+        status: Optional[str],
+        limit: int,
+        offset: int,
+        verdict: Optional[str] = None,
+        search: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        return self._writer.list_reports(
+            status=status,
+            limit=limit,
+            offset=offset,
+            verdict=verdict,
+            search=search,
+        )
 
     def _enrich_with_conversation(self, report: Dict[str, Any]) -> Dict[str, Any]:
         report_id = report.get("id")

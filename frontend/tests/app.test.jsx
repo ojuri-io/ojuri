@@ -30,7 +30,7 @@ function authedFetch() {
         text: () => Promise.resolve(''),
       });
     }
-    // Default: 503 so dashboard hydration falls back to mocks (banner = MOCK).
+    // Default: 503 so dashboard hydration sets the banner to OFFLINE.
     return Promise.resolve({
       ok: false,
       status: 503,
@@ -133,7 +133,7 @@ describe('App', () => {
             }),
         });
       }
-      // Hydration calls — mock as 503 so banner reads MOCK after login.
+      // Hydration calls — return 503 so banner reads OFFLINE after login.
       return Promise.resolve({
         ok: false,
         status: 503,

@@ -4,6 +4,7 @@ import { singleton } from "tsyringe";
 import UserRepo from "./repositories/user.repo";
 import { createServiceLogger } from "@shared/utils/logger/service-logger";
 import { ALL_PERMISSIONS } from "./permissions";
+import { evaluatePassword } from "./password-policy";
 
 const log = createServiceLogger("AuthService");
 
@@ -26,7 +27,29 @@ export interface LoginResult {
     tenantId: string;
     roles: { id: string; name: string }[];
     permissions: string[];
+    /**
+     * Set on first login for the seeded admin and any user created
+     * with a temp password. Frontend renders a blocking
+     * password-change screen until cleared; server middleware refuses
+     * every non-auth admin route while this is true so the gate
+     * cannot be bypassed by direct API access.
+     */
+    mustChangePassword: boolean;
   };
+}
+
+export class PasswordRotationRequiredError extends Error {
+  constructor(message = "Password rotation required") {
+    super(message);
+    this.name = "PasswordRotationRequiredError";
+  }
+}
+
+export class WeakPasswordError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "WeakPasswordError";
+  }
 }
 
 @singleton()
@@ -85,8 +108,49 @@ class AuthService {
         tenantId: detail.tenantId,
         roles: detail.roles.map((r) => ({ id: r.id, name: r.name })),
         permissions,
+        mustChangePassword: !!user.mustChangePassword,
       },
     };
+  }
+
+  /**
+   * Rotate the caller's own password. Verifies the current secret,
+   * enforces a minimum complexity, persists the new bcrypt hash, and
+   * clears `mustChangePassword`. The existing JWT remains valid — its
+   * claims don't carry the flag — and the frontend re-fetches `/me`
+   * after this call to refresh its local state.
+   */
+  async changePassword(input: {
+    userId: string;
+    currentPassword: string;
+    newPassword: string;
+  }): Promise<void> {
+    const user = await this.users.findById(input.userId);
+    if (!user) throw new InvalidCredentialsError();
+
+    // Evaluate strength *before* verifying the current password — a
+    // weak proposal is rejected regardless of whether the caller knew
+    // the old secret, and the deny-list / username check needs the
+    // user row anyway.
+    const policy = evaluatePassword(input.newPassword, {
+      username: user.username,
+      currentPassword: input.currentPassword,
+    });
+    if (!policy.ok) {
+      throw new WeakPasswordError(
+        policy.issues[0] || "Password does not meet the strength policy"
+      );
+    }
+
+    const ok = await bcrypt.compare(input.currentPassword, user.passwordHash);
+    if (!ok) throw new InvalidCredentialsError();
+
+    const passwordHash = await bcrypt.hash(input.newPassword, 10);
+    await this.users.updateById(input.userId, {
+      passwordHash,
+      mustChangePassword: false,
+    });
+    log.info("changePassword", "Password rotated", { userId: input.userId });
   }
 
   /**

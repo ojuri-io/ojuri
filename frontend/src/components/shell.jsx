@@ -163,6 +163,7 @@ export function Sidebar({ active, onNav, queueCount, user, onLogout }) {
       items: [
         { id: 'rules', label: 'Rules', icon: 'shield-check', perm: 'rules:read' },
         { id: 'features', label: 'Features', icon: 'list-numbers', perm: 'models:read' },
+        { id: 'settings', label: 'Settings', icon: 'settings', perm: 'settings:read' },
         {
           id: 'integ',
           label: 'Integrations',

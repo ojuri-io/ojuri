@@ -99,6 +99,25 @@ class MLAService:
         self._http_server: Optional[socketserver.TCPServer] = None
         self._http_thread: Optional[threading.Thread] = None
 
+        # Shared SQLAlchemy engine for the admin endpoints (drift config
+        # + retrain runs). Created lazily so cold-start without a DB
+        # still boots far enough to surface the connection error in
+        # /readyz instead of crashing at __init__.
+        self._db_engine = None
+
+        # Hot-applied overrides for the drift detector. When the admin
+        # PUT lands we update the runtime DriftDetector instance + this
+        # mirror; `effective_drift_config()` exposes both. Initial
+        # values track config.* so an operator with no DB knows what
+        # the env said.
+        self._effective_drift_config = {
+            "driftF1Threshold": config.DRIFT_F1_THRESHOLD,
+            "driftPsiThreshold": config.DRIFT_PSI_THRESHOLD,
+            "driftWindowSize": config.DRIFT_WINDOW_SIZE,
+            "autoRetrainEnabled": True,
+            "source": "env",
+        }
+
         # Create directories
         os.makedirs(config.MODEL_OUTPUT_DIR, exist_ok=True)
         os.makedirs(config.DATA_CACHE_DIR, exist_ok=True)
@@ -232,10 +251,33 @@ class MLAService:
         self._run_training_pipeline(drift_metrics)
 
     def _run_training_pipeline(self, drift_metrics):
-        """Run the full training pipeline."""
+        """Run the full training pipeline.
+
+        Returns a dict so the *caller* can tell the difference between a
+        full deployment and an A/B-rejected attempt:
+
+            {"deployed": bool,
+             "metrics": {...training_metrics, "ab_test": {...}|None},
+             "reason": "deployed" | "ab_rejected" | "failed",
+             "failure_reason": str | None,
+             "model_version": str | None}
+
+        The drift / scheduled-loop callers ignore the return value (the
+        existing logging path is preserved), but the manual-retrain
+        wrapper uses it to populate the `retrainRuns` row with the
+        correct status + metrics instead of unconditionally marking
+        every attempt "succeeded".
+        """
         self.retraining_in_progress = True
         self._stats["retrainings_started"] += 1
         self._stats["last_retraining_started_at"] = time.time()
+        result: Dict[str, Any] = {
+            "deployed": False,
+            "metrics": None,
+            "reason": "failed",
+            "failure_reason": None,
+            "model_version": None,
+        }
 
         try:
             logger.info("")
@@ -282,7 +324,17 @@ class MLAService:
                     logger.warning("   No deployment will occur")
                     logger.warning("=" * 70)
                     self.retraining_in_progress = False
-                    return
+                    result["metrics"] = {**training_metrics, "ab_test": comparison}
+                    result["reason"] = "ab_rejected"
+                    result["failure_reason"] = (
+                        f"A/B test decision={comparison.get('decision')} — "
+                        "new model did not meet the deployment bar"
+                    )
+                    # Surface the metrics from the candidate even when not
+                    # deployed so the operator can see WHY it was rejected.
+                    self._stats["last_f1"] = training_metrics.get("f1_score")
+                    self._stats["last_auc"] = training_metrics.get("auc_roc") or training_metrics.get("auc")
+                    return result
 
                 logger.info("✅ New model is significantly better - proceeding with deployment")
 
@@ -355,6 +407,14 @@ class MLAService:
             self._stats["retrainings_succeeded"] += 1
             self._stats["last_retraining_completed_at"] = time.time()
             self._stats["last_deployed_model_version"] = self.current_model_version
+            self._stats["last_f1"] = training_metrics.get("f1_score")
+            self._stats["last_auc"] = training_metrics.get("auc_roc") or training_metrics.get("auc")
+
+            result["deployed"] = True
+            result["metrics"] = training_metrics
+            result["reason"] = "deployed"
+            result["model_version"] = self.current_model_version
+            return result
 
         except Exception as e:
             logger.error("=" * 70)
@@ -364,9 +424,13 @@ class MLAService:
             logger.error("=" * 70)
             self._stats["retrainings_failed"] += 1
             self._stats["last_error"] = str(e)
+            result["reason"] = "failed"
+            result["failure_reason"] = str(e)
 
         finally:
             self.retraining_in_progress = False
+
+        return result
 
     # ════════════════════════════════════════════════════════════════
     # HTTP surface — consumed by the operator dashboard
@@ -384,6 +448,135 @@ class MLAService:
         snapshot["retraining_in_progress"] = self.retraining_in_progress
         snapshot["uptime_seconds"] = int(time.time() - self._stats["started_at"])
         return snapshot
+
+    # ════════════════════════════════════════════════════════════════
+    # Admin surface — consumed by /v1/admin/* handlers
+    # ════════════════════════════════════════════════════════════════
+    @property
+    def db_engine(self):
+        """Lazy SQLAlchemy engine. Reuses the loader's connection
+        string so we don't drift two configs."""
+        if self._db_engine is None:
+            self._db_engine = self.data_loader.engine
+        return self._db_engine
+
+    def effective_drift_config(self) -> Dict[str, Any]:
+        """Current values the DriftDetector is using right now —
+        whether sourced from env, DB, or a runtime PUT."""
+        return {
+            "driftF1Threshold": self.drift_detector.f1_threshold,
+            "driftPsiThreshold": self.drift_detector.psi_threshold,
+            "driftWindowSize": self.drift_detector.window_size,
+            "autoRetrainEnabled": self._effective_drift_config.get("autoRetrainEnabled", True),
+        }
+
+    def apply_drift_config(self, cfg: Dict[str, Any]) -> None:
+        """Hot-apply a new drift config to the running detector. Called
+        from the admin PUT handler. Window-size changes resize the
+        deques in-place; the new size takes effect on the next sample.
+
+        We deliberately do NOT reset the existing window — operators
+        tightening the F1 threshold to 0.95 want to see whether the
+        last 1000 samples already trip the new bar, not start over.
+        """
+        self.drift_detector.f1_threshold = float(cfg["driftF1Threshold"])
+        self.drift_detector.psi_threshold = float(cfg["driftPsiThreshold"])
+        new_window = int(cfg["driftWindowSize"])
+        if new_window != self.drift_detector.window_size:
+            self.drift_detector.window_size = new_window
+            # Resize the sliding deques; values older than the new
+            # window get dropped from the left.
+            self.drift_detector.predictions = type(self.drift_detector.predictions)(
+                list(self.drift_detector.predictions)[-new_window:], maxlen=new_window
+            )
+            self.drift_detector.actuals = type(self.drift_detector.actuals)(
+                list(self.drift_detector.actuals)[-new_window:], maxlen=new_window
+            )
+            self.drift_detector.probabilities = type(self.drift_detector.probabilities)(
+                list(self.drift_detector.probabilities)[-new_window:], maxlen=new_window
+            )
+
+        self._effective_drift_config = {
+            "driftF1Threshold": self.drift_detector.f1_threshold,
+            "driftPsiThreshold": self.drift_detector.psi_threshold,
+            "driftWindowSize": self.drift_detector.window_size,
+            "autoRetrainEnabled": bool(cfg.get("autoRetrainEnabled", True)),
+            "source": "runtime",
+        }
+        self._stats["drift_f1_threshold"] = self.drift_detector.f1_threshold
+        self._stats["drift_psi_threshold"] = self.drift_detector.psi_threshold
+        logger.info(
+            "Drift config hot-applied: f1=%s psi=%s window=%s auto=%s",
+            self.drift_detector.f1_threshold,
+            self.drift_detector.psi_threshold,
+            self.drift_detector.window_size,
+            self._effective_drift_config["autoRetrainEnabled"],
+        )
+
+    def trigger_manual_retrain(self, run_id: str, triggered_by: str) -> None:
+        """Kick off a retrain in a background thread. Handler returns
+        202 immediately; the run completes async and the runs list
+        reflects the final status."""
+        if self.retraining_in_progress:
+            # Defence in depth — the DB check should have caught this
+            # already. Mark the row as rejected so the operator gets
+            # the same feedback either way.
+            from src.api.settings_repo import complete_retrain_run
+            complete_retrain_run(
+                self.db_engine, run_id, status="rejected",
+                failure_reason="Another retrain was already in progress",
+            )
+            return
+
+        def _worker():
+            from src.api.settings_repo import complete_retrain_run
+            try:
+                drift_metrics = {"reason": "manual", "triggered_by": triggered_by, "run_id": run_id}
+                outcome = self._run_training_pipeline(drift_metrics) or {}
+                # Three terminal states surfaced explicitly so the UI
+                # can stop reading "succeeded" for an A/B rejection:
+                #   - deployed    → status="succeeded"
+                #   - ab_rejected → status="rejected" (metrics still attached)
+                #   - failed      → status="failed"   (failure_reason set)
+                reason = outcome.get("reason", "failed")
+                pipeline_metrics = outcome.get("metrics") or {}
+                # Persist the FULL metrics blob (precision/recall/F1/AUC,
+                # plus the A/B comparison when present). The frontend
+                # already keys on `f1_score` / `auc_roc` — we keep
+                # those at the top level and tuck the rest underneath.
+                metrics_payload = {
+                    "f1_score": pipeline_metrics.get("f1_score"),
+                    "auc_roc": pipeline_metrics.get("auc_roc") or pipeline_metrics.get("auc"),
+                    "precision": pipeline_metrics.get("precision"),
+                    "recall": pipeline_metrics.get("recall"),
+                    "ab_test": pipeline_metrics.get("ab_test"),
+                }
+                if reason == "deployed":
+                    complete_retrain_run(
+                        self.db_engine, run_id, status="succeeded",
+                        metrics=metrics_payload,
+                        model_version=outcome.get("model_version") or self.current_model_version,
+                    )
+                elif reason == "ab_rejected":
+                    complete_retrain_run(
+                        self.db_engine, run_id, status="rejected",
+                        metrics=metrics_payload,
+                        failure_reason=outcome.get("failure_reason"),
+                    )
+                else:
+                    complete_retrain_run(
+                        self.db_engine, run_id, status="failed",
+                        metrics=metrics_payload if pipeline_metrics else None,
+                        failure_reason=outcome.get("failure_reason") or "Training pipeline failed",
+                    )
+            except Exception as err:
+                logger.exception("Manual retrain failed")
+                complete_retrain_run(
+                    self.db_engine, run_id, status="failed",
+                    failure_reason=str(err),
+                )
+
+        threading.Thread(target=_worker, name=f"manual-retrain-{run_id[:8]}", daemon=True).start()
 
     def _start_http_server(self) -> None:
         # ThreadingHTTPServer so a slow retraining-pipeline log query
