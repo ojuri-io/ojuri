@@ -159,7 +159,11 @@ function Users({ toast, currentUser, user }) {
         />
       </div>
 
-      <div className="panel" style={{ padding: 0, overflow: 'hidden' }}>
+      {/* `overflow: visible` (not hidden) so per-row action menus can
+          extend outside the panel border. The row-grid corners look
+          unchanged because individual rows don't reach the rounded
+          edge. */}
+      <div className="panel" style={{ padding: 0, overflow: 'visible' }}>
         <div
           className="row-grid header"
           style={{
@@ -404,9 +408,13 @@ function UserRow({ user, roles, isSelf, canUpdate, canDelete, onEdit, onDelete, 
           <div
             onMouseLeave={() => setMenuOpen(false)}
             style={{
+              // Open UP from the kebab so the menu stays visible on
+              // short tables — opening downward would either get
+              // clipped by the panel or push beyond the page bottom
+              // when only one or two rows are present.
               position: 'absolute',
               right: 0,
-              top: 'calc(100% + 4px)',
+              bottom: 'calc(100% + 4px)',
               zIndex: 20,
               background: 'var(--color-background-primary)',
               border: '0.5px solid var(--color-border-tertiary)',
