@@ -1,6 +1,6 @@
 // Page 7 — Investigations (FIA reports list with conversation thread)
 
-import React, { useState, useMemo, useEffect } from 'react';
+import React, { useState, useMemo, useEffect, useCallback } from 'react';
 import {
   Ti,
   PageHead,
@@ -16,6 +16,9 @@ import {
   listReports,
 } from '../api/client.js';
 import { SearchInput } from '../components/search-input.jsx';
+import { Pagination } from '../components/pagination.jsx';
+
+const REPORTS_PER_PAGE = 10;
 
 function Investigations({ toast, reports, setReports, reportsLive, setReportsLive }) {
   const [verdict, setVerdict] = useState('ALL');
@@ -23,13 +26,35 @@ function Investigations({ toast, reports, setReports, reportsLive, setReportsLiv
   const [search, setSearch] = useState('');
   const [expanded, setExpanded] = useState(null);
   const [requestOpen, setRequestOpen] = useState(false);
+  const [page, setPage] = useState(1);
+  const [total, setTotal] = useState(0);
 
-  const retry = async () => {
-    const { reports: fresh, live } = await listReports();
+  // Server-side fetch: verdict + search + pagination push through to
+  // FIA's SQL. The parent's `reports` state is still mirrored so the
+  // dashboard's quick-glance counts keep working.
+  const fetchReports = useCallback(async () => {
+    const { reports: fresh, total: serverTotal, live } = await listReports({
+      limit: REPORTS_PER_PAGE,
+      offset: (page - 1) * REPORTS_PER_PAGE,
+      verdict: verdict === 'ALL' ? undefined : verdict,
+      search: search || undefined,
+    });
     if (typeof setReportsLive === 'function') setReportsLive(live);
     if (live) {
       setReports(fresh);
-      toast(`FIA reachable · ${fresh.length} report${fresh.length === 1 ? '' : 's'} loaded`, 'success');
+      setTotal(serverTotal);
+    }
+    return { live, count: fresh.length };
+  }, [page, verdict, search, setReports, setReportsLive]);
+
+  useEffect(() => {
+    fetchReports();
+  }, [fetchReports]);
+
+  const retry = async () => {
+    const { live, count } = await fetchReports();
+    if (live) {
+      toast(`FIA reachable · ${count} report${count === 1 ? '' : 's'} loaded`, 'success');
     } else {
       toast('FIA still unreachable', 'danger');
     }
@@ -41,30 +66,27 @@ function Investigations({ toast, reports, setReports, reportsLive, setReportsLiv
   const isFiaDown = reportsLive === false;
   const isLoading = reportsLive === null;
 
-  const counts = useMemo(() => ({
-    ALL: reports.length,
-    FRAUD_CONFIRMED: reports.filter(r => r.verdict === 'FRAUD_CONFIRMED').length,
-    UNCERTAIN: reports.filter(r => r.verdict === 'UNCERTAIN').length,
-    LIKELY_LEGITIMATE: reports.filter(r => r.verdict === 'LIKELY_LEGITIMATE').length
-  }), [reports]);
+  // Reset page on filter/search changes; clamp on dataset shrink.
+  useEffect(() => {
+    setPage(1);
+  }, [verdict, search]);
+  useEffect(() => {
+    const last = Math.max(1, Math.ceil(total / REPORTS_PER_PAGE));
+    if (page > last) setPage(last);
+  }, [total, page]);
 
-  const filtered = useMemo(() => {
-    let list = reports;
-    if (verdict !== 'ALL') list = list.filter(r => r.verdict === verdict);
-    if (search) {
-      const q = search.toLowerCase();
-      list = list.filter(r =>
-        (r.transactionId || '').toLowerCase().includes(q) ||
-        (r.narrative || '').toLowerCase().includes(q) ||
-        (Array.isArray(r.keyIndicators) ? r.keyIndicators : []).join(' ').toLowerCase().includes(q)
-      );
-    }
-    if (sort === 'Newest') list = [...list].sort((a,b) => new Date(b.createdAt) - new Date(a.createdAt));
-    if (sort === 'Oldest') list = [...list].sort((a,b) => new Date(a.createdAt) - new Date(b.createdAt));
-    if (sort === 'Highest amount') list = [...list].sort((a,b) => (b.amount ?? 0) - (a.amount ?? 0));
-    if (sort === 'Lowest confidence') list = [...list].sort((a,b) => (a.agentConfidence ?? 0) - (b.agentConfidence ?? 0));
+  // Sort the *current page* client-side. The big-vs-small filters
+  // (`Newest` / `Oldest` / amount / confidence) are still useful for
+  // re-ordering the 10 visible rows; pushing this to SQL would need a
+  // sort parameter on FIA's endpoint — a small follow-up.
+  const pageRows = useMemo(() => {
+    const list = [...reports];
+    if (sort === 'Newest') list.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+    else if (sort === 'Oldest') list.sort((a, b) => new Date(a.createdAt) - new Date(b.createdAt));
+    else if (sort === 'Highest amount') list.sort((a, b) => (b.amount ?? 0) - (a.amount ?? 0));
+    else if (sort === 'Lowest confidence') list.sort((a, b) => (a.agentConfidence ?? 0) - (b.agentConfidence ?? 0));
     return list;
-  }, [reports, verdict, sort, search]);
+  }, [reports, sort]);
 
   const onRequest = async (txId) => {
     const fakeId = 'rep_' + Math.floor(9000 + Math.random() * 999);
@@ -171,7 +193,7 @@ function Investigations({ toast, reports, setReports, reportsLive, setReportsLiv
 
   return (
     <>
-      <PageHead crumbs={['Dashboard','Detection']} title="Investigations" sub={`FIA reports for blocked and on-demand transactions · ${reports.length} in view`}>
+      <PageHead crumbs={['Dashboard','Detection']} title="Investigations" sub={`FIA reports for blocked and on-demand transactions · ${total} total${total > reports.length ? ` · showing ${reports.length} on this page` : ''}`}>
         <button onClick={onExport}><Ti name="download" size={14}/>Export CSV</button>
         <button className="info-bg" onClick={()=>setRequestOpen(true)}><Ti name="plus" size={14}/>Request report</button>
       </PageHead>
@@ -186,17 +208,20 @@ function Investigations({ toast, reports, setReports, reportsLive, setReportsLiv
         <SortMenu value={sort} onChange={setSort}/>
       </div>
 
-      {/* Verdict chips */}
+      {/* Verdict chips. Counts are intentionally not shown per-verdict —
+          they would require an extra group-by query and grow stale as
+          the page paginates. The verdict filter still works
+          server-side; switching to a chip refetches with that filter. */}
       <div style={{display:'flex', gap:6, marginBottom:14, flexWrap:'wrap'}}>
-        <ChipBtn active={verdict === 'ALL'} onClick={()=>setVerdict('ALL')}>All<Count active={verdict==='ALL'}>{counts.ALL}</Count></ChipBtn>
-        <ChipBtn active={verdict === 'FRAUD_CONFIRMED'} onClick={()=>setVerdict('FRAUD_CONFIRMED')} tone="danger">Fraud confirmed<Count active={verdict==='FRAUD_CONFIRMED'}>{counts.FRAUD_CONFIRMED}</Count></ChipBtn>
-        <ChipBtn active={verdict === 'UNCERTAIN'} onClick={()=>setVerdict('UNCERTAIN')} tone="warn">Uncertain<Count active={verdict==='UNCERTAIN'}>{counts.UNCERTAIN}</Count></ChipBtn>
-        <ChipBtn active={verdict === 'LIKELY_LEGITIMATE'} onClick={()=>setVerdict('LIKELY_LEGITIMATE')} tone="success">Likely legitimate<Count active={verdict==='LIKELY_LEGITIMATE'}>{counts.LIKELY_LEGITIMATE}</Count></ChipBtn>
+        <ChipBtn active={verdict === 'ALL'} onClick={()=>setVerdict('ALL')}>All</ChipBtn>
+        <ChipBtn active={verdict === 'FRAUD_CONFIRMED'} onClick={()=>setVerdict('FRAUD_CONFIRMED')} tone="danger">Fraud confirmed</ChipBtn>
+        <ChipBtn active={verdict === 'UNCERTAIN'} onClick={()=>setVerdict('UNCERTAIN')} tone="warn">Uncertain</ChipBtn>
+        <ChipBtn active={verdict === 'LIKELY_LEGITIMATE'} onClick={()=>setVerdict('LIKELY_LEGITIMATE')} tone="success">Likely legitimate</ChipBtn>
       </div>
 
       {/* Cards */}
       <div style={{display:'flex', flexDirection:'column', gap:10}}>
-        {filtered.map(r => (
+        {pageRows.map(r => (
           <ReportCard
             key={r.id}
             r={r}
@@ -205,12 +230,20 @@ function Investigations({ toast, reports, setReports, reportsLive, setReportsLiv
             toast={toast}
           />
         ))}
-        {filtered.length === 0 && (
+        {total === 0 && !isLoading && (
           <div className="panel" style={{textAlign:'center', padding:36, color:'var(--color-text-tertiary)'}}>
-            No reports match this filter.
+            {search || verdict !== 'ALL' ? 'No reports match these filters.' : 'No reports yet.'}
           </div>
         )}
       </div>
+
+      <Pagination
+        page={page}
+        pageSize={REPORTS_PER_PAGE}
+        total={total}
+        onChange={setPage}
+        variant="compact"
+      />
 
       {requestOpen && <RequestReportModal onClose={()=>setRequestOpen(false)} onSubmit={onRequest}/>}
     </>
@@ -336,14 +369,6 @@ function ChipBtn({ active, onClick, tone, children }) {
     </button>
   );
 }
-function Count({ children, active }) {
-  return <span style={{
-    fontSize:10,
-    color: active ? 'currentColor' : 'var(--color-text-tertiary)',
-    opacity: active ? 0.7 : 1
-  }}>{children}</span>;
-}
-
 function SortMenu({ value, onChange }) {
   const [open, setOpen] = useState(false);
   const options = ['Newest','Oldest','Highest amount','Lowest confidence'];

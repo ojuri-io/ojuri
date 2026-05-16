@@ -10,6 +10,7 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { Ti, PageHead, fmtNaira, fmtAge, truncId } from '../components/shell.jsx';
 import { SearchInput, DateRangeFilter } from '../components/search-input.jsx';
+import { Pagination } from '../components/pagination.jsx';
 import { listTransactions, exportTransactions } from '../api/client.js';
 
 const PER_PAGE = 10;
@@ -212,7 +213,6 @@ function TransactionsList({ toast, nav, queue }) {
 
   const displayRows = rows && !usedFallback ? rows : localFiltered.slice((page - 1) * PER_PAGE, page * PER_PAGE);
   const displayTotal = rows && !usedFallback ? total : localFiltered.length;
-  const totalPages = Math.max(1, Math.ceil(displayTotal / PER_PAGE));
 
   // Filters as the user sees them — used for the active-filter pill row
   // and the "Reset filters" affordance. We treat the page number as
@@ -442,22 +442,13 @@ function TransactionsList({ toast, nav, queue }) {
         ))}
       </div>
 
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '12px 4px 0', fontSize: 11, color: 'var(--color-text-secondary)' }}>
-        <span>Showing {Math.min((page - 1) * PER_PAGE + 1, displayTotal)}–{Math.min(page * PER_PAGE, displayTotal)} of {displayTotal}</span>
-        <div style={{ display: 'flex', gap: 4 }}>
-          <button style={{ padding: '4px 8px' }} disabled={page === 1} onClick={() => setPage((p) => Math.max(1, p - 1))}><Ti name="chevron-left" size={12} /></button>
-          {[1, 2, 3].filter((n) => n <= totalPages).map((n) => (
-            <button key={n} className={n === page ? 'info-bg' : ''} style={{ padding: '4px 10px', fontSize: 11 }} onClick={() => setPage(n)}>{n}</button>
-          ))}
-          {totalPages > 4 && (
-            <>
-              <span style={{ padding: '4px 4px', color: 'var(--color-text-tertiary)' }}>…</span>
-              <button style={{ padding: '4px 10px', fontSize: 11 }} onClick={() => setPage(totalPages)}>{totalPages}</button>
-            </>
-          )}
-          <button style={{ padding: '4px 8px' }} disabled={page === totalPages} onClick={() => setPage((p) => Math.min(totalPages, p + 1))}><Ti name="chevron-right" size={12} /></button>
-        </div>
-      </div>
+      <Pagination
+        page={page}
+        pageSize={PER_PAGE}
+        total={displayTotal}
+        onChange={setPage}
+        variant="numbered"
+      />
     </>
   );
 }

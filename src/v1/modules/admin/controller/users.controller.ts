@@ -13,9 +13,19 @@ import {
 class UsersController {
   constructor(private readonly users: UserService) {}
 
-  list = async (req: FastifyRequest<{ Querystring: { tenantId?: string } }>, res: FastifyReply) => {
-    const rows = await this.users.list(req.query.tenantId);
-    return res.send(SuccessResponse("Users", rows));
+  list = async (
+    req: FastifyRequest<{
+      Querystring: { tenantId?: string; search?: string; limit?: string; offset?: string };
+    }>,
+    res: FastifyReply
+  ) => {
+    const result = await this.users.list({
+      tenantId: req.query.tenantId,
+      search: req.query.search,
+      limit: req.query.limit ? Number.parseInt(req.query.limit, 10) : undefined,
+      offset: req.query.offset ? Number.parseInt(req.query.offset, 10) : undefined,
+    });
+    return res.send(SuccessResponse("Users", result));
   };
 
   get = async (req: FastifyRequest<{ Params: { id: string } }>, res: FastifyReply) => {

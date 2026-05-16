@@ -1,9 +1,12 @@
 // Users administration — list, create, edit (rename / reset password /
 // disable), assign-or-remove roles, delete. Wired to /v1/admin/users.
 
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { Ti, PageHead, Modal, hasPermission, permLock } from '../components/shell.jsx';
 import { SearchInput } from '../components/search-input.jsx';
+import { Pagination } from '../components/pagination.jsx';
+
+const USERS_PER_PAGE = 25;
 import {
   listUsers,
   listRoles,
@@ -20,39 +23,64 @@ function Users({ toast, currentUser, user }) {
   const canUpdate = hasPermission(me, 'users:update');
   const canDelete = hasPermission(me, 'users:delete');
   const [users, setUsers] = useState([]);
+  const [total, setTotal] = useState(0);
   const [roles, setRoles] = useState([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
   const [createOpen, setCreateOpen] = useState(false);
   const [editing, setEditing] = useState(null);
   const [confirmDelete, setConfirmDelete] = useState(null);
+  const [page, setPage] = useState(1);
 
-  const refresh = async () => {
-    const [u, r] = await Promise.all([listUsers(), listRoles()]);
-    setUsers(Array.isArray(u) ? u : []);
-    setRoles(Array.isArray(r) ? r : []);
-    setLoading(false);
-  };
+  // Server-side search + pagination. Roles are loaded once (small,
+  // bounded list); users refetch whenever page or search changes.
+  const refresh = useCallback(async () => {
+    setLoading(true);
+    try {
+      const [u, r] = await Promise.all([
+        listUsers({
+          limit: USERS_PER_PAGE,
+          offset: (page - 1) * USERS_PER_PAGE,
+          search,
+        }),
+        // Roles only re-fetched on first call; cheap enough that
+        // re-running on each refresh is fine and keeps the code simple.
+        listRoles(),
+      ]);
+      setUsers(Array.isArray(u?.rows) ? u.rows : []);
+      setTotal(Number(u?.total) || 0);
+      setRoles(Array.isArray(r) ? r : []);
+    } finally {
+      setLoading(false);
+    }
+  }, [page, search]);
 
   useEffect(() => {
     refresh();
-  }, []);
+  }, [refresh]);
 
-  const filtered = useMemo(() => {
-    if (!search) return users;
-    const q = search.toLowerCase();
-    return users.filter(
-      (u) =>
-        (u.username || '').toLowerCase().includes(q) ||
-        (u.fullName || '').toLowerCase().includes(q) ||
-        (u.email || '').toLowerCase().includes(q),
-    );
-  }, [users, search]);
+  // Reset to page 1 whenever the search changes so a hit on the
+  // current page wouldn't get hidden by a stale offset.
+  useEffect(() => {
+    setPage(1);
+  }, [search]);
 
+  // Clamp page if a delete pushes the current page past the new last page.
+  useEffect(() => {
+    const last = Math.max(1, Math.ceil(total / USERS_PER_PAGE));
+    if (page > last) setPage(last);
+  }, [total, page]);
+
+  // Server already filtered + paginated — render rows verbatim.
+  const pageRows = users;
+
+  // Mutations refresh the server slice so totals + ordering stay
+  // correct — local in-place edits would drift from the server's view
+  // (e.g. a new user might belong on a different page).
   const handleCreate = async (form) => {
     try {
       const created = await createUser(form);
-      setUsers((u) => [created, ...u]);
+      await refresh();
       setCreateOpen(false);
       toast(`Created user ${created.username}`, 'success');
     } catch (err) {
@@ -62,8 +90,8 @@ function Users({ toast, currentUser, user }) {
 
   const handleUpdate = async (id, patch) => {
     try {
-      const updated = await updateUser(id, patch);
-      setUsers((u) => u.map((row) => (row.id === id ? updated : row)));
+      await updateUser(id, patch);
+      await refresh();
       setEditing(null);
       toast('User updated', 'success');
     } catch (err) {
@@ -74,7 +102,7 @@ function Users({ toast, currentUser, user }) {
   const handleDelete = async (user) => {
     try {
       await apiDeleteUser(user.id);
-      setUsers((u) => u.filter((row) => row.id !== user.id));
+      await refresh();
       setConfirmDelete(null);
       toast(`Deleted ${user.username}`, 'danger');
     } catch (err) {
@@ -84,8 +112,8 @@ function Users({ toast, currentUser, user }) {
 
   const handleAssign = async (user, roleId) => {
     try {
-      const updated = await assignUserRole(user.id, roleId);
-      setUsers((u) => u.map((row) => (row.id === user.id ? updated : row)));
+      await assignUserRole(user.id, roleId);
+      await refresh();
       toast(`Role assigned to ${user.username}`, 'success');
     } catch (err) {
       toast(`Assign failed: ${parseErrorMessage(err)}`, 'danger');
@@ -94,8 +122,8 @@ function Users({ toast, currentUser, user }) {
 
   const handleUnassign = async (user, roleId) => {
     try {
-      const updated = await unassignUserRole(user.id, roleId);
-      setUsers((u) => u.map((row) => (row.id === user.id ? updated : row)));
+      await unassignUserRole(user.id, roleId);
+      await refresh();
       toast(`Role removed from ${user.username}`);
     } catch (err) {
       toast(`Remove failed: ${parseErrorMessage(err)}`, 'danger');
@@ -156,7 +184,7 @@ function Users({ toast, currentUser, user }) {
             Loading…
           </div>
         )}
-        {!loading && filtered.length === 0 && (
+        {!loading && total === 0 && (
           <div
             style={{
               padding: 40,
@@ -165,10 +193,10 @@ function Users({ toast, currentUser, user }) {
               color: 'var(--color-text-tertiary)',
             }}
           >
-            {users.length === 0 ? 'No users yet.' : 'No users match this search.'}
+            {search ? 'No users match this search.' : 'No users yet.'}
           </div>
         )}
-        {filtered.map((u) => (
+        {pageRows.map((u) => (
           <UserRow
             key={u.id}
             user={u}
@@ -183,6 +211,14 @@ function Users({ toast, currentUser, user }) {
           />
         ))}
       </div>
+
+      <Pagination
+        page={page}
+        pageSize={USERS_PER_PAGE}
+        total={total}
+        onChange={setPage}
+        variant="compact"
+      />
 
       {createOpen && (
         <CreateUserModal

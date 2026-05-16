@@ -14,8 +14,13 @@ class UserService {
     private readonly roles: RoleRepo
   ) {}
 
-  async list(tenantId?: string): Promise<UserWithRoles[]> {
-    return this.users.listWithRoles(tenantId);
+  async list(opts: {
+    tenantId?: string;
+    search?: string;
+    limit?: number;
+    offset?: number;
+  } = {}): Promise<{ rows: UserWithRoles[]; total: number }> {
+    return this.users.listWithRoles(opts);
   }
 
   async get(id: string): Promise<UserWithRoles | null> {

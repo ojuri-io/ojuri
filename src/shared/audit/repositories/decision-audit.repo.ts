@@ -69,6 +69,46 @@ class DecisionAuditRepo extends BaseRepository<IDecisionAudit, DecisionAudit> {
   }
 
   /**
+   * Paginated variant of `listReviewQueue` — same filter, but returns
+   * `{ rows, total }` so the UI can render real "page X of Y" chrome.
+   * Backed by a single `clone()` so the count + slice come from the
+   * same query plan and stay consistent across overrides racing with
+   * the fetch.
+   */
+  async listReviewQueuePaginated(opts: {
+    limit: number;
+    offset: number;
+    order?: "newest" | "oldest";
+    search?: string;
+  }): Promise<{ rows: DecisionAudit[]; total: number }> {
+    const baseQuery = DecisionAudit.query()
+      .where({ finalDecision: "DECLINE" })
+      .whereNull("reviewedAt");
+
+    // ILIKE %term% across the identifier columns the analyst sees in
+    // the list — same shape as the audit-log search so the muscle
+    // memory carries over.
+    if (opts.search && opts.search.trim()) {
+      const s = `%${opts.search.trim()}%`;
+      baseQuery.where((b) => {
+        b.where("transactionId", "ilike", s)
+          .orWhere("senderId", "ilike", s)
+          .orWhere("receiverId", "ilike", s);
+      });
+    }
+
+    const total = (await baseQuery.clone().resultSize()) as unknown as number;
+
+    const rows = await baseQuery
+      .clone()
+      .orderBy("createdAt", opts.order === "oldest" ? "asc" : "desc")
+      .limit(Math.min(Math.max(opts.limit, 1), 200))
+      .offset(Math.max(opts.offset, 0));
+
+    return { rows, total: Number(total) || 0 };
+  }
+
+  /**
    * Decision counts grouped by `finalDecision` over a time window.
    * The Dashboard's "Today's decisions" tile and Metrics page top
    * KPIs both read this.

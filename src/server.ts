@@ -6,6 +6,7 @@ import logger from "./shared/utils/logger";
 import KafkaProducer from "./shared/kafka/kafka-producer";
 import ModelRegistryService from "./shared/models/model-registry.service";
 import RulesService from "./shared/rules/rules.service";
+import RuntimeSettingsService from "./shared/settings/runtime-settings.service";
 import { startWebhookWorker, stopWebhookWorker } from "./shared/webhooks/webhook-worker";
 import { loadCatalog } from "./shared/features/feature-catalog";
 
@@ -31,6 +32,13 @@ async function start() {
   } catch (err) {
     logger.warn({ err }, "Kafka producer failed to connect - will retry on publish");
   }
+
+  // Warm the runtime-settings cache before the registry resolves
+  // anything — the registry's threshold fallback chain depends on it.
+  const runtimeSettings = container.resolve(RuntimeSettingsService);
+  await runtimeSettings.start().catch((err) =>
+    logger.warn({ err }, "Runtime settings initial load failed - using env fallbacks until refresh")
+  );
 
   // Hydrate registry caches before accepting traffic so the first
   // /v1/predict request after boot doesn't synchronously hit Postgres

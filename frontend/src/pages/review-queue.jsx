@@ -15,6 +15,9 @@ import {
   truncId,
 } from '../components/shell.jsx';
 import { SearchInput } from '../components/search-input.jsx';
+import { Pagination } from '../components/pagination.jsx';
+
+const QUEUE_PAGE_SIZE = 25;
 import {
   listReviewQueue,
   overrideDecision,
@@ -81,6 +84,12 @@ function ReviewQueue({ toast, nav, queue, setQueue, queueCount, refreshQueueCoun
   // Sort toggle: 'oldest' surfaces the longest-waiting row first, 'newest'
   // mirrors the server default. Header chip flips it.
   const [sortOrder, setSortOrder] = useState('newest');
+  // Server-side pagination — the queue table can run into the thousands
+  // so we never load it all at once. `page` is 1-indexed; `pageTotal` is
+  // the server's authoritative count for "rows matching the queue
+  // filter" (unreviewed DECLINEs).
+  const [page, setPage] = useState(1);
+  const [pageTotal, setPageTotal] = useState(0);
   // Similar-case detail modal (right pane, similar-cases section). When
   // non-null the modal renders with the clicked row's full payload and
   // a "Open transaction" jump.
@@ -109,40 +118,40 @@ function ReviewQueue({ toast, nav, queue, setQueue, queueCount, refreshQueueCoun
   const refetchQueue = useCallback(async () => {
     setRefreshing(true);
     try {
-      const res = await listReviewQueue();
-      if (!Array.isArray(res)) return;
-      setQueue(res.map(normaliseQueueRow));
+      const res = await listReviewQueue({
+        limit: QUEUE_PAGE_SIZE,
+        offset: (page - 1) * QUEUE_PAGE_SIZE,
+        order: sortOrder,
+        search,
+      });
+      const rows = Array.isArray(res?.rows) ? res.rows : [];
+      setQueue(rows.map(normaliseQueueRow));
+      setPageTotal(Number(res?.total) || 0);
     } catch {
       /* tolerate offline */
     } finally {
       setRefreshing(false);
     }
-  }, [setQueue]);
+  }, [setQueue, page, sortOrder, search]);
 
-  // On mount, refresh from the live endpoint. Falls back to the seeded
-  // `queue` prop via the `safe()` wrapper when the backend is unreachable.
+  // On mount + whenever page / sort changes, refresh from the server.
   useEffect(() => {
     refetchQueue();
+    setFocus(0);
   }, [refetchQueue]);
 
-  const filtered = useMemo(() => {
-    const base = !search
-      ? queue
-      : queue.filter((r) => {
-          const q = search.toLowerCase();
-          return (
-            r.transactionId.toLowerCase().includes(q) ||
-            r.auditId.toLowerCase().includes(q) ||
-            r.sender.toLowerCase().includes(q) ||
-            r.receiver.toLowerCase().includes(q)
-          );
-        });
-    // Don't mutate state; copy before sorting. `ageMin` is older-first
-    // when descending (largest age value goes to the top).
-    const sorted = [...base];
-    if (sortOrder === 'oldest') sorted.sort((a, b) => b.ageMin - a.ageMin);
-    return sorted;
-  }, [queue, search, sortOrder]);
+  // Clamp the page when a refresh shrinks the result set (e.g. bulk
+  // override drained the last page). Without this the user would be
+  // stranded on an empty page > totalPages with no rows to show.
+  useEffect(() => {
+    const lastPage = Math.max(1, Math.ceil(pageTotal / QUEUE_PAGE_SIZE));
+    if (page > lastPage) setPage(lastPage);
+  }, [pageTotal, page]);
+
+  // Server-side search now — refetchQueue sends `search` and the
+  // backend ILIKEs across transactionId / senderId / receiverId. The
+  // queue state already holds only matching rows, so no local filter.
+  const filtered = queue;
 
   const current = filtered[focus] || null;
 
@@ -333,15 +342,12 @@ function ReviewQueue({ toast, nav, queue, setQueue, queueCount, refreshQueueCoun
     }
   };
 
-  // Show the empty state only when we're *certain* the queue is empty.
-  // Three things have to agree:
+  // Empty-state guard now reads the *server's authoritative* page
+  // total, not just the local slice. Three signals have to agree:
   //   1. local queue is empty,
-  //   2. we're not currently refetching the next batch from the server,
-  //   3. the server-truth `queueCount` is also zero (or unknown).
-  // Without (3) a bulk run that drains the local 100-row cap would
-  // flash "Queue clear" even when 59 rows still need review.
-  const serverEmpty = typeof queueCount !== 'number' || queueCount === 0;
-  if (queue.length === 0 && !refreshing && serverEmpty) {
+  //   2. we're not in the middle of a refetch,
+  //   3. server total = 0.
+  if (queue.length === 0 && !refreshing && pageTotal === 0) {
     return (
       <EmptyQueue
         handledToday={handledToday}
@@ -353,15 +359,15 @@ function ReviewQueue({ toast, nav, queue, setQueue, queueCount, refreshQueueCoun
       />
     );
   }
-  if (queue.length === 0 && (refreshing || !serverEmpty)) {
+  if (queue.length === 0 && (refreshing || pageTotal > 0)) {
     return (
       <div className="panel" style={{ padding: 60, textAlign: 'center' }}>
         <p style={{ margin: 0, fontSize: 13, color: 'var(--color-text-secondary)' }}>
           Loading next batch…
         </p>
-        {typeof queueCount === 'number' && queueCount > 0 && (
+        {pageTotal > 0 && (
           <p style={{ margin: '4px 0 0', fontSize: 11, color: 'var(--color-text-tertiary)' }}>
-            {queueCount} pending server-side
+            {pageTotal} pending server-side
           </p>
         )}
       </div>
@@ -375,9 +381,9 @@ function ReviewQueue({ toast, nav, queue, setQueue, queueCount, refreshQueueCoun
         title="Review queue"
         sub={
           <>
-            {typeof queueCount === 'number' ? queueCount : queue.length} pending
-            {typeof queueCount === 'number' && queueCount > queue.length ? (
-              <span style={{ color: 'var(--color-text-tertiary)' }}> · {queue.length} shown (cap)</span>
+            {pageTotal} pending
+            {pageTotal > queue.length ? (
+              <span style={{ color: 'var(--color-text-tertiary)' }}> · showing {queue.length} on this page</span>
             ) : null}
             {' · '}
             <span style={{ color: slaCount > 0 ? 'var(--color-text-danger)' : 'inherit' }}>{slaCount} over 4h SLA</span>
@@ -393,6 +399,7 @@ function ReviewQueue({ toast, nav, queue, setQueue, queueCount, refreshQueueCoun
         <button
           onClick={() => {
             setSortOrder((s) => (s === 'newest' ? 'oldest' : 'newest'));
+            setPage(1);
             setFocus(0);
           }}
           title={sortOrder === 'newest' ? 'Sort by oldest first' : 'Sort by newest first'}
@@ -431,9 +438,13 @@ function ReviewQueue({ toast, nav, queue, setQueue, queueCount, refreshQueueCoun
             <SearchInput
               inputRef={searchRef}
               value={search}
-              onCommit={(v) => { setSearch(v); setFocus(0); }}
+              onCommit={(v) => {
+                setSearch(v);
+                setPage(1);
+                setFocus(0);
+              }}
               placeholder="Search /  txn, sender, receiver… (Enter)"
-              hint="Press Enter to search"
+              hint="Press Enter — server-side"
             />
           </div>
           <div ref={listRef} style={{flex:1, overflow:'auto', minHeight:0}}>
@@ -452,6 +463,18 @@ function ReviewQueue({ toast, nav, queue, setQueue, queueCount, refreshQueueCoun
                 onClick={() => setFocus(i)}
               />
             ))}
+          </div>
+          <div style={{ padding: '6px 10px', borderTop: '0.5px solid var(--color-border-tertiary)', background: 'var(--color-background-secondary)' }}>
+            <Pagination
+              page={page}
+              pageSize={QUEUE_PAGE_SIZE}
+              total={pageTotal}
+              onChange={(n) => {
+                setPage(n);
+                setSelected(new Set());
+              }}
+              variant="compact"
+            />
           </div>
           {bulk && (
             <div style={{padding:'10px 12px', borderTop:'0.5px solid var(--color-border-tertiary)', background:'var(--color-background-secondary)', display:'flex', alignItems:'center', gap:6, flexWrap:'wrap'}}>

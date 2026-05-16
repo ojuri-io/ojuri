@@ -187,9 +187,25 @@ class PredictController {
     return res.send(SuccessResponse("Decision overridden", row));
   };
 
-  reviewQueue = async (_req: FastifyRequest, res: FastifyReply) => {
-    const rows = await this.decisionAudit.listReviewQueue({ limit: 100 });
-    return res.send(SuccessResponse("Review queue", rows));
+  reviewQueue = async (
+    req: FastifyRequest<{
+      Querystring: { limit?: string; offset?: string; order?: string; search?: string };
+    }>,
+    res: FastifyReply
+  ) => {
+    const limit = Number.parseInt(req.query.limit || "25", 10) || 25;
+    const offset = Number.parseInt(req.query.offset || "0", 10) || 0;
+    const order = req.query.order === "oldest" ? "oldest" : "newest";
+    const search = req.query.search?.trim() || undefined;
+    const { rows, total } = await this.decisionAudit.listReviewQueuePaginated({
+      limit,
+      offset,
+      order,
+      search,
+    });
+    return res.send(
+      SuccessResponse("Review queue", { rows, total, limit, offset })
+    );
   };
 
   /**

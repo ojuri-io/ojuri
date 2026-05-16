@@ -8,6 +8,7 @@
 
 import React, { useEffect, useMemo, useState } from 'react';
 import { Ti, PageHead, Modal, permLock } from '../components/shell.jsx';
+import { Pagination, paginate } from '../components/pagination.jsx';
 import {
   listSavedReports,
   savedReportsCatalogue,
@@ -17,6 +18,8 @@ import {
   runSavedReport,
   exportSavedReport,
 } from '../api/client.js';
+
+const REPORTS_PER_PAGE = 10;
 
 const DEFAULT_COLUMNS = [
   'createdAt',
@@ -59,6 +62,7 @@ function Reports({ toast, user }) {
   const [running, setRunning] = useState(false);
   const [saving, setSaving] = useState(false);
   const [pendingDelete, setPendingDelete] = useState(null);
+  const [page, setPage] = useState(1);
 
   const refresh = () =>
     listSavedReports().then((rows) => {
@@ -81,6 +85,19 @@ function Reports({ toast, user }) {
   const selected = useMemo(
     () => reports.find((r) => r.id === selectedId) || null,
     [reports, selectedId],
+  );
+
+  // Client-paged: the saved-report list endpoint returns the full
+  // collection (no row-cap server-side), so we slice locally.
+  // Clamp page when the dataset shrinks (delete, refresh) so we don't
+  // strand the user on an out-of-range empty page.
+  useEffect(() => {
+    const last = Math.max(1, Math.ceil(reports.length / REPORTS_PER_PAGE));
+    if (page > last) setPage(last);
+  }, [reports.length, page]);
+  const pageRows = useMemo(
+    () => paginate(reports, page, REPORTS_PER_PAGE),
+    [reports, page],
   );
 
   // Available columns for the currently-edited data source. The picker
@@ -222,7 +239,7 @@ function Reports({ toast, user }) {
             No saved reports yet. Click <strong>New report</strong> to create one.
           </div>
         )}
-        {reports.map((r) => (
+        {pageRows.map((r) => (
           <div
             key={r.id}
             className="row-grid hoverable"
@@ -279,6 +296,14 @@ function Reports({ toast, user }) {
           </div>
         ))}
       </section>
+
+      <Pagination
+        page={page}
+        pageSize={REPORTS_PER_PAGE}
+        total={reports.length}
+        onChange={setPage}
+        variant="compact"
+      />
 
       {/* Preview pane — shows the rows returned by the most-recent run. */}
       {preview && selected && (

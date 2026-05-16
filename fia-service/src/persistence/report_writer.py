@@ -82,8 +82,28 @@ SELECT id, "transactionId", "senderId", amount, "transactionType",
        verdict, "recommendedAction", "agentConfidence", status, "createdAt"
 FROM "investigationReports"
 WHERE (:status IS NULL OR status = :status)
+  AND (:verdict IS NULL OR verdict = :verdict)
+  AND (
+    :search IS NULL
+    OR "transactionId" ILIKE :search_like
+    OR "senderId"      ILIKE :search_like
+    OR narrative       ILIKE :search_like
+  )
 ORDER BY "createdAt" DESC
 LIMIT :limit OFFSET :offset
+"""
+
+_COUNT_REPORTS_SQL = """
+SELECT count(*) AS total
+FROM "investigationReports"
+WHERE (:status IS NULL OR status = :status)
+  AND (:verdict IS NULL OR verdict = :verdict)
+  AND (
+    :search IS NULL
+    OR "transactionId" ILIKE :search_like
+    OR "senderId"      ILIKE :search_like
+    OR narrative       ILIKE :search_like
+  )
 """
 
 
@@ -199,12 +219,45 @@ class ReportWriter:
         return self._row_to_dict(rows[0])
 
     def list_reports(
-        self, status: Optional[str] = None, limit: int = 50, offset: int = 0
-    ) -> List[Dict[str, Any]]:
-        rows = self._db.fetch_all(
-            _LIST_REPORTS_SQL, {"status": status, "limit": limit, "offset": offset}
-        )
-        return [self._row_to_dict(r) for r in rows]
+        self,
+        status: Optional[str] = None,
+        limit: int = 50,
+        offset: int = 0,
+        verdict: Optional[str] = None,
+        search: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """
+        Returns ``{"rows": [...], "total": int}`` so the Investigations
+        page can render real pagination. Filters apply server-side:
+        ``status`` is the row-level workflow state; ``verdict`` is the
+        LLM's classification (FRAUD_CONFIRMED / UNCERTAIN /
+        LIKELY_LEGITIMATE); ``search`` ILIKEs across transactionId,
+        senderId and the narrative blob.
+        """
+        params = {
+            "status": status,
+            "verdict": verdict,
+            "search": search,
+            "search_like": f"%{search}%" if search else None,
+            "limit": limit,
+            "offset": offset,
+        }
+        rows = self._db.fetch_all(_LIST_REPORTS_SQL, params)
+        total_rows = self._db.fetch_all(_COUNT_REPORTS_SQL, params)
+        total = 0
+        if total_rows:
+            first = total_rows[0]
+            if hasattr(first, "_mapping"):
+                total = int(first._mapping.get("total", 0) or 0)
+            else:
+                try:
+                    total = int(first[0])
+                except Exception:
+                    total = 0
+        return {
+            "rows": [self._row_to_dict(r) for r in rows],
+            "total": total,
+        }
 
     def next_turn_index(self, report_id: str) -> int:
         rows = self._db.fetch_all(_NEXT_TURN_INDEX_SQL, {"report_id": report_id})

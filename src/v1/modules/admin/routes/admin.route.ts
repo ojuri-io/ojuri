@@ -8,6 +8,8 @@ import rolesRoute from "./roles.route";
 import auditRoute from "./audit.route";
 import savedReportsRoute from "./saved-reports.route";
 import featuresRoute from "./features.route";
+import settingsRoute from "./settings.route";
+import { denyIfPasswordRotation } from "@shared/middlewares/deny-if-password-rotation.middleware";
 
 /**
  * Admin / management routes.
@@ -20,6 +22,10 @@ import featuresRoute from "./features.route";
  * issuing real users + roles from there.
  */
 const adminRoute: FastifyPluginAsync = async (fastify) => {
+  // Block every admin endpoint while the authenticated user still owes
+  // a forced password rotation (mustChangePassword=true). Runs after
+  // each sub-route's own requireAuth, so `req.auth` is populated.
+  fastify.addHook("preHandler", denyIfPasswordRotation);
   fastify.register(apiKeysRoute);
   fastify.register(webhooksRoute);
   fastify.register(modelsRoute);
@@ -29,6 +35,7 @@ const adminRoute: FastifyPluginAsync = async (fastify) => {
   fastify.register(auditRoute);
   fastify.register(savedReportsRoute);
   fastify.register(featuresRoute);
+  fastify.register(settingsRoute);
 };
 
 export default adminRoute;

@@ -28,6 +28,7 @@ import {
 } from './api/client.js';
 
 import Login from './pages/login.jsx';
+import ChangePassword from './pages/change-password.jsx';
 import Dashboard from './pages/dashboard.jsx';
 import LiveDecisions from './pages/live-decisions.jsx';
 import TransactionsList from './pages/transactions-list.jsx';
@@ -38,6 +39,7 @@ import AuditLog from './pages/audit-log.jsx';
 import RuleEditor from './pages/rule-editor.jsx';
 import ModelRegistry from './pages/model-registry.jsx';
 import Features from './pages/features.jsx';
+import Settings from './pages/settings.jsx';
 import Metrics from './pages/metrics.jsx';
 import Reports from './pages/reports.jsx';
 import ServiceHealth from './pages/service-health.jsx';
@@ -65,6 +67,7 @@ function loadRoute() {
     'audit',
     'models',
     'features',
+    'settings',
     'metrics',
     'reports',
     'health',
@@ -161,24 +164,44 @@ function App() {
     );
   }
 
+  const doLogout = () => {
+    try {
+      localStorage.removeItem('sentinel.jwt');
+      localStorage.removeItem('sentinel.user');
+    } catch {
+      /* ignore */
+    }
+    apiLogout().catch(() => {
+      /* stateless logout — server response doesn't matter */
+    });
+    setAuthUser(false);
+    location.hash = '';
+  };
+
+  // First-login gate. The seeded admin and any user created with a temp
+  // password lands here on next sign-in; server middleware refuses every
+  // admin endpoint until they rotate. The /auth/change-password and
+  // /auth/me routes stay reachable so this flow can complete.
+  if (authUser?.mustChangePassword) {
+    return (
+      <ChangePassword
+        user={authUser}
+        onSuccess={(refreshed) => {
+          // /me returned with the cleared flag — swap in the fresh payload.
+          setAuthUser(refreshed);
+          setConnection('live');
+        }}
+        onLogout={doLogout}
+      />
+    );
+  }
+
   return (
     <AuthenticatedApp
       user={authUser}
       connection={connection}
       setConnection={setConnection}
-      onLogout={() => {
-        try {
-          localStorage.removeItem('sentinel.jwt');
-          localStorage.removeItem('sentinel.user');
-        } catch {
-          /* ignore */
-        }
-        apiLogout().catch(() => {
-          /* stateless logout — server response doesn't matter */
-        });
-        setAuthUser(false);
-        location.hash = '';
-      }}
+      onLogout={doLogout}
     />
   );
 }
@@ -357,6 +380,9 @@ function AuthenticatedApp({ user, connection, setConnection, onLogout }) {
   } else if (page === 'features') {
     PageBody = <Features toast={toast} />;
     screenLabel = '07a Features';
+  } else if (page === 'settings') {
+    PageBody = <Settings toast={toast} user={user} />;
+    screenLabel = '07b Settings';
   } else if (page === 'metrics') {
     PageBody = <Metrics toast={toast} />;
     screenLabel = '08 Metrics';

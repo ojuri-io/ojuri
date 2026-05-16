@@ -9,6 +9,7 @@
 import React, { useState, useMemo, useEffect } from 'react';
 import { Ti, PageHead, fmtNaira, truncId } from '../components/shell.jsx';
 import { SearchInput, DateRangeFilter } from '../components/search-input.jsx';
+import { Pagination } from '../components/pagination.jsx';
 import { listAuditRows, listReasonCodes } from '../api/client.js';
 
 const PER_PAGE = 12;
@@ -266,7 +267,6 @@ function AuditLog({ toast, nav, queue, rules, fromTweak, toTweak }) {
 
   const displayRows = rows && !usedFallback ? rows : localFiltered.slice((page - 1) * PER_PAGE, page * PER_PAGE);
   const displayTotal = rows && !usedFallback ? total : localFiltered.length;
-  const totalPages = Math.max(1, Math.ceil(displayTotal / PER_PAGE));
 
   if (forbidden) {
     return (
@@ -493,14 +493,13 @@ function AuditLog({ toast, nav, queue, rules, fromTweak, toTweak }) {
         })}
       </section>
 
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '12px 4px 0', fontSize: 11, color: 'var(--color-text-secondary)' }}>
-        <span>Showing {Math.min((page - 1) * PER_PAGE + 1, displayTotal)}–{Math.min(page * PER_PAGE, displayTotal)} of {displayTotal}</span>
-        <div style={{ display: 'flex', gap: 4, alignItems: 'center' }}>
-          <button style={{ fontSize: 11, padding: '4px 8px', minWidth: 28 }} disabled={page === 1} onClick={() => setPage((p) => Math.max(1, p - 1))}><Ti name="chevron-left" size={12} /></button>
-          <span style={{ fontSize: 11, padding: '0 6px' }}>{page} / {totalPages}</span>
-          <button style={{ fontSize: 11, padding: '4px 8px', minWidth: 28 }} disabled={page === totalPages} onClick={() => setPage((p) => Math.min(totalPages, p + 1))}><Ti name="chevron-right" size={12} /></button>
-        </div>
-      </div>
+      <Pagination
+        page={page}
+        pageSize={PER_PAGE}
+        total={displayTotal}
+        onChange={setPage}
+        variant="compact"
+      />
     </>
   );
 }

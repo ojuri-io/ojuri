@@ -99,6 +99,25 @@ class MLAService:
         self._http_server: Optional[socketserver.TCPServer] = None
         self._http_thread: Optional[threading.Thread] = None
 
+        # Shared SQLAlchemy engine for the admin endpoints (drift config
+        # + retrain runs). Created lazily so cold-start without a DB
+        # still boots far enough to surface the connection error in
+        # /readyz instead of crashing at __init__.
+        self._db_engine = None
+
+        # Hot-applied overrides for the drift detector. When the admin
+        # PUT lands we update the runtime DriftDetector instance + this
+        # mirror; `effective_drift_config()` exposes both. Initial
+        # values track config.* so an operator with no DB knows what
+        # the env said.
+        self._effective_drift_config = {
+            "driftF1Threshold": config.DRIFT_F1_THRESHOLD,
+            "driftPsiThreshold": config.DRIFT_PSI_THRESHOLD,
+            "driftWindowSize": config.DRIFT_WINDOW_SIZE,
+            "autoRetrainEnabled": True,
+            "source": "env",
+        }
+
         # Create directories
         os.makedirs(config.MODEL_OUTPUT_DIR, exist_ok=True)
         os.makedirs(config.DATA_CACHE_DIR, exist_ok=True)
@@ -384,6 +403,108 @@ class MLAService:
         snapshot["retraining_in_progress"] = self.retraining_in_progress
         snapshot["uptime_seconds"] = int(time.time() - self._stats["started_at"])
         return snapshot
+
+    # ════════════════════════════════════════════════════════════════
+    # Admin surface — consumed by /v1/admin/* handlers
+    # ════════════════════════════════════════════════════════════════
+    @property
+    def db_engine(self):
+        """Lazy SQLAlchemy engine. Reuses the loader's connection
+        string so we don't drift two configs."""
+        if self._db_engine is None:
+            self._db_engine = self.data_loader.engine
+        return self._db_engine
+
+    def effective_drift_config(self) -> Dict[str, Any]:
+        """Current values the DriftDetector is using right now —
+        whether sourced from env, DB, or a runtime PUT."""
+        return {
+            "driftF1Threshold": self.drift_detector.f1_threshold,
+            "driftPsiThreshold": self.drift_detector.psi_threshold,
+            "driftWindowSize": self.drift_detector.window_size,
+            "autoRetrainEnabled": self._effective_drift_config.get("autoRetrainEnabled", True),
+        }
+
+    def apply_drift_config(self, cfg: Dict[str, Any]) -> None:
+        """Hot-apply a new drift config to the running detector. Called
+        from the admin PUT handler. Window-size changes resize the
+        deques in-place; the new size takes effect on the next sample.
+
+        We deliberately do NOT reset the existing window — operators
+        tightening the F1 threshold to 0.95 want to see whether the
+        last 1000 samples already trip the new bar, not start over.
+        """
+        self.drift_detector.f1_threshold = float(cfg["driftF1Threshold"])
+        self.drift_detector.psi_threshold = float(cfg["driftPsiThreshold"])
+        new_window = int(cfg["driftWindowSize"])
+        if new_window != self.drift_detector.window_size:
+            self.drift_detector.window_size = new_window
+            # Resize the sliding deques; values older than the new
+            # window get dropped from the left.
+            self.drift_detector.predictions = type(self.drift_detector.predictions)(
+                list(self.drift_detector.predictions)[-new_window:], maxlen=new_window
+            )
+            self.drift_detector.actuals = type(self.drift_detector.actuals)(
+                list(self.drift_detector.actuals)[-new_window:], maxlen=new_window
+            )
+            self.drift_detector.probabilities = type(self.drift_detector.probabilities)(
+                list(self.drift_detector.probabilities)[-new_window:], maxlen=new_window
+            )
+
+        self._effective_drift_config = {
+            "driftF1Threshold": self.drift_detector.f1_threshold,
+            "driftPsiThreshold": self.drift_detector.psi_threshold,
+            "driftWindowSize": self.drift_detector.window_size,
+            "autoRetrainEnabled": bool(cfg.get("autoRetrainEnabled", True)),
+            "source": "runtime",
+        }
+        self._stats["drift_f1_threshold"] = self.drift_detector.f1_threshold
+        self._stats["drift_psi_threshold"] = self.drift_detector.psi_threshold
+        logger.info(
+            "Drift config hot-applied: f1=%s psi=%s window=%s auto=%s",
+            self.drift_detector.f1_threshold,
+            self.drift_detector.psi_threshold,
+            self.drift_detector.window_size,
+            self._effective_drift_config["autoRetrainEnabled"],
+        )
+
+    def trigger_manual_retrain(self, run_id: str, triggered_by: str) -> None:
+        """Kick off a retrain in a background thread. Handler returns
+        202 immediately; the run completes async and the runs list
+        reflects the final status."""
+        if self.retraining_in_progress:
+            # Defence in depth — the DB check should have caught this
+            # already. Mark the row as rejected so the operator gets
+            # the same feedback either way.
+            from src.api.settings_repo import complete_retrain_run
+            complete_retrain_run(
+                self.db_engine, run_id, status="rejected",
+                failure_reason="Another retrain was already in progress",
+            )
+            return
+
+        def _worker():
+            from src.api.settings_repo import complete_retrain_run
+            try:
+                drift_metrics = {"reason": "manual", "triggered_by": triggered_by, "run_id": run_id}
+                self._run_training_pipeline(drift_metrics)
+                metrics = {
+                    "f1_score": self._stats.get("last_f1"),
+                    "auc_roc": self._stats.get("last_auc"),
+                }
+                complete_retrain_run(
+                    self.db_engine, run_id, status="succeeded",
+                    metrics=metrics,
+                    model_version=self.current_model_version,
+                )
+            except Exception as err:
+                logger.exception("Manual retrain failed")
+                complete_retrain_run(
+                    self.db_engine, run_id, status="failed",
+                    failure_reason=str(err),
+                )
+
+        threading.Thread(target=_worker, name=f"manual-retrain-{run_id[:8]}", daemon=True).start()
 
     def _start_http_server(self) -> None:
         # ThreadingHTTPServer so a slow retraining-pipeline log query

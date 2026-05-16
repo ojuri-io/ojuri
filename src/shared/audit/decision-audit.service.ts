@@ -149,6 +149,15 @@ class DecisionAuditService {
     return this.repo.listReviewQueue(opts?.limit ?? 100);
   }
 
+  async listReviewQueuePaginated(opts: {
+    limit: number;
+    offset: number;
+    order?: "newest" | "oldest";
+    search?: string;
+  }): Promise<{ rows: DecisionAudit[]; total: number }> {
+    return this.repo.listReviewQueuePaginated(opts);
+  }
+
   async listFiltered(filters: AuditListFilters) {
     return this.repo.listFiltered(filters);
   }

@@ -88,9 +88,32 @@ export const logout = () =>
 
 export const me = () => fetch('/v1/auth/me', { headers: adminHeaders() }).then(unwrap);
 
+// Rotate the caller's own password. Used by the forced-change screen
+// for the seed admin on first login and by any user the backend has
+// flagged with `mustChangePassword=true`. Server-side enforcement at
+// `denyIfPasswordRotation` middleware returns 423 for every other
+// admin route until this succeeds.
+export const changePassword = ({ currentPassword, newPassword }) =>
+  fetch('/v1/auth/change-password', {
+    method: 'POST',
+    headers: adminHeaders(),
+    body: JSON.stringify({ currentPassword, newPassword }),
+  }).then(unwrap);
+
 // ──────── Users (admin) ────────
-export const listUsers = () =>
-  safe(() => fetch('/v1/admin/users', { headers: adminHeaders() }).then(unwrap), () => []);
+// Always paginated: returns `{ rows, total }`. Server-side search
+// across username / fullName / email. The backing table can grow, so
+// unparameterised reads are not supported.
+export const listUsers = ({ limit = 25, offset = 0, search = '' } = {}) => {
+  const qs = new URLSearchParams();
+  qs.set('limit', String(limit));
+  qs.set('offset', String(offset));
+  if (search) qs.set('search', search);
+  return safe(
+    () => fetch(`/v1/admin/users?${qs.toString()}`, { headers: adminHeaders() }).then(unwrap),
+    () => ({ rows: [], total: 0 }),
+  );
+};
 
 export const createUser = (body) =>
   fetch('/v1/admin/users', {
@@ -358,20 +381,41 @@ export const deleteWebhook = (id) =>
   }).then(unwrap);
 
 // ──────── FIA (investigation reports) ────────
-// Returns `{ reports, live }` so the UI can distinguish "FIA returned
-// no reports" from "FIA is unreachable, here's design-time seed data".
-export const listReports = async () => {
+// Returns `{ reports, total, live }` so the UI can distinguish
+// "FIA returned no reports" from "FIA is unreachable", and so the
+// Investigations page can render real pagination. Server-side filters
+// (`status`, `verdict`, `search`) are pushed all the way down to the
+// SQL — see fia-service/src/persistence/report_writer.py.
+export const listReports = async ({
+  limit = 25,
+  offset = 0,
+  verdict,
+  search,
+  status,
+} = {}) => {
   if (useMockOverride()) {
-    return { reports: MOCK.reports, live: false };
+    return { reports: MOCK.reports, total: MOCK.reports.length, live: false };
   }
+  const qs = new URLSearchParams();
+  qs.set('limit', String(limit));
+  qs.set('offset', String(offset));
+  if (verdict) qs.set('verdict', verdict);
+  if (search) qs.set('search', search);
+  if (status) qs.set('status', status);
   try {
-    const data = await fetch('/fia/v1/reports').then(unwrap);
-    return { reports: Array.isArray(data) ? data : [], live: true };
+    const data = await fetch(`/fia/v1/reports?${qs.toString()}`).then(unwrap);
+    const reports = Array.isArray(data?.reports)
+      ? data.reports
+      : Array.isArray(data)
+      ? data
+      : [];
+    const total = Number.isFinite(data?.total) ? data.total : reports.length;
+    return { reports, total, live: true };
   } catch (err) {
     if (typeof console !== 'undefined') {
       console.warn('[sentinel] FIA reports unreachable:', err.message);
     }
-    return { reports: [], live: false };
+    return { reports: [], total: 0, live: false };
   }
 };
 
@@ -694,11 +738,20 @@ export const getStatsToday = ({ since } = {}) =>
   );
 
 // ──────── Review queue + decisions (admin) ────────
-export const listReviewQueue = () =>
-  safe(
-    () => fetch('/v1/review-queue', { headers: adminHeaders() }).then(unwrap),
-    () => MOCK.queue,
+// Always paginated: returns `{ rows, total, limit, offset }`. The
+// backing table can run into the thousands so unpaginated reads are
+// not supported. Callers must request a page slice.
+export const listReviewQueue = ({ limit = 25, offset = 0, order = 'newest', search = '' } = {}) => {
+  const qs = new URLSearchParams();
+  qs.set('limit', String(limit));
+  qs.set('offset', String(offset));
+  if (order) qs.set('order', order);
+  if (search) qs.set('search', search);
+  return safe(
+    () => fetch(`/v1/review-queue?${qs.toString()}`, { headers: adminHeaders() }).then(unwrap),
+    () => ({ rows: MOCK.queue, total: MOCK.queue.length, limit, offset }),
   );
+};
 
 export const getDecision = (transactionId) =>
   fetch(`/v1/decisions/${encodeURIComponent(transactionId)}`, {
@@ -735,3 +788,54 @@ export const loadDashboardBundle = async () => {
     shadowBuckets: new Array(20).fill(0),
   };
 };
+
+// ──────── Settings (admin) ────────
+//
+// Runtime settings live in two places:
+//   • RDA  /v1/admin/settings/runtime/* — the global fraud threshold
+//     used as fallback when neither per-segment nor per-model
+//     defaultThreshold is set.
+//   • MLA  /mla/v1/admin/drift-config — drift detection knobs that
+//     decide when MLA retrains.
+//
+// The Settings page reads both. Writes are role-gated server-side
+// (settings:write for fraud threshold, mla:configure for drift / retrain),
+// so a FRAUD_ANALYST with settings:read can view but not edit.
+
+export const listRuntimeSettings = () =>
+  safe(
+    () => fetch('/v1/admin/settings/runtime', { headers: adminHeaders() }).then(unwrap),
+    () => [],
+  );
+
+export const updateRuntimeSetting = (key, value) =>
+  fetch(`/v1/admin/settings/runtime/${encodeURIComponent(key)}`, {
+    method: 'PUT',
+    headers: adminHeaders(),
+    body: JSON.stringify({ value }),
+  }).then(unwrap);
+
+export const getDriftConfig = () =>
+  safe(
+    () => fetch('/mla/v1/admin/drift-config', { headers: adminHeaders() }).then(unwrap),
+    () => null,
+  );
+
+export const updateDriftConfig = ({ driftF1Threshold, driftPsiThreshold, driftWindowSize, autoRetrainEnabled }) =>
+  fetch('/mla/v1/admin/drift-config', {
+    method: 'PUT',
+    headers: adminHeaders(),
+    body: JSON.stringify({ driftF1Threshold, driftPsiThreshold, driftWindowSize, autoRetrainEnabled }),
+  }).then(unwrap);
+
+export const triggerManualRetrain = () =>
+  fetch('/mla/v1/admin/retrain', {
+    method: 'POST',
+    headers: adminHeaders(),
+  }).then(unwrap);
+
+export const listRetrainRuns = () =>
+  safe(
+    () => fetch('/mla/v1/admin/retrain-runs', { headers: adminHeaders() }).then(unwrap),
+    () => [],
+  );
