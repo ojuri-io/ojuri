@@ -12,10 +12,12 @@
  * counts. For deep narrative reasoning, the FIA service is the
  * right place (see `/v1/reports`).
  *
- * The catalogue covers feature positions 0..11 (everything Redis +
- * the on-the-fly enrichment in PredictService sets). The remaining
- * 422 padding dimensions are ignored by design — they're the
- * "PROTOTYPE MODE" placeholders documented in CLAUDE.md.
+ * The catalogue here covers feature positions 0..11 — the velocity,
+ * graph, calendar, and amount features that are most informative for a
+ * fast adverse-action explanation. The remaining catalogue positions
+ * (12..63 in `feature-catalog.v1.json`) still feed the model; they
+ * are deliberately not surfaced as reason codes. For full attribution,
+ * use the FIA narrative (`POST /v1/reports`).
  */
 
 export interface ReasonCode {

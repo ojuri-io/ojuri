@@ -465,7 +465,7 @@ psql -h localhost -p 5433 -U postgres -d fraud_db -c "
 
 ### Memory ceiling during training
 
-`TRAINING_DATA_SIZE=50000` is laptop-friendly (~1 GB RAM during SMOTE + scaler fit). `500000` needs ~10 GB. SMOTE's memory peak is roughly `2 * n_minority_after_smote * num_features * 4 bytes`. For 434-dim features and a balanced 250k sample SMOTE, that's ~870 MB just for the resampled training array — plus the temporary copy XGBoost makes.
+`TRAINING_DATA_SIZE=50000` is laptop-friendly (~1 GB RAM during SMOTE + scaler fit). `500000` needs ~10 GB. SMOTE's memory peak is roughly `2 * n_minority_after_smote * num_features * 4 bytes`. With the shipped v1 catalogue (64 features) and a balanced 250k sample SMOTE, that's ~128 MB just for the resampled training array — plus the temporary copy XGBoost makes. Adopters whose overlay extends the catalogue should scale this number by their actual `input_dimension`. The IEEE-CIS reference dataset (used by `scripts/train_with_datasets.py` only) is 434-dim and pushes SMOTE memory ~7× higher.
 
 If you OOM, the first lever is `TRAINING_DATA_SIZE`, then `SMOTE_RATIO` (set to 0.5 to leave the minority class at half-parity, halving the post-SMOTE row count).
 
@@ -577,7 +577,8 @@ If that works, double-check `Config.validate()` — `DRIFT_F1_THRESHOLD` outside
 ## Reference Files
 
 - `mla-service/src/main.py` — `MLAService` orchestrator + `_run_training_pipeline`.
-- `mla-service/src/training/data_loader.py` — Postgres training-data query with the `decisionSource = 'ML'` rule-leak filter and the 434-dim feature pad.
+- `mla-service/src/training/data_loader.py` — Postgres training-data query (with the `decisionSource = 'ML'` rule-leak filter and the `COALESCE(groundTruthFraud, fraudLabel)` label precedence) plus the catalogue-driven feature extraction. Width comes from `models/feature-catalog.v1.json` + adopter overlay; no zero-padding.
+- `mla-service/src/training/dataset_loader.py` — separate CSV loader for the IEEE-CIS / PaySim reference datasets (used by `scripts/train_with_datasets.py`). The 434-dim contract there is the IEEE-CIS native dataset width — not the Postgres training path.
 - `mla-service/src/training/preprocessor.py` — split + SMOTE + scaler.
 - `mla-service/src/training/trainer.py` — XGBoost fit + metrics.
 - `mla-service/src/training/validator.py` — A/B test + McNemar.

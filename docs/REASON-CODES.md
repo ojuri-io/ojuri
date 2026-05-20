@@ -30,9 +30,12 @@ follow-up Q&A), use the FIA service.
 
 ## Catalogue
 
-The current catalogue covers the 12 named feature positions used by
-the real-time path. Padding dimensions (positions 12–433, the
-"PROTOTYPE MODE" placeholders) are deliberately not surfaced.
+Reason codes today surface 12 of the 64 catalogue features
+(`models/feature-catalog.v1.json` — see [`FEATURES.md`](FEATURES.md)).
+The other 52 still feed the model and shape the probability; they
+just aren't surfaced as fast adverse-action codes. Full feature
+attribution belongs in the FIA narrative, not on the predict
+response.
 
 | Code               | Drives                                                                |
 |--------------------|-----------------------------------------------------------------------|
@@ -68,9 +71,9 @@ Reason codes only explain *direction and relative magnitude*.
 
 ## Updating the catalogue
 
-The constants in `reason-codes.ts` are calibrated to the prototype's
-defaults. Production deployments with a different feature distribution
-should:
+The constants in `reason-codes.ts` are calibrated to the shipped
+catalogue's defaults. Production deployments with a different feature
+distribution should:
 
 1. Run an offline SHAP analysis on a holdout sample.
 2. Update `baseline` to the population mean, `scale` to the population

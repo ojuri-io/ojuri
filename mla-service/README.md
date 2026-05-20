@@ -115,7 +115,8 @@ UPDATE transactions SET "fraudLabel" = false WHERE amount <= 50000 AND "fraudLab
 |---------|---------|----------|
 | `Fraud rate: 0.00%` | No fraud examples in training data | Add fraud-labeled transactions |
 | `Expected shape {-1,2} got {1,1}` | Single-class model (no fraud class) | Train with both fraud/non-fraud |
-| `PROTOTYPE MODE: USING PLACEHOLDER FEATURES` | Expected - using simplified features | Extend feature engineering before production |
+| `velocitySnapshots unavailable, defaulting velocity_* slots` | PAA hasn't persisted snapshots yet | Run PAA against `transactions.completed` so those rows exist; otherwise training proceeds with catalogue defaults |
+| `no custom resolver registered for '<name>'` | Adopter overlay references a Python resolver that isn't registered | Register the resolver in `mla-service/src/features/custom_features.py` (mirror of the TS `getCustomFeature` switch) |
 
 ### Start Monitoring Service
 
