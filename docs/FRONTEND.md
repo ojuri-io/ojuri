@@ -82,39 +82,35 @@ localStorage.setItem('sentinel.apiKey', 'fdk_…');
 Tokens never leave the browser; JWT sessions are stateless on the
 server side and expire on `AUTH_JWT_TTL_SECONDS` (default 8 h).
 
-## Offline / demo mode
+## Offline behaviour
 
 `src/api/client.js` wraps every read call in `safe(live, fallback)`:
 
 ```js
 export async function safe(live, fallback) {
-  if (useMockOverride()) return await fallback();
   try { return await live(); }
-  catch (err) { return await fallback(); }
+  catch (err) {
+    console.warn('[sentinel] API call failed, using empty fallback:', err.message);
+    return typeof fallback === 'function' ? fallback() : fallback;
+  }
 }
 ```
 
-`fallback` is always the corresponding slice of `src/data/mock.js`
-(the dataset baked into the design). When the RDA or FIA services
-aren't running, the dashboard silently uses the seed data and the
-console emits `[sentinel] API call failed, using mock fallback: …`
-once per failed call. Write calls (issue key, save rule, …) catch
-their own failures and update local React state so the UI keeps
-responding even with the backend down — the change just isn't
-persisted server-side.
+`fallback` is **always an empty value** — `[]`, `{ rows: [], total: 0 }`,
+`null` — supplied by the caller. When RDA or FIA is unreachable the
+dashboard renders empty states with the per-page empty-state copy and
+shows a persistent `OFFLINE` banner from `app.jsx`. It **never displays
+synthetic data**. The seed dataset (`src/data/mock.js`) and the
+`sentinel.useMock` localStorage override were removed in May 2026 —
+adopters were confused by fake credentials, fake fraud rows, and a
+fully-populated Integrations tab showing up the moment the backend
+was unreachable.
 
-Force the mock path explicitly (useful when the API is up but you
-want a deterministic dataset for screenshots):
-
-```js
-localStorage.setItem('sentinel.useMock', '1');
-```
-
-Unset to resume live calls:
-
-```js
-localStorage.removeItem('sentinel.useMock');
-```
+Write calls (issue key, save rule, register model, override decision,
+…) do **not** go through `safe`. They `try` the real call, catch
+failures locally, surface a toast, and leave the form in its previous
+state so the operator can retry. No optimistic local-state mutation,
+no silent success.
 
 ## Tweaks panel
 
@@ -149,7 +145,6 @@ frontend/
     ├── app.jsx                   # hash routing, shared state, tweaks panel
     ├── styles.css                # design tokens + sidebar + panels + pills
     ├── api/client.js             # safe() + every endpoint wrapper
-    ├── data/mock.js              # seed dataset (offline fallback)
     ├── components/
     │   ├── shell.jsx             # Sidebar, PageHead, Modal, Ti, useToasts, helpers
     │   └── tweaks-panel.jsx
@@ -177,7 +172,7 @@ frontend/
 | `tests/helpers.test.js`         | `fmtNaira` / `fmtAge` / `ageTone` / `truncId`          |
 | `tests/sidebar.test.jsx`        | Nav rendering, active state, queue badge tone, clicks   |
 | `tests/app.test.jsx`            | Landing render, hash routing, sidebar brand            |
-| `tests/api-client.test.js`      | `safe()` happy path + fallback, `useMock` override     |
+| `tests/api-client.test.js`      | `safe()` happy path + empty-fallback on failure        |
 
 16 tests; ~1.3s total on a 2024 MBP. Add to the matrix when you wire
 a new endpoint — every page that calls `/v1/admin/*` should have at
@@ -188,10 +183,11 @@ without an admin token.
 
 A few common adoption tasks:
 
-- **Wire the audit log to the real endpoint** — replace the synthetic
-  rows in `pages/audit-log.jsx` (`buildAuditRows`) with a call to a
-  new `listAuditLog` client helper. Mirror the `safe()` + fallback
-  pattern.
+- **Wire a new admin endpoint** — add the client helper in
+  `src/api/client.js` wrapped in `safe(live, [])` (or whatever empty
+  fallback shape the page expects), then call it from the page. Reads
+  must never fall back to synthetic data; if the call fails the page
+  renders its empty state.
 - **Stream live decisions** — `pages/live-decisions.jsx` runs a local
   `setInterval` simulator. Swap it for an `EventSource` against an
   SSE endpoint on RDA (or a WebSocket on a sidecar) when you add

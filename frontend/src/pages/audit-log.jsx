@@ -3,8 +3,9 @@
 // Wired to `GET /v1/admin/audit` (filters: from / to / decision / model /
 // reasonCodes / search / overridden / pending / limit / offset). Filters
 // edit *draft* state inside the panel; the row fetch only fires when the
-// user hits "Apply" or presses Enter inside the search input. Falls back
-// to the synthetic mock list when the backend is unreachable.
+// user hits "Apply" or presses Enter inside the search input. When the
+// backend is unreachable the page shows an empty state — no synthetic
+// rows. The OFFLINE banner in app.jsx tells the operator why.
 
 import React, { useState, useMemo, useEffect } from 'react';
 import { Ti, PageHead, fmtNaira, truncId } from '../components/shell.jsx';
@@ -49,7 +50,7 @@ function normaliseRow(r) {
   };
 }
 
-function AuditLog({ toast, nav, queue, rules, fromTweak, toTweak }) {
+function AuditLog({ toast, nav, rules, fromTweak, toTweak }) {
   // Committed (applied) filters — drive the fetch.
   //
   // We intentionally start with NO date range (and no decision /
@@ -77,7 +78,6 @@ function AuditLog({ toast, nav, queue, rules, fromTweak, toTweak }) {
   const [page, setPage] = useState(1);
   const [rows, setRows] = useState(null);
   const [total, setTotal] = useState(0);
-  const [usedFallback, setUsedFallback] = useState(false);
   const [forbidden, setForbidden] = useState(false);
   const [loading, setLoading] = useState(false);
   const [queryMs, setQueryMs] = useState(0);
@@ -151,17 +151,16 @@ function AuditLog({ toast, nav, queue, rules, fromTweak, toTweak }) {
         if (Array.isArray(res?.rows)) {
           setRows(res.rows.map(normaliseRow));
           setTotal(res.total ?? res.rows.length);
-          setUsedFallback(false);
         } else {
-          setRows(null);
-          setUsedFallback(true);
+          setRows([]);
+          setTotal(0);
         }
       })
       .catch((err) => {
         if (cancelled) return;
         if (String(err?.message || '').startsWith('403')) setForbidden(true);
-        setRows(null);
-        setUsedFallback(true);
+        setRows([]);
+        setTotal(0);
       })
       .finally(() => {
         if (!cancelled) setLoading(false);
@@ -170,30 +169,6 @@ function AuditLog({ toast, nav, queue, rules, fromTweak, toTweak }) {
       cancelled = true;
     };
   }, [filters, page]);
-
-  // Synthetic fallback set built from `queue` + a handful of overridden/review
-  // rows, used when the API call falls back.
-  const fallbackRows = useMemo(() => buildAuditRows(queue), [queue]);
-
-  const localFiltered = useMemo(() => {
-    let list = fallbackRows;
-    if (filters.decisions.size > 0 && filters.decisions.size < 4) {
-      list = list.filter((r) => filters.decisions.has(r.decision));
-    }
-    if (filters.search) {
-      const q = filters.search.toLowerCase();
-      list = list.filter(
-        (r) =>
-          (r.id || '').toLowerCase().includes(q) ||
-          (r.reasons || []).join(' ').toLowerCase().includes(q),
-      );
-    }
-    if (filters.reasonFilters.size > 0) {
-      list = list.filter((r) => (r.reasons || []).some((rc) => filters.reasonFilters.has(rc)));
-    }
-    if (filters.overridden) list = list.filter((r) => r.overridden);
-    return list;
-  }, [fallbackRows, filters]);
 
   // Summary shown next to the chevron when the panel is collapsed.
   // `activeCount` drives the badge; `activeFilterSummary` is the
@@ -267,8 +242,8 @@ function AuditLog({ toast, nav, queue, rules, fromTweak, toTweak }) {
     });
   };
 
-  const displayRows = rows && !usedFallback ? rows : localFiltered.slice((page - 1) * PER_PAGE, page * PER_PAGE);
-  const displayTotal = rows && !usedFallback ? total : localFiltered.length;
+  const displayRows = rows || [];
+  const displayTotal = total;
 
   if (forbidden) {
     return (
@@ -430,7 +405,7 @@ function AuditLog({ toast, nav, queue, rules, fromTweak, toTweak }) {
       {/* Results */}
       <section className="panel" style={{ padding: 0, overflow: 'hidden' }}>
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '10px 14px', borderBottom: '0.5px solid var(--color-border-tertiary)', background: 'var(--color-background-secondary)' }}>
-          <p style={{ margin: 0, fontSize: 11, color: 'var(--color-text-secondary)' }}>{displayTotal} rows matched · query {queryMs || '—'}ms{usedFallback ? ' · (mock fallback)' : ''}</p>
+          <p style={{ margin: 0, fontSize: 11, color: 'var(--color-text-secondary)' }}>{displayTotal} rows matched · query {queryMs || '—'}ms</p>
           <div style={{ display: 'flex', gap: 6 }}>
             <button style={{ fontSize: 11, padding: '4px 9px' }} onClick={() => toast('CSV exported · ' + displayTotal + ' rows')}><Ti name="file-type-csv" size={12} />CSV</button>
             <button style={{ fontSize: 11, padding: '4px 9px' }} onClick={() => toast('JSON exported · ' + displayTotal + ' rows')}><Ti name="braces" size={12} />JSON</button>
@@ -526,25 +501,6 @@ function decisionTone(d) {
   if (d === 'ACCEPT') return 'success';
   if (d === 'REVIEW') return 'warn';
   return '';
-}
-
-function buildAuditRows(queue) {
-  const base = queue.map((q) => ({
-    id: q.transactionId,
-    auditId: q.auditId,
-    time: ['14:21:08', '13:58:42', '13:31:19', '12:47:55', '11:58:03', '11:19:47', '10:52:14', '10:11:08', '09:48:33', '09:21:55', '08:59:20', '08:34:01'][Math.floor(Math.random() * 12)] || '08:00:00',
-    amount: q.amount,
-    score: q.stage === 'PRE_RULE' ? null : q.championScore,
-    decision: 'DECLINE',
-    reasons: q.reasonCodes,
-    overridden: false,
-  }));
-  const extras = [
-    { id: '9f0a3e52-1c6b-77ed-9b3c-2a4f8e0c5e91', auditId: 'aud_90178', time: '13:31:19', amount: 450000, score: 0.48, decision: 'REVIEW', reasons: ['RULE', 'borderline'], overridden: true },
-    { id: '7c4a82b1-d3f0-4c91-aa15-c8f1e0a44b91', auditId: 'aud_90177', time: '12:47:55', amount: 670000, score: 0.78, decision: 'ACCEPT', reasons: ['AMT_HIGH', 'PAGERANK'], overridden: true },
-    { id: '2c87f30b-91d4-49a3-8e02-44ff9180c001', auditId: 'aud_90176', time: '11:19:47', amount: 38200, score: 0.71, decision: 'DECLINE', reasons: ['CLUSTER', 'HOUR'], overridden: false },
-  ];
-  return [...base, ...extras].sort((a, b) => (a.time < b.time ? 1 : -1));
 }
 
 export default AuditLog;

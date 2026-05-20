@@ -17,11 +17,10 @@ frontend/
     main.jsx              # React 18 root
     app.jsx               # routing + shared state + tweaks panel
     styles.css            # design tokens, sidebar, panels, pills, modals
-    api/client.js         # /v1 (RDA) + /fia (FIA) calls with mock fallback
+    api/client.js         # /v1 (RDA) + /fia (FIA) calls with empty fallback
     components/
       shell.jsx           # Ti, Sidebar, PageHead, Modal, useToasts, helpers
       tweaks-panel.jsx    # floating tweak controls (accent / density / dark)
-    data/mock.js          # seed data so the dashboard demos offline
     pages/
       dashboard.jsx
       live-decisions.jsx
@@ -85,17 +84,19 @@ localStorage.setItem('sentinel.apiKey', 'fdk_…');
 
 Full auth model: [`../docs/AUTHZ.md`](../docs/AUTHZ.md).
 
-## Offline / demo mode
+## Offline behaviour
 
-Every API call in `src/api/client.js` is wrapped in `safe()`. If the
-backing service is unreachable (network error, 401, 500) the call returns
-the corresponding slice of `src/data/mock.js` so the design can be
-demoed without the full stack running. Force the mock path explicitly
-with:
+Every read in `src/api/client.js` is wrapped in `safe(live, fallback)`,
+where `fallback` is always an empty value (`[]`, `{ rows: [], total: 0 }`,
+`null`). When backends are unreachable the dashboard renders empty states
+and a persistent `OFFLINE` banner — it **never displays synthetic data**.
+The `mock.js` seed dataset and the `sentinel.useMock` override were
+removed in May 2026; adopters were confused by fake credentials and
+fraud rows appearing the moment the backend was just unreachable.
 
-```js
-localStorage.setItem('sentinel.useMock', '1');
-```
+Write calls (issue key, save rule, register model, …) do not use
+`safe`: they try the real call, catch failures locally, surface a toast,
+and leave the form unchanged so the operator can retry.
 
 ## Tests
 

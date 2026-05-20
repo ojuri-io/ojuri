@@ -342,12 +342,18 @@ key, save rule, register model, set model status, subscribe webhook,
 override a decision, request an investigation report, post a follow-up
 message. The dashboard never sits on the prediction hot path.
 
-**Demo-mode behaviour.** Every read in `frontend/src/api/client.js` is
-wrapped in `safe(live, fallback)` so the SPA stays demoable when the
-backend is offline or returns 401 — the call returns the corresponding
-slice of `frontend/src/data/mock.js`. Write calls (issue key, save rule,
-…) do not use `safe`; they `try` the real call, catch failures locally,
-and update React state regardless so the UI keeps moving.
+**Offline behaviour.** Every read in `frontend/src/api/client.js` is
+wrapped in `safe(live, fallback)`, where `fallback` is always an empty
+value (`[]`, `{ rows: [], total: 0 }`, `null`). When backends are
+unreachable the dashboard shows empty states and a persistent
+`OFFLINE` banner (`frontend/src/app.jsx`); it never displays synthetic
+data. Write calls (issue key, save rule, …) do not use `safe`; they
+try the real call, catch failures locally, surface a toast, and leave
+the form in its previous state so the operator can retry. The previous
+`mock.js` seed dataset and the `sentinel.useMock` localStorage override
+were removed in May 2026 — adopters were confused by fake credentials
+and fraud rows showing up on Integrations / Review queue when the
+backend was just unreachable.
 
 **Failure mode.** None on the decision path. If the dashboard is down,
 the platform continues to score transactions; operators lose their
