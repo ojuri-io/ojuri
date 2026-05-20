@@ -50,3 +50,18 @@ models/fraud_model_*.onnx
 models/fraud_model_*_scaler.npz
 models/fraud_model_*.json
 models/versions/
+
+# Logs
+*.log
+
+# Test coverage
+.nyc_output/
+htmlcov/
+
+# Build outputs
+build/
+
+# OS / editor cruft
+Thumbs.db
+*.swp
+*.swo

@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Security vulnerability
+    url: https://github.com/ojuri-io/ojuri/security/advisories/new
+    about: For security issues, use Security Advisories — NOT public issues.
+  - name: Question or discussion
+    url: https://github.com/ojuri-io/ojuri/discussions
+    about: For general questions, use Discussions.
