@@ -183,7 +183,8 @@ Full system notes, per-service responsibilities, and data-flow diagrams live in
 - [Idempotency](docs/IDEMPOTENCY.md) — `Idempotency-Key` semantics on `/v1/predict`
 - [FIA HTTP API](docs/FIA-API.md) — on-demand reports and follow-up messages
 - [Sentinel frontend](docs/FRONTEND.md) — layout, auth, offline demo mode
-- [Roadmap and adoption features](IMPROVEMENTS.md) — what's shipped vs. follow-up
+- [Roadmap](ROADMAP.md) — what's planned next, what's out of scope
+- [Changelog](CHANGELOG.md) — per-release history
 - Service-level READMEs: [`paa-service/`](paa-service/), [`mla-service/`](mla-service/README.md), [`fia-service/`](fia-service/README.md), [`frontend/`](frontend/README.md)
 
 ---
@@ -196,11 +197,11 @@ per-segment thresholds, decision audit log with inline reason codes, HMAC-signed
 webhooks, idempotency keys, FIA on-demand reports and conversational follow-ups,
 synthetic-data and replay CLIs, the Sentinel dashboard.
 
-Scoped follow-ups (see [`IMPROVEMENTS.md`](IMPROVEMENTS.md)): Helm chart and
-Terraform module, TypeScript and Python client SDKs, champion/challenger
-automated promotion, canary traffic split by API-key cohort, PII tokenisation
-hooks, mTLS for service-to-service callers, OAuth 2.0 client-credentials grant,
-pre-built connectors (Stripe / Adyen / Plaid).
+Scoped follow-ups (see [`ROADMAP.md`](ROADMAP.md)): Helm chart and Terraform
+module, TypeScript and Python client SDKs, canary traffic split by API-key
+cohort, PII tokenisation hooks, mTLS for service-to-service callers,
+OAuth 2.0 client-credentials grant, pre-built connectors (Stripe / Adyen /
+Plaid), demo dataset, hosted sandbox.
 
 Performance numbers in this README are orientation values measured on a single
 Apple Silicon developer workstation, not SLA targets — re-measure on your own

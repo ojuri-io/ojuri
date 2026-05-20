@@ -641,9 +641,10 @@ F1 / AUC there is the honest signal.
 - [`fia-service/README.md`](../fia-service/README.md)
 - [`frontend/README.md`](../frontend/README.md)
 
-### Roadmap
+### Roadmap and history
 
-- [`IMPROVEMENTS.md`](../IMPROVEMENTS.md) — what shipped in the current
-  revision, what's scoped as follow-up (Helm / Terraform, client SDKs,
-  champion-challenger automation, canary by API-key cohort, PII
-  tokenisation, mTLS, OAuth 2.0 client-credentials, pre-built connectors).
+- [`ROADMAP.md`](../ROADMAP.md) — what's planned next (Helm / Terraform,
+  client SDKs, canary by API-key cohort, PII tokenisation, mTLS,
+  OAuth 2.0 client-credentials, pre-built connectors, demo dataset,
+  hosted sandbox) and what's deliberately out of scope.
+- [`CHANGELOG.md`](../CHANGELOG.md) — per-release history.

@@ -20,5 +20,5 @@ to wire one capability up. For architecture-level notes, see
 | [`FIA-API.md`](FIA-API.md)                | On-demand investigation reports and conversational follow-ups.         |
 | [`FRONTEND.md`](FRONTEND.md)              | Sentinel operator dashboard — layout, auth, offline mode, extending.   |
 
-For the high-level feature catalogue (with what's implemented vs
-follow-up), see [`../IMPROVEMENTS.md`](../IMPROVEMENTS.md).
+For what's planned next, see [`../ROADMAP.md`](../ROADMAP.md). For the
+per-release history, see [`../CHANGELOG.md`](../CHANGELOG.md).
