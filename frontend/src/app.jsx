@@ -104,8 +104,9 @@ function App() {
   // Auth state. `null` = still checking the stored token; an object = logged in;
   // `false` = not logged in (show the Login page).
   const [authUser, setAuthUser] = useState(null);
-  // Connection status for the mock/live banner. 'live' = /v1/auth/me succeeded;
-  // 'mock' = at least one hydration call fell back to seed data; 'checking' = boot.
+  // Connection status banner. 'live' = /v1/auth/me succeeded; 'offline' =
+  // the admin probe failed and every page is rendering its empty state;
+  // 'checking' = still booting, render nothing.
   const [connection, setConnection] = useState('checking');
 
   // On mount: if we have a stored JWT, validate it against /v1/auth/me.
@@ -248,9 +249,10 @@ function AuthenticatedApp({ user, connection, setConnection, onLogout }) {
   }, []);
 
   // Hydration. We track whether *any* read came back from the live API
-  // (vs the safe() fallback) so the mock/live banner is accurate. The
-  // `client.js` `safe()` wrapper swallows errors and returns the empty fallback; here
-  // we re-fetch the bare endpoint just to learn the HTTP status.
+  // (vs the safe() empty fallback) so the live/offline banner is accurate.
+  // The `client.js` `safe()` wrapper swallows errors and returns the empty
+  // fallback; here we re-fetch the bare endpoint just to learn the HTTP
+  // status.
   useEffect(() => {
     let cancelled = false;
     (async () => {
@@ -258,7 +260,7 @@ function AuthenticatedApp({ user, connection, setConnection, onLogout }) {
         headers: { authorization: `Bearer ${localStorage.getItem('sentinel.jwt') || ''}` },
       }).catch(() => null);
       if (cancelled) return;
-      setConnection(probe && probe.ok ? 'live' : 'mock');
+      setConnection(probe && probe.ok ? 'live' : 'offline');
 
       const [m, r, k, w, rep] = await Promise.all([
         listModels(),
@@ -487,7 +489,7 @@ function ConnectionBanner({ connection }) {
       </div>
     );
   }
-  if (connection === 'mock') {
+  if (connection === 'offline') {
     return (
       <div
         title="The RDA backend is unreachable or unauthorised — pages are rendering their empty state instead of fake rows"

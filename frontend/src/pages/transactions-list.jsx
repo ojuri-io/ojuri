@@ -4,8 +4,8 @@
 // (`from`, `to`, `decision=A,B`, `search`, `overridden`, `limit`, `offset`).
 // Filter chips and date-range commit only when the user explicitly acts —
 // chip click for decision, Enter / blur for search, "Apply" button for
-// the date range. The synthetic in-memory pool is kept as a fallback when
-// the backend is unreachable.
+// the date range. When the API is unreachable the page renders its empty
+// state — no synthetic rows.
 
 import React, { useState, useEffect, useMemo } from 'react';
 import { Ti, PageHead, fmtNaira, fmtAge, truncId } from '../components/shell.jsx';
@@ -183,49 +183,37 @@ function TransactionsList({ toast, nav, queue }) {
   // CSV export. Pulls the same filters the table is currently showing
   // (without limit/offset so we get every match up to the cap). The
   // button shows progress while we page through, then triggers a Blob
-  // download. Fallback rows are exported client-side when the API is
-  // unreachable — same shape, just from the in-memory list.
+  // download. When the API call fails we surface a toast rather than
+  // exporting anything — there's no synthetic row set to fall back to.
   const exportCsv = async () => {
     if (exporting) return;
     setExporting(true);
     setExportProgress(0);
     try {
       const filenameBase = `transactions-${new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19)}`;
-      if (rows && !usedFallback) {
-        const filters = {
-          search: search || undefined,
-          from: range.from || undefined,
-          to: range.to || undefined,
-          decision: decision === 'ALL' || decision === 'OVERRIDDEN' ? undefined : [decision],
-          overridden: decision === 'OVERRIDDEN' ? true : undefined,
-        };
-        const { rows: all, total: matched, truncated } = await exportTransactions(filters, {
-          maxRows: 5000,
-          pageSize: 500,
-          onProgress: (loaded) => setExportProgress(loaded),
-        });
-        downloadBlob(`${filenameBase}.csv`, 'text/csv;charset=utf-8', toCsv(all));
-        toast(
-          truncated
-            ? `Exported first ${all.length.toLocaleString()} of ${matched.toLocaleString()} rows`
-            : `Exported ${all.length.toLocaleString()} rows`,
-          'success',
-        );
-      } else {
-        const fallbackForExport = localFiltered.map((r) => ({
-          createdAt: r.ageLabel,
-          transactionId: r.id,
-          auditId: r.auditId,
-          senderId: r.sender,
-          receiverId: r.receiver,
-          amount: r.amount,
-          transactionType: r.txnType,
-          finalDecision: r.decision,
-          championScore: r.score,
-        }));
-        downloadBlob(`${filenameBase}-mock.csv`, 'text/csv;charset=utf-8', toCsv(fallbackForExport));
-        toast(`Exported ${fallbackForExport.length} rows (mock — API unreachable)`, 'warn');
+      const filters = {
+        search: search || undefined,
+        from: range.from || undefined,
+        to: range.to || undefined,
+        decision: decision === 'ALL' || decision === 'OVERRIDDEN' ? undefined : [decision],
+        overridden: decision === 'OVERRIDDEN' ? true : undefined,
+      };
+      const { rows: all, total: matched, truncated } = await exportTransactions(filters, {
+        maxRows: 5000,
+        pageSize: 500,
+        onProgress: (loaded) => setExportProgress(loaded),
+      });
+      if (!all.length) {
+        toast('Nothing to export — the current filters returned no rows', 'warn');
+        return;
       }
+      downloadBlob(`${filenameBase}.csv`, 'text/csv;charset=utf-8', toCsv(all));
+      toast(
+        truncated
+          ? `Exported first ${all.length.toLocaleString()} of ${matched.toLocaleString()} rows`
+          : `Exported ${all.length.toLocaleString()} rows`,
+        'success',
+      );
     } catch (err) {
       toast(`Export failed · ${String(err.message || err)}`, 'danger');
     } finally {
