@@ -128,26 +128,26 @@ function LiveDecisions({ nav }) {
               />
               <p className="label-up" style={{ margin: 0 }}>{paused ? 'PAUSED' : 'LIVE'}</p>
             </div>
-            <p style={{ margin: 0, fontSize: 22, fontWeight: 500 }}>
+            <p className="stat-display sm" style={{ margin: 0 }}>
               {windowRows.length ? rps.toFixed(1) : '—'}
-              <span style={{ fontSize: 11, fontWeight: 400, color: 'var(--color-text-secondary)', marginLeft: 4 }}>decisions/sec</span>
+              <span style={{ fontFamily: 'var(--font-body)', fontSize: 12, fontWeight: 400, color: 'var(--ink-muted)', marginLeft: 6 }}>decisions/sec</span>
             </p>
           </div>
           <div>
-            <p className="label-up" style={{ margin: '0 0 4px' }}>ACCEPT RATE</p>
-            <p style={{ margin: 0, fontSize: 18, fontWeight: 500 }}>
+            <p className="label-up" style={{ margin: '0 0 6px' }}>Accept rate</p>
+            <p className="stat-display sm" style={{ margin: 0 }}>
               {acceptRate == null ? '—' : `${acceptRate.toFixed(1)}%`}
             </p>
           </div>
           <div>
-            <p className="label-up" style={{ margin: '0 0 4px' }}>p95 LATENCY</p>
-            <p style={{ margin: 0, fontSize: 18, fontWeight: 500 }}>
-              {p95Latency == null ? '—' : <>{p95Latency.toFixed(1)}<span style={{ fontSize: 11, color: 'var(--color-text-secondary)', marginLeft: 2 }}>ms</span></>}
+            <p className="label-up" style={{ margin: '0 0 6px' }}>p95 latency</p>
+            <p className="stat-display sm" style={{ margin: 0 }}>
+              {p95Latency == null ? '—' : <>{p95Latency.toFixed(1)}<span style={{ fontFamily: 'var(--font-body)', fontSize: 12, fontWeight: 400, color: 'var(--ink-muted)', marginLeft: 4 }}>ms</span></>}
             </p>
           </div>
           <div>
-            <p className="label-up" style={{ margin: '0 0 4px' }}>SINCE START</p>
-            <p style={{ margin: 0, fontSize: 18, fontWeight: 500 }}>{totalSinceStart.toLocaleString()}</p>
+            <p className="label-up" style={{ margin: '0 0 6px' }}>Since start</p>
+            <p className="stat-display sm" style={{ margin: 0 }}>{totalSinceStart.toLocaleString()}</p>
           </div>
         </div>
 

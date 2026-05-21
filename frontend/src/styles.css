@@ -1,76 +1,99 @@
+/*
+ * Sentinel dashboard styles.
+ *
+ * Tokens are layered: the canonical Ojuri brand tokens live in tokens.css
+ * (--stone-*, --ink, --surface, --chart-*, --font-display/body/code). The
+ * legacy --color-* and --font-* variables below are kept as compatibility
+ * aliases so the hundreds of inline `var(--color-*)` references inside the
+ * pages keep working — they now resolve to the Stone/chart palette.
+ *
+ * When touching this file, prefer adding new component styles that reference
+ * the Ojuri tokens directly. Component classes (.nav-item.active, .pill, …)
+ * are overridden at the bottom of this file to match the brand even where
+ * the alias mapping alone is insufficient.
+ */
+
 :root {
+  /* ─── Legacy aliases → Ojuri tokens ───
+     Old "info" tone was a blue accent; it now neutralises to the Stone scale
+     so the sidebar / focused-row hints read as quiet ink hits rather than a
+     coloured highlight. Per-class overrides further down handle the cases
+     where the old token mapping isn't what the brand wants (e.g. .info-bg). */
+
   /* Backgrounds */
-  --color-background-primary: #ffffff;
-  --color-background-secondary: #f5f5f4;
-  --color-background-tertiary: #ebebe9;
-  --color-background-info: #e8edff;
-  --color-background-success: #e3f6ea;
-  --color-background-danger: #fce5e7;
-  --color-background-warning: #fbf2dd;
+  --color-background-primary:   var(--surface);             /* cream #FAF6F0 */
+  --color-background-secondary: var(--surface-alt);         /* raised #F0EBE2 */
+  --color-background-tertiary:  var(--stone-300);
+  --color-background-info:      var(--surface-alt);         /* used by .nav-item.active */
+  --color-background-success:   color-mix(in srgb, var(--chart-allow) 12%, transparent);
+  --color-background-danger:    color-mix(in srgb, var(--chart-decline) 12%, transparent);
+  --color-background-warning:   color-mix(in srgb, var(--chart-review) 12%, transparent);
 
   /* Text */
-  --color-text-primary: #1a1a1d;
-  --color-text-secondary: #585862;
-  --color-text-tertiary: #8a8a92;
-  --color-text-quaternary: #b5b5bb;
-  --color-text-info: #3a55d3;
-  --color-text-success: #1b8a52;
-  --color-text-danger: #c0364a;
-  --color-text-warning: #a76b08;
-
-  /* Borders (0.5px crisp) */
-  --color-border-tertiary: #e0e0dd;
-  --color-border-secondary: #c4c4bf;
-  --color-border-info: #aebafa;
-  --color-border-success: #9ed7b3;
-  --color-border-danger: #e9aab1;
-  --color-border-warning: #e2c785;
-}
-
-.app[data-theme="dark"] {
-  /* Backgrounds */
-  --color-background-primary: #18181b;
-  --color-background-secondary: #111114;
-  --color-background-tertiary: #232328;
-  --color-background-info: #1d2543;
-  --color-background-success: #14321f;
-  --color-background-danger: #3a1721;
-  --color-background-warning: #322309;
-
-  /* Text */
-  --color-text-primary: #ececef;
-  --color-text-secondary: #9d9da4;
-  --color-text-tertiary: #6e6e76;
-  --color-text-quaternary: #4a4a52;
-  --color-text-info: #7c95ff;
-  --color-text-success: #4dc380;
-  --color-text-danger: #f1727f;
-  --color-text-warning: #e1ad4b;
+  --color-text-primary:    var(--ink);
+  --color-text-secondary:  var(--ink-secondary);
+  --color-text-tertiary:   var(--ink-muted);
+  --color-text-quaternary: var(--ink-disabled);
+  --color-text-info:       var(--ink);                       /* neutralised accent */
+  --color-text-success:    var(--chart-allow);
+  --color-text-danger:     var(--chart-decline);
+  --color-text-warning:    var(--chart-review);
 
   /* Borders */
-  --color-border-tertiary: #2a2a30;
-  --color-border-secondary: #3a3a42;
-  --color-border-info: #303d72;
-  --color-border-success: #2a5a3c;
-  --color-border-danger: #5a2935;
-  --color-border-warning: #5a4116;
+  --color-border-tertiary:  var(--border);                   /* stone-300 */
+  --color-border-secondary: var(--stone-400);
+  --color-border-info:      var(--stone-400);
+  --color-border-success:   color-mix(in srgb, var(--chart-allow) 36%, var(--border));
+  --color-border-danger:    color-mix(in srgb, var(--chart-decline) 36%, var(--border));
+  --color-border-warning:   color-mix(in srgb, var(--chart-review) 36%, var(--border));
+}
+
+/* Dark mode placeholder. Brand spec defers dark; we keep the structure so
+   the Tweaks toggle still flips a theme, but every value mirrors a darker
+   Stone palette rather than the old saturated colours. */
+.app[data-theme="dark"] {
+  --color-background-primary:   var(--stone-900);
+  --color-background-secondary: var(--stone-800);
+  --color-background-tertiary:  var(--stone-700);
+  --color-background-info:      var(--stone-700);
+  --color-background-success:   color-mix(in srgb, var(--chart-allow) 22%, transparent);
+  --color-background-danger:    color-mix(in srgb, var(--chart-decline) 22%, transparent);
+  --color-background-warning:   color-mix(in srgb, var(--chart-review) 22%, transparent);
+
+  --color-text-primary:    var(--stone-100);
+  --color-text-secondary:  var(--stone-400);
+  --color-text-tertiary:   var(--stone-500);
+  --color-text-quaternary: var(--stone-600);
+  --color-text-info:       var(--stone-100);
+  --color-text-success:    var(--chart-allow);
+  --color-text-danger:     var(--chart-decline);
+  --color-text-warning:    var(--chart-review);
+
+  --color-border-tertiary:  var(--stone-700);
+  --color-border-secondary: var(--stone-600);
+  --color-border-info:      var(--stone-600);
+  --color-border-success:   color-mix(in srgb, var(--chart-allow) 36%, var(--stone-700));
+  --color-border-danger:    color-mix(in srgb, var(--chart-decline) 36%, var(--stone-700));
+  --color-border-warning:   color-mix(in srgb, var(--chart-review) 36%, var(--stone-700));
 
   color-scheme: dark;
 }
 
 :root {
   /* Geometry */
-  --border-radius-sm: 4px;
-  --border-radius-md: 6px;
-  --border-radius-lg: 10px;
+  --border-radius-sm: var(--radius-sm);
+  --border-radius-md: var(--radius-md);
+  --border-radius-lg: var(--radius-lg);
 
-  /* Type */
-  --font-sans: 'Geist', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', sans-serif;
-  --font-mono: 'Geist Mono', ui-monospace, 'SF Mono', Menlo, monospace;
+  /* Legacy type aliases → Ojuri families */
+  --font-sans: var(--font-body);
+  --font-mono: var(--font-code);
 
-  --shadow-sm: 0 1px 0 rgba(20, 20, 25, 0.04), 0 1px 3px rgba(20, 20, 25, 0.04);
-  --shadow-md: 0 2px 8px -2px rgba(20, 20, 25, 0.08), 0 8px 24px -6px rgba(20, 20, 25, 0.12);
-  --shadow-lg: 0 12px 40px -8px rgba(20, 20, 25, 0.18);
+  /* Borders preferred over shadows; keep the variables for any consumer
+     still expecting them, but tone the values down. */
+  --shadow-sm: 0 1px 2px rgba(26, 22, 18, 0.04);
+  --shadow-md: 0 4px 12px rgba(26, 22, 18, 0.06);
+  --shadow-lg: 0 12px 32px rgba(26, 22, 18, 0.10);
 }
 
 * { box-sizing: border-box; }
@@ -78,80 +101,98 @@ html, body {
   margin: 0;
   padding: 0;
   height: 100%;
-  font-family: var(--font-sans);
-  background: var(--color-background-secondary);
-  color: var(--color-text-primary);
+  font-family: var(--font-body);
+  background: var(--surface);
+  color: var(--ink);
   /* Density: --font-base is written by the Tweaks panel via inline
      style on .app; fall back to 13px when the panel hasn't set it. */
   font-size: var(--font-base, 13px);
   line-height: 1.45;
-  font-feature-settings: 'cv11', 'ss01', 'ss03';
   -webkit-font-smoothing: antialiased;
   overflow: hidden;
 }
 
 #root, .app { height: 100vh; width: 100vw; }
 
-a { color: var(--color-text-info); text-decoration: none; }
-a:hover { text-decoration: underline; }
+a { color: var(--ink); text-decoration: none; }
+a:hover { color: var(--stone-700); text-decoration: underline; }
 
-code, .mono { font-family: var(--font-mono); }
-.muted { color: var(--color-text-tertiary); }
-.sec { color: var(--color-text-secondary); }
+code, .mono { font-family: var(--font-code); }
+.muted { color: var(--ink-muted); }
+.sec { color: var(--ink-secondary); }
 .tnum { font-variant-numeric: tabular-nums; }
 
-/* ──────── Buttons (defaults match Sentinel mocks) ──────── */
+/* ──────── Buttons ──────── */
 button {
   font-family: inherit;
   font-size: 12px;
   line-height: 1;
   padding: 6px 10px;
-  color: var(--color-text-primary);
-  background: var(--color-background-primary);
-  border: 0.5px solid var(--color-border-secondary);
-  border-radius: var(--border-radius-md);
+  color: var(--ink);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
   cursor: pointer;
   display: inline-flex;
   align-items: center;
   gap: 6px;
   white-space: nowrap;
-  transition: background 0.1s ease, border-color 0.1s ease;
+  transition: background 0.1s ease, border-color 0.1s ease, color 0.1s ease;
 }
-button:hover { background: var(--color-background-secondary); }
+button:hover { background: var(--surface-alt); }
 button:active { transform: translateY(0.5px); }
 button:disabled { opacity: 0.5; cursor: not-allowed; }
+
+/* Primary — ink filled, cream text. The brand's only loud button. */
 button.primary {
-  background: var(--color-text-primary);
-  color: var(--color-background-primary);
-  border-color: var(--color-text-primary);
+  background: var(--ink);
+  color: var(--surface);
+  border-color: var(--ink);
   font-weight: 500;
 }
 button.primary:hover {
-  background: color-mix(in srgb, var(--color-text-primary) 85%, var(--color-background-primary));
+  background: var(--stone-800);
+  border-color: var(--stone-800);
 }
+
+/* Secondary "info-bg" — neutral selected state (used by filter chips,
+   toggles, "Open transaction" jump). Stone-200 surface with ink text. */
 button.info-bg {
-  background: var(--color-background-info);
-  color: var(--color-text-info);
-  border-color: transparent;
+  background: var(--surface-alt);
+  color: var(--ink);
+  border-color: var(--border);
   font-weight: 500;
 }
+button.info-bg:hover { background: var(--stone-300); }
+
+/* Success-tone button — used for "Release" actions. Muted allow tint. */
 button.success-bg {
-  background: var(--color-background-success);
-  color: var(--color-text-success);
-  border-color: var(--color-border-success);
+  background: color-mix(in srgb, var(--chart-allow) 12%, transparent);
+  color: var(--chart-allow);
+  border-color: color-mix(in srgb, var(--chart-allow) 36%, var(--border));
   font-weight: 500;
 }
+button.success-bg:hover {
+  background: color-mix(in srgb, var(--chart-allow) 18%, transparent);
+}
+
+/* Destructive — outlined, never bright-red filled. */
 button.danger-bg {
-  background: var(--color-background-danger);
-  color: var(--color-text-danger);
-  border-color: var(--color-border-danger);
+  background: transparent;
+  color: var(--chart-decline);
+  border-color: color-mix(in srgb, var(--chart-decline) 48%, var(--border));
   font-weight: 500;
 }
+button.danger-bg:hover {
+  background: color-mix(in srgb, var(--chart-decline) 10%, transparent);
+  border-color: var(--chart-decline);
+}
+
 button.ghost {
   background: transparent;
   border-color: transparent;
 }
-button.ghost:hover { background: var(--color-background-secondary); }
+button.ghost:hover { background: var(--surface-alt); }
 button.icon-only {
   width: 28px;
   height: 28px;
@@ -163,27 +204,204 @@ input, select, textarea {
   font-family: inherit;
   font-size: 13px;
   padding: 6px 10px;
-  border: 0.5px solid var(--color-border-secondary);
-  border-radius: var(--border-radius-md);
-  background: var(--color-background-primary);
-  color: var(--color-text-primary);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  color: var(--ink);
   outline: none;
+  transition: border-color 0.12s ease, box-shadow 0.12s ease;
 }
+/* Focus: a quiet ink underline instead of an outer ring. Lifted from the
+   Ojuri brand preview (preview/components-inputs.html). */
 input:focus, select:focus, textarea:focus {
-  border-color: var(--color-text-info);
-  box-shadow: 0 0 0 3px rgba(58, 85, 211, 0.12);
+  border-color: var(--ink);
+  box-shadow: inset 0 -1px 0 0 var(--ink);
 }
-input::placeholder, textarea::placeholder { color: var(--color-text-quaternary); }
+input::placeholder, textarea::placeholder { color: var(--ink-disabled); }
+
+/* Native checkboxes / radios — tint the OS control to brand ink so the
+   "Auto-retrain enabled" checkbox and similar inline toggles don't slip
+   into system-default blue. */
+input[type="checkbox"],
+input[type="radio"] {
+  accent-color: var(--ink);
+}
+
+/* ──────── Date+time picker (custom, brand-themed) ────────
+   The native datetime-local control's popover isn't themable from CSS
+   (the OS paints it with system blue). DateTimePicker replaces it. */
+.dtp {
+  position: relative;
+  display: inline-block;
+  width: 100%;
+  font-family: var(--font-body);
+}
+.dtp-trigger {
+  width: 100%;
+  display: inline-flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 6px 10px;
+  font-family: var(--font-code);
+  font-size: 12px;
+  color: var(--ink);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  transition: border-color 0.12s ease;
+}
+.dtp-trigger:hover { border-color: var(--stone-400); }
+.dtp-trigger:focus { outline: none; border-color: var(--ink); box-shadow: inset 0 -1px 0 0 var(--ink); }
+.dtp-trigger--empty .dtp-trigger-text { color: var(--ink-disabled); }
+.dtp-trigger-icon {
+  color: var(--ink-muted);
+  font-size: 10px;
+  line-height: 1;
+  flex-shrink: 0;
+}
+.dtp-pop {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  z-index: 50;
+  width: 260px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-card);
+  padding: 10px;
+  font-family: var(--font-body);
+}
+.dtp-pop--right { left: auto; right: 0; }
+.dtp-pop-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 8px;
+}
+.dtp-pop-title {
+  font-family: var(--font-display);
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--ink);
+}
+.dtp-nav {
+  width: 24px; height: 24px;
+  padding: 0;
+  font-size: 14px;
+  line-height: 1;
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--ink-secondary);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+.dtp-nav:hover { background: var(--surface-alt); color: var(--ink); }
+.dtp-grid {
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+  gap: 2px;
+}
+.dtp-grid--weekdays { margin-bottom: 4px; }
+.dtp-weekday {
+  font-family: var(--font-body);
+  font-size: 10px;
+  font-weight: 500;
+  letter-spacing: var(--tracking-caps);
+  text-transform: uppercase;
+  color: var(--ink-muted);
+  text-align: center;
+  padding: 4px 0;
+}
+.dtp-day {
+  font-family: var(--font-code);
+  font-size: 12px;
+  height: 28px;
+  padding: 0;
+  background: transparent;
+  border: 1px solid transparent;
+  color: var(--ink);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  transition: background 0.06s, color 0.06s;
+}
+.dtp-day:hover { background: var(--surface-alt); }
+.dtp-day--outside { color: var(--ink-disabled); }
+.dtp-day--today { border-color: var(--stone-400); }
+.dtp-day--selected,
+.dtp-day--selected:hover {
+  background: var(--ink);
+  color: var(--surface);
+  border-color: var(--ink);
+}
+.dtp-time {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px solid var(--border);
+}
+.dtp-time-label {
+  font-family: var(--font-body);
+  font-size: 10px;
+  font-weight: 500;
+  letter-spacing: var(--tracking-caps);
+  text-transform: uppercase;
+  color: var(--ink-muted);
+  margin-right: 4px;
+}
+.dtp-time-input {
+  width: 36px;
+  padding: 4px 6px;
+  font-family: var(--font-code);
+  font-size: 12px;
+  text-align: center;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  color: var(--ink);
+}
+.dtp-time-input:focus {
+  outline: none;
+  border-color: var(--ink);
+  box-shadow: inset 0 -1px 0 0 var(--ink);
+}
+.dtp-time-sep { color: var(--ink-muted); font-family: var(--font-code); }
+.dtp-pop-foot {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px solid var(--border);
+}
+.dtp-foot-btn {
+  padding: 4px 10px;
+  font-size: 12px;
+  font-weight: 500;
+  background: transparent;
+  border: 1px solid transparent;
+  color: var(--ink-secondary);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+}
+.dtp-foot-btn:hover { background: var(--surface-alt); color: var(--ink); }
 
 kbd {
-  font-family: var(--font-mono);
+  font-family: var(--font-code);
   font-size: 10px;
   padding: 1px 5px;
-  border: 0.5px solid var(--color-border-secondary);
+  border: 1px solid var(--border);
   border-bottom-width: 1.5px;
   border-radius: 3px;
-  background: var(--color-background-primary);
-  color: var(--color-text-secondary);
+  background: var(--surface);
+  color: var(--ink-secondary);
   line-height: 1.4;
 }
 
@@ -191,52 +409,57 @@ kbd {
 .app {
   display: grid;
   grid-template-columns: 208px 1fr;
-  background: var(--color-background-secondary);
+  background: var(--surface);
 }
 
 .sidebar {
-  background: var(--color-background-primary);
-  border-right: 0.5px solid var(--color-border-tertiary);
+  background: var(--surface);
+  border-right: 1px solid var(--border);
   display: flex;
   flex-direction: column;
   padding: 14px 10px;
   gap: 14px;
   min-height: 0;
 }
+
+/* Brand wordmark — Ojuri / sentinel, inline on a single baseline. */
 .brand {
   display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 4px 6px;
+  align-items: baseline;
+  gap: 6px;
+  padding: 8px 6px 12px;
+  border-bottom: 1px solid var(--border);
+  margin-bottom: 4px;
 }
-.brand-icon {
-  width: 26px; height: 26px;
-  border-radius: 7px;
-  background: var(--color-background-info);
-  color: var(--color-text-info);
-  display: flex; align-items: center; justify-content: center;
-}
-.brand-name {
-  font-size: 15px;
-  font-weight: 500;
+.brand-mark {
+  font-family: var(--font-display);
+  font-weight: 600;
+  font-size: 22px;
+  line-height: 1;
+  color: var(--ink);
   letter-spacing: -0.01em;
 }
-.brand-env {
-  margin-left: auto;
-  font-family: var(--font-mono);
-  font-size: 9px;
-  color: var(--color-text-success);
-  background: var(--color-background-success);
-  padding: 2px 6px;
-  border-radius: 3px;
-  letter-spacing: 0.04em;
+.brand-sep {
+  font-family: var(--font-body);
+  font-size: 16px;
+  font-weight: 400;
+  line-height: 1;
+  color: var(--ink-disabled);
+}
+.brand-sub {
+  font-family: var(--font-code);
+  font-size: 13px;
+  line-height: 1;
+  color: var(--ink-muted);
 }
 
 .nav-section-label {
+  font-family: var(--font-body);
   font-size: 10px;
   font-weight: 500;
-  letter-spacing: 0.08em;
-  color: var(--color-text-tertiary);
+  letter-spacing: var(--tracking-caps);
+  text-transform: uppercase;
+  color: var(--ink-muted);
   padding: 0 8px 6px;
 }
 .nav-item {
@@ -245,30 +468,33 @@ kbd {
   gap: 8px;
   padding: 7px 8px;
   font-size: 13px;
-  color: var(--color-text-secondary);
-  border-radius: var(--border-radius-md);
+  color: var(--ink-secondary);
+  border-radius: var(--radius-sm);
+  border-left: 3px solid transparent;
   cursor: pointer;
   user-select: none;
 }
 .nav-item:hover {
-  background: var(--color-background-secondary);
-  color: var(--color-text-primary);
+  background: var(--surface-alt);
+  color: var(--ink);
 }
 .nav-item.active {
-  background: var(--color-background-info);
-  color: var(--color-text-info);
+  background: var(--stone-200);
+  color: var(--ink);
   font-weight: 500;
+  border-left-color: var(--ink);
 }
-.nav-item.disabled { color: var(--color-text-quaternary); cursor: not-allowed; }
-.nav-item.disabled:hover { background: transparent; color: var(--color-text-quaternary); }
+.nav-item.disabled { color: var(--ink-disabled); cursor: not-allowed; }
+.nav-item.disabled:hover { background: transparent; color: var(--ink-disabled); }
 .nav-count {
   margin-left: auto;
+  font-family: var(--font-code);
   font-size: 10px;
   font-weight: 500;
   padding: 1px 6px;
-  border-radius: 8px;
-  background: var(--color-background-secondary);
-  color: var(--color-text-secondary);
+  border-radius: var(--radius-pill);
+  background: var(--stone-200);
+  color: var(--ink-secondary);
   flex-shrink: 0;
 }
 .nav-item > span:not(.nav-count) {
@@ -278,17 +504,23 @@ kbd {
   min-width: 0;
   flex: 1;
 }
-.nav-count.danger { background: var(--color-background-danger); color: var(--color-text-danger); }
-.nav-count.warn { background: var(--color-background-warning); color: var(--color-text-warning); }
+.nav-count.danger {
+  background: color-mix(in srgb, var(--chart-decline) 12%, transparent);
+  color: var(--chart-decline);
+}
+.nav-count.warn {
+  background: color-mix(in srgb, var(--chart-review) 12%, transparent);
+  color: var(--chart-review);
+}
 .nav-item.active .nav-count {
-  background: rgba(255, 255, 255, 0.4);
-  color: var(--color-text-info);
+  background: var(--stone-300);
+  color: var(--ink);
 }
 
 .sidebar-foot {
   margin-top: auto;
   padding-top: 12px;
-  border-top: 0.5px solid var(--color-border-tertiary);
+  border-top: 1px solid var(--border);
   display: flex;
   align-items: center;
   gap: 8px;
@@ -296,8 +528,8 @@ kbd {
 .avatar {
   width: 28px; height: 28px;
   border-radius: 50%;
-  background: var(--color-background-info);
-  color: var(--color-text-info);
+  background: var(--stone-200);
+  color: var(--ink);
   font-size: 11px;
   font-weight: 500;
   display: flex;
@@ -320,9 +552,9 @@ kbd {
   padding: 16px 18px 24px;
 }
 .page-shell {
-  border: 0.5px solid var(--color-border-tertiary);
-  border-radius: var(--border-radius-lg);
-  background: var(--color-background-secondary);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface);
   padding: 16px 18px;
 }
 .page-head {
@@ -330,7 +562,7 @@ kbd {
   align-items: flex-start;
   justify-content: space-between;
   gap: 12px;
-  margin-bottom: 14px;
+  margin-bottom: 20px;
 }
 .page-head > div:first-child {
   flex: 1;
@@ -338,31 +570,37 @@ kbd {
 }
 .crumbs {
   font-size: 11px;
-  color: var(--color-text-tertiary);
-  margin-bottom: 3px;
+  letter-spacing: var(--tracking-caps);
+  text-transform: uppercase;
+  color: var(--ink-muted);
+  margin-bottom: 6px;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
 }
-.crumbs .sep { padding: 0 4px; }
+.crumbs .sep { padding: 0 4px; color: var(--ink-disabled); }
 .page-head h1 {
   margin: 0;
-  font-size: 20px;
-  font-weight: 500;
-  letter-spacing: -0.015em;
+  font-family: var(--font-display);
+  font-size: 36px;
+  line-height: 1.15;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  color: var(--ink);
 }
 .page-head .sub {
-  margin: 4px 0 0;
-  font-size: 12px;
-  color: var(--color-text-secondary);
+  margin: 6px 0 0;
+  font-size: 14px;
+  color: var(--ink-secondary);
+  font-family: var(--font-body);
 }
 .head-actions { display: flex; align-items: center; gap: 6px; flex-shrink: 0; }
 
 /* ──────── Cards & panels ──────── */
 .panel {
-  background: var(--color-background-primary);
-  border: 0.5px solid var(--color-border-tertiary);
-  border-radius: var(--border-radius-lg);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
   padding: 14px 16px;
 }
 .panel-head {
@@ -381,11 +619,18 @@ kbd {
 }
 .panel-head h2 {
   margin: 0;
-  font-size: 14px;
-  font-weight: 500;
+  font-family: var(--font-body);
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--ink);
+  letter-spacing: 0;
   white-space: nowrap;
 }
-.panel-head h2.lg { font-size: 15px; }
+.panel-head h2.lg {
+  font-family: var(--font-display);
+  font-size: 22px;
+  font-weight: 600;
+}
 
 /* ──────── Pills ──────── */
 .pill {
@@ -395,25 +640,92 @@ kbd {
   font-size: 10px;
   font-weight: 500;
   padding: 2px 7px;
-  border-radius: var(--border-radius-md);
-  letter-spacing: 0.02em;
-  background: var(--color-background-secondary);
-  color: var(--color-text-secondary);
+  border-radius: var(--radius-sm);
+  letter-spacing: var(--tracking-caps);
+  background: var(--stone-200);
+  color: var(--ink-secondary);
   white-space: nowrap;
   line-height: 1.4;
-  font-family: var(--font-mono);
+  font-family: var(--font-code);
 }
-.pill.info { background: var(--color-background-info); color: var(--color-text-info); }
-.pill.success { background: var(--color-background-success); color: var(--color-text-success); }
-.pill.danger { background: var(--color-background-danger); color: var(--color-text-danger); }
-.pill.warn { background: var(--color-background-warning); color: var(--color-text-warning); }
-.pill.round { border-radius: 10px; padding: 1px 7px; }
-.pill.sans { font-family: var(--font-sans); }
+.pill.info {
+  background: var(--stone-200);
+  color: var(--ink);
+}
+.pill.success {
+  background: color-mix(in srgb, var(--chart-allow) 12%, transparent);
+  color: var(--chart-allow);
+}
+.pill.danger {
+  background: color-mix(in srgb, var(--chart-decline) 12%, transparent);
+  color: var(--chart-decline);
+}
+.pill.warn {
+  background: color-mix(in srgb, var(--chart-review) 12%, transparent);
+  color: var(--chart-review);
+}
+.pill.round { border-radius: var(--radius-pill); padding: 1px 7px; }
+.pill.sans { font-family: var(--font-body); letter-spacing: 0; }
 .pill.dot::before {
   content: '';
   width: 5px; height: 5px;
   background: currentColor;
   border-radius: 50%;
+}
+
+/* Verdict pill — heavyweight variant for hero verdict displays in case
+   files. Lifted from the Ojuri brand preview (components-tags.html).
+   Adds a 1px chart-colour border and darkens text against an 8% tint.
+   Use sparingly: dense tables should keep the plain `.pill.success/danger/warn`. */
+.pill.verdict {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 24px;
+  padding: 0 10px;
+  font-size: 11px;
+  font-weight: 500;
+  border-radius: var(--radius-pill);
+  border: 1px solid;
+  letter-spacing: 0;
+}
+.pill.verdict::before {
+  content: '';
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: currentColor;
+  flex-shrink: 0;
+}
+.pill.verdict.success {
+  border-color: var(--chart-allow);
+  color: color-mix(in srgb, var(--chart-allow) 70%, var(--ink) 30%);
+  background: color-mix(in srgb, var(--chart-allow) 8%, transparent);
+}
+.pill.verdict.danger {
+  border-color: var(--chart-decline);
+  color: color-mix(in srgb, var(--chart-decline) 70%, var(--ink) 30%);
+  background: color-mix(in srgb, var(--chart-decline) 8%, transparent);
+}
+.pill.verdict.warn {
+  border-color: var(--chart-review);
+  color: color-mix(in srgb, var(--chart-review) 70%, var(--ink) 30%);
+  background: color-mix(in srgb, var(--chart-review) 8%, transparent);
+}
+
+/* Editorial stat — Source Serif at 36px for the main number in a metric
+   tile, paired with a small eyebrow label. Lifted from the brand-preview
+   card spec (components-cards.html). */
+.stat-display {
+  font-family: var(--font-display);
+  font-size: 36px;
+  line-height: 1;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  color: var(--ink);
+}
+.stat-display.sm {
+  font-size: 28px;
 }
 
 /* ──────── Tables ──────── */
@@ -425,71 +737,73 @@ kbd {
      been migrated to use the same variable so density applies there
      too. */
   padding: var(--row-pad-y, 9px) 0;
-  border-bottom: 0.5px solid var(--color-border-tertiary);
+  border-bottom: 1px solid var(--border);
   align-items: center;
 }
 .row-grid:last-child { border-bottom: none; }
 .row-grid.header {
   font-size: 10px;
-  color: var(--color-text-tertiary);
-  letter-spacing: 0.04em;
+  font-weight: 500;
+  color: var(--ink-muted);
+  letter-spacing: var(--tracking-caps);
+  text-transform: uppercase;
   padding: calc(var(--row-pad-y, 9px) * 0.7) 0;
 }
 .row-grid.hoverable {
   cursor: pointer;
   transition: background 0.06s;
   padding: var(--row-pad-y, 9px) 6px;
-  border-radius: var(--border-radius-sm);
+  border-radius: var(--radius-sm);
 }
-.row-grid.hoverable:hover { background: var(--color-background-secondary); }
+.row-grid.hoverable:hover { background: var(--surface-alt); }
 
 .label-up {
   font-size: 10px;
-  color: var(--color-text-tertiary);
-  letter-spacing: 0.04em;
+  color: var(--ink-muted);
+  letter-spacing: var(--tracking-caps);
   text-transform: uppercase;
   font-weight: 500;
+  font-family: var(--font-body);
 }
 
 .tile {
-  background: var(--color-background-secondary);
-  border-radius: var(--border-radius-md);
+  background: var(--surface-alt);
+  border-radius: var(--radius-sm);
   padding: 8px 10px;
 }
 .tile.bordered {
-  background: var(--color-background-primary);
-  border: 0.5px solid var(--color-border-tertiary);
+  background: var(--surface);
+  border: 1px solid var(--border);
 }
 
 /* ──────── Toggle / Checkbox ──────── */
 .toggle {
   width: 26px; height: 14px;
-  background: var(--color-background-tertiary);
+  background: var(--stone-300);
   border-radius: 8px;
   position: relative;
   cursor: pointer;
   flex-shrink: 0;
   transition: background 0.12s;
-  border: 0.5px solid var(--color-border-secondary);
+  border: 1px solid var(--border);
 }
 .toggle::after {
   content: '';
   position: absolute;
   top: 1px; left: 1px;
   width: 10px; height: 10px;
-  background: white;
+  background: var(--surface);
   border-radius: 50%;
-  box-shadow: 0 1px 1px rgba(0,0,0,0.15);
   transition: transform 0.12s;
 }
-.toggle.on { background: var(--color-text-info); border-color: var(--color-text-info); }
+.toggle.on { background: var(--ink); border-color: var(--ink); }
 .toggle.on::after { transform: translateX(11px); }
 
 .checkbox {
   width: 14px; height: 14px;
-  border: 0.5px solid var(--color-border-secondary);
+  border: 1px solid var(--border);
   border-radius: 3px;
-  background: var(--color-background-primary);
+  background: var(--surface);
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -498,32 +812,40 @@ kbd {
   font-size: 10px;
 }
 .checkbox.checked {
-  background: var(--color-text-info);
-  border-color: var(--color-text-info);
-  color: white;
+  background: var(--ink);
+  border-color: var(--ink);
+  color: var(--surface);
 }
 
 /* ──────── Modal ──────── */
 .modal-bg {
   position: fixed; inset: 0;
-  background: rgba(20, 20, 25, 0.4);
+  background: rgba(26, 22, 18, 0.45);
   display: flex; align-items: center; justify-content: center;
   z-index: 100;
-  backdrop-filter: blur(2px);
 }
 .modal {
-  background: var(--color-background-primary);
-  border: 0.5px solid var(--color-border-tertiary);
-  border-radius: var(--border-radius-lg);
-  box-shadow: var(--shadow-lg);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
   max-width: 480px;
   width: 90%;
 }
-.modal-head { padding: 14px 16px 12px; border-bottom: 0.5px solid var(--color-border-tertiary); }
-.modal-head h3 { margin: 0; font-size: 15px; font-weight: 500; }
-.modal-head p { margin: 3px 0 0; font-size: 12px; color: var(--color-text-secondary); }
+.modal-head { padding: 14px 16px 12px; border-bottom: 1px solid var(--border); }
+.modal-head h3 {
+  margin: 0;
+  font-family: var(--font-display);
+  font-size: 20px;
+  font-weight: 600;
+  color: var(--ink);
+}
+.modal-head p {
+  margin: 4px 0 0;
+  font-size: 13px;
+  color: var(--ink-secondary);
+}
 .modal-body { padding: 14px 16px; }
-.modal-foot { padding: 12px 16px; border-top: 0.5px solid var(--color-border-tertiary); display: flex; justify-content: flex-end; gap: 6px; }
+.modal-foot { padding: 12px 16px; border-top: 1px solid var(--border); display: flex; justify-content: flex-end; gap: 6px; }
 
 /* ──────── Toast ──────── */
 .toast-host {
@@ -536,21 +858,32 @@ kbd {
   z-index: 1000;
 }
 .toast {
-  background: var(--color-text-primary);
-  color: var(--color-background-primary);
+  background: var(--ink);
+  color: var(--surface);
   padding: 9px 14px;
-  border-radius: var(--border-radius-md);
+  border-radius: var(--radius-sm);
   font-size: 12px;
-  box-shadow: var(--shadow-md);
   max-width: 340px;
   display: flex;
   align-items: center;
   gap: 8px;
   animation: slideIn 0.16s ease-out;
 }
-.toast.success { background: var(--color-text-success); }
-.toast.danger { background: var(--color-text-danger); }
-.toast.warn { background: var(--color-text-warning); }
+.toast.success {
+  background: var(--surface);
+  color: var(--chart-allow);
+  border: 1px solid color-mix(in srgb, var(--chart-allow) 48%, var(--border));
+}
+.toast.danger {
+  background: var(--surface);
+  color: var(--chart-decline);
+  border: 1px solid color-mix(in srgb, var(--chart-decline) 48%, var(--border));
+}
+.toast.warn {
+  background: var(--surface);
+  color: var(--chart-review);
+  border: 1px solid color-mix(in srgb, var(--chart-review) 48%, var(--border));
+}
 @keyframes slideIn {
   from { opacity: 0; transform: translateX(20px); }
   to { opacity: 1; transform: translateX(0); }
@@ -561,33 +894,45 @@ kbd {
   display: flex;
   gap: 10px;
   padding: 11px 14px;
-  border-radius: var(--border-radius-md);
+  border-radius: var(--radius-sm);
   align-items: flex-start;
   font-size: 12px;
-  border: 0.5px solid var(--color-border-tertiary);
-  background: var(--color-background-secondary);
-  color: var(--color-text-primary);
+  border: 1px solid var(--border);
+  background: var(--surface-alt);
+  color: var(--ink);
 }
-.banner.info { background: color-mix(in srgb, var(--color-background-info) 70%, transparent); border-color: var(--color-border-info); color: var(--color-text-info); }
-.banner.warn { background: color-mix(in srgb, var(--color-background-warning) 60%, transparent); border-color: var(--color-border-warning); color: var(--color-text-warning); }
-.banner.danger { background: color-mix(in srgb, var(--color-background-danger) 60%, transparent); border-color: var(--color-border-danger); color: var(--color-text-danger); }
-.banner.success { background: color-mix(in srgb, var(--color-background-success) 60%, transparent); border-color: var(--color-border-success); color: var(--color-text-success); }
+.banner.info { background: var(--surface-alt); border-color: var(--border); color: var(--ink); }
+.banner.warn {
+  background: color-mix(in srgb, var(--chart-review) 10%, transparent);
+  border-color: color-mix(in srgb, var(--chart-review) 36%, var(--border));
+  color: var(--chart-review);
+}
+.banner.danger {
+  background: color-mix(in srgb, var(--chart-decline) 10%, transparent);
+  border-color: color-mix(in srgb, var(--chart-decline) 36%, var(--border));
+  color: var(--chart-decline);
+}
+.banner.success {
+  background: color-mix(in srgb, var(--chart-allow) 10%, transparent);
+  border-color: color-mix(in srgb, var(--chart-allow) 36%, var(--border));
+  color: var(--chart-allow);
+}
 .banner b { font-weight: 600; }
 .banner .b-icon { flex-shrink: 0; margin-top: 1px; }
 
 /* ──────── Scrollbar ──────── */
 ::-webkit-scrollbar { width: 10px; height: 10px; }
-::-webkit-scrollbar-thumb { background: rgba(0, 0, 0, 0.18); border-radius: 5px; border: 2px solid transparent; background-clip: padding-box; }
-::-webkit-scrollbar-thumb:hover { background-color: rgba(0, 0, 0, 0.3); background-clip: padding-box; border: 2px solid transparent; }
+::-webkit-scrollbar-thumb { background: rgba(26, 22, 18, 0.18); border-radius: 5px; border: 2px solid transparent; background-clip: padding-box; }
+::-webkit-scrollbar-thumb:hover { background-color: rgba(26, 22, 18, 0.3); background-clip: padding-box; border: 2px solid transparent; }
 ::-webkit-scrollbar-track { background: transparent; }
 
-.app[data-theme="dark"] ::-webkit-scrollbar-thumb { background: rgba(255, 255, 255, 0.18); }
-.app[data-theme="dark"] ::-webkit-scrollbar-thumb:hover { background-color: rgba(255, 255, 255, 0.3); }
+.app[data-theme="dark"] ::-webkit-scrollbar-thumb { background: rgba(250, 246, 240, 0.18); }
+.app[data-theme="dark"] ::-webkit-scrollbar-thumb:hover { background-color: rgba(250, 246, 240, 0.3); }
 
 /* ──────── Util ──────── */
 .spacer { flex: 1; }
 .row { display: flex; align-items: center; gap: 8px; }
 .col { display: flex; flex-direction: column; gap: 8px; }
 .truncate { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
-.divider { height: 0.5px; background: var(--color-border-tertiary); }
+.divider { height: 1px; background: var(--border); }
 .sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }

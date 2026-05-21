@@ -50,15 +50,12 @@ function normaliseRow(r) {
   };
 }
 
-function AuditLog({ toast, nav, rules, fromTweak, toTweak }) {
+function AuditLog({ toast, nav, rules }) {
   // Committed (applied) filters — drive the fetch.
   //
-  // We intentionally start with NO date range (and no decision /
-  // reason / flag narrowing) so the page loads "everything" on first
-  // visit. The Tweaks panel's `fromTweak` / `toTweak` are available
-  // for one-click application but are no longer auto-applied — earlier
-  // behaviour preloaded the last-7-days range, which surprised users
-  // who expected an empty filter.
+  // Start with NO date range (and no decision / reason / flag
+  // narrowing) so the page loads "everything" on first visit. The
+  // operator narrows down via the filter panel.
   const [filters, setFilters] = useState({
     from: '',
     to: '',

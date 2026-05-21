@@ -668,7 +668,7 @@ function CaseFile({ current, similar, onConfirm, onRelease, onNeedInfo, onSkip, 
           </p>
         </div>
         <div style={{display:'flex', flexDirection:'column', alignItems:'flex-end', gap:4, flexShrink:0}}>
-          <span className="pill danger" style={{padding:'3px 8px'}}>DECLINE · {isPreRule ? 'RULE' : 'ML'}</span>
+          <span className="pill verdict danger">DECLINE · {isPreRule ? 'RULE' : 'ML'}</span>
           <span className="mono" style={{fontSize:10, color:'var(--color-text-tertiary)'}}>{current.auditId}</span>
         </div>
       </div>

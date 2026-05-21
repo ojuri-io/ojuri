@@ -60,7 +60,7 @@ describe('App', () => {
       render(<App />);
     });
     expect(
-      screen.getByText('Sign in to the fraud-ops dashboard'),
+      screen.getByText('Sign in to the fraud-ops dashboard.'),
     ).toBeInTheDocument();
     expect(screen.getByLabelText(/PASSWORD/i)).toBeInTheDocument();
   });
@@ -74,23 +74,23 @@ describe('App', () => {
     });
     // /v1/auth/me resolves async — wait for the gate to swap in the dashboard.
     await waitFor(() => {
-      expect(screen.getByText('Hello, Ayo')).toBeInTheDocument();
+      expect(screen.getByText('Hello, Default')).toBeInTheDocument();
     });
     expect(
       screen.getByText("Here's what needs your attention today."),
     ).toBeInTheDocument();
   });
 
-  it('exposes the Sentinel brand and prod env tag in the sidebar once authed', async () => {
+  it('exposes the Ojuri / sentinel wordmark in the sidebar once authed', async () => {
     localStorage.setItem('sentinel.jwt', 'stored-token');
     globalThis.fetch = authedFetch();
     await act(async () => {
       render(<App />);
     });
     await waitFor(() => {
-      expect(screen.getByText('Sentinel')).toBeInTheDocument();
+      expect(screen.getByText('Ojuri')).toBeInTheDocument();
     });
-    expect(screen.getByText('prod')).toBeInTheDocument();
+    expect(screen.getByText('sentinel')).toBeInTheDocument();
   });
 
   it('navigates to Live decisions when the hash changes', async () => {
@@ -99,7 +99,7 @@ describe('App', () => {
     await act(async () => {
       render(<App />);
     });
-    await waitFor(() => screen.getByText('Hello, Ayo'));
+    await waitFor(() => screen.getByText('Hello, Default'));
     await act(async () => {
       window.location.hash = 'live';
       window.dispatchEvent(new HashChangeEvent('hashchange'));
@@ -156,7 +156,7 @@ describe('App', () => {
       fireEvent.click(screen.getByRole('button', { name: /Sign in/i }));
     });
     await waitFor(() => {
-      expect(screen.getByText('Hello, Ayo')).toBeInTheDocument();
+      expect(screen.getByText('Hello, Default')).toBeInTheDocument();
     });
     expect(localStorage.getItem('sentinel.jwt')).toBe('fresh-token');
   });

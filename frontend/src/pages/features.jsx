@@ -23,11 +23,15 @@ const SOURCE_LABEL = {
   'config:lookup': 'Lookup table',
 };
 
+// Source dot colours — drawn from the Stone scale + the dashboard chart
+// palette. The Ojuri brand reserves saturated accents for chart data;
+// these single-pixel dots in the catalogue table count as data viz, not
+// brand surface.
 const SOURCE_COLOR = {
-  'rda:request': '#3a55d3',
-  'rda:derived': '#7a5ae0',
-  'paa:redis': '#1b8a52',
-  'config:lookup': '#a76b08',
+  'rda:request': 'var(--ink)',
+  'rda:derived': 'var(--ink-secondary)',
+  'paa:redis': 'var(--chart-allow)',
+  'config:lookup': 'var(--chart-review)',
 };
 
 function Pill({ tone = 'neutral', children, title }) {

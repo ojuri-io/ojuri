@@ -28,7 +28,7 @@ const SAMPLE_TX = {
 function jsonRender(obj, depth = 0) {
   const indent = '  '.repeat(depth);
   if (obj === null) return <span style={{color:'var(--color-text-tertiary)'}}>null</span>;
-  if (typeof obj === 'boolean') return <span style={{color:'#8a4cb3'}}>{String(obj)}</span>;
+  if (typeof obj === 'boolean') return <span style={{color:'var(--ink-secondary)', fontWeight:500}}>{String(obj)}</span>;
   if (typeof obj === 'number') return <span style={{color:'var(--color-text-info)'}}>{obj}</span>;
   if (typeof obj === 'string') return <span style={{color:'var(--color-text-success)'}}>"{obj}"</span>;
   if (Array.isArray(obj)) {

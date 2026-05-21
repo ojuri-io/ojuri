@@ -1,19 +1,9 @@
-// Top-level app — routes between pages, owns shared state, hosts the Tweaks panel.
+// Top-level app — routes between pages, owns shared state.
 
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useState } from 'react';
 
-import { Sidebar, useToasts, Ti } from './components/shell.jsx';
+import { Sidebar, useToasts } from './components/shell.jsx';
 import { ErrorBoundary } from './components/error-boundary.jsx';
-import {
-  TweaksPanel,
-  TweakSection,
-  TweakToggle,
-  TweakColor,
-  TweakRadio,
-  TweakButton,
-  TwkDate,
-  useTweaks,
-} from './components/tweaks-panel.jsx';
 
 import {
   listApiKeys,
@@ -46,14 +36,6 @@ import Integrations from './pages/integrations.jsx';
 import Users from './pages/users.jsx';
 import Roles from './pages/roles.jsx';
 
-const TWEAK_DEFAULTS = {
-  from: '2026-05-06T16:22',
-  to: '2026-05-13T16:22',
-  accent: '#1b8a52',
-  density: 'regular',
-  dark: false,
-};
-
 function loadRoute() {
   const h = (location.hash || '').replace('#', '') || 'dash';
   if (h.startsWith('txn:')) return { page: 'txn', txn: h.slice(4) };
@@ -78,36 +60,10 @@ function loadRoute() {
   return { page: valid.includes(h) ? h : 'dash', txn: null };
 }
 
-// Convert hex to a tint at the given lightness. In light mode mixes toward
-// white, in dark mode toward near-black so the tint reads as a subtle backdrop.
-function hexToTint(hex, lightness, dark = false) {
-  const m = hex.replace('#', '').match(/.{2}/g);
-  if (!m) return hex;
-  const [r, g, b] = m.map((x) => parseInt(x, 16));
-  const tgt = dark ? [24, 24, 27] : [255, 255, 255];
-  const mix = (c, t) => Math.round(c + (t - c) * lightness);
-  return `rgb(${mix(r, tgt[0])}, ${mix(g, tgt[1])}, ${mix(b, tgt[2])})`;
-}
-
-function nowLocal() {
-  const d = new Date();
-  const off = d.getTimezoneOffset() * 60000;
-  return new Date(d - off).toISOString().slice(0, 16);
-}
-function lastNHours(h) {
-  const d = new Date(Date.now() - h * 3600 * 1000);
-  const off = d.getTimezoneOffset() * 60000;
-  return new Date(d - off).toISOString().slice(0, 16);
-}
-
 function App() {
   // Auth state. `null` = still checking the stored token; an object = logged in;
   // `false` = not logged in (show the Login page).
   const [authUser, setAuthUser] = useState(null);
-  // Connection status banner. 'live' = /v1/auth/me succeeded; 'offline' =
-  // the admin probe failed and every page is rendering its empty state;
-  // 'checking' = still booting, render nothing.
-  const [connection, setConnection] = useState('checking');
 
   // On mount: if we have a stored JWT, validate it against /v1/auth/me.
   // No stored token → straight to login. Bad token → clear it and show login.
@@ -144,8 +100,9 @@ function App() {
           display: 'flex',
           alignItems: 'center',
           justifyContent: 'center',
-          color: 'var(--color-text-tertiary)',
-          fontSize: 12,
+          color: 'var(--ink-muted)',
+          fontSize: 13,
+          fontFamily: 'var(--font-body)',
         }}
       >
         Loading…
@@ -158,7 +115,6 @@ function App() {
       <Login
         onSuccess={(res) => {
           setAuthUser(res.user);
-          setConnection('live');
         }}
       />
     );
@@ -189,27 +145,18 @@ function App() {
         onSuccess={(refreshed) => {
           // /me returned with the cleared flag — swap in the fresh payload.
           setAuthUser(refreshed);
-          setConnection('live');
         }}
         onLogout={doLogout}
       />
     );
   }
 
-  return (
-    <AuthenticatedApp
-      user={authUser}
-      connection={connection}
-      setConnection={setConnection}
-      onLogout={doLogout}
-    />
-  );
+  return <AuthenticatedApp user={authUser} onLogout={doLogout} />;
 }
 
-function AuthenticatedApp({ user, connection, setConnection, onLogout }) {
+function AuthenticatedApp({ user, onLogout }) {
   const [route, setRoute] = useState(loadRoute());
   const [toastNode, toast] = useToasts();
-  const [t, setTweak] = useTweaks(TWEAK_DEFAULTS);
 
   // Shared state — all start empty and are hydrated from the API. No
   // mock seeding; an unreachable backend renders the empty state for
@@ -248,20 +195,12 @@ function AuthenticatedApp({ user, connection, setConnection, onLogout }) {
     return () => window.removeEventListener('hashchange', onHash);
   }, []);
 
-  // Hydration. We track whether *any* read came back from the live API
-  // (vs the safe() empty fallback) so the live/offline banner is accurate.
-  // The `client.js` `safe()` wrapper swallows errors and returns the empty
-  // fallback; here we re-fetch the bare endpoint just to learn the HTTP
-  // status.
+  // Hydration. Live results overwrite local state; when a call fails the
+  // safe() wrapper in client.js returns an empty fallback and the per-page
+  // empty-state copy tells the operator what to do next.
   useEffect(() => {
     let cancelled = false;
     (async () => {
-      const probe = await fetch('/v1/admin/rules', {
-        headers: { authorization: `Bearer ${localStorage.getItem('sentinel.jwt') || ''}` },
-      }).catch(() => null);
-      if (cancelled) return;
-      setConnection(probe && probe.ok ? 'live' : 'offline');
-
       const [m, r, k, w, rep] = await Promise.all([
         listModels(),
         listRules(),
@@ -270,9 +209,6 @@ function AuthenticatedApp({ user, connection, setConnection, onLogout }) {
         listReports(),
       ]);
       if (cancelled) return;
-      // Live results overwrite local state. When the API is unreachable
-      // every list stays empty — the per-page empty-state copy tells the
-      // operator what to do next instead of populating fake rows.
       const repReports = (rep && rep.reports) || [];
       const repLive = rep ? !!rep.live : false;
       if (Array.isArray(m)) setModels(m);
@@ -285,7 +221,7 @@ function AuthenticatedApp({ user, connection, setConnection, onLogout }) {
     return () => {
       cancelled = true;
     };
-  }, [setConnection]);
+  }, []);
 
   const nav = (p) => {
     location.hash = p;
@@ -295,27 +231,10 @@ function AuthenticatedApp({ user, connection, setConnection, onLogout }) {
   const { page, txn } = route;
   const navActive = page === 'txn' ? 'tx' : page;
 
-  const accentVars = useMemo(() => {
-    const tint = hexToTint(t.accent, 0.92, t.dark);
-    const border = hexToTint(t.accent, 0.6, t.dark);
-    return {
-      '--color-text-info': t.accent,
-      '--color-background-info': tint,
-      '--color-border-info': border,
-    };
-  }, [t.accent, t.dark]);
-
-  const densityVars =
-    t.density === 'compact'
-      ? { '--row-pad-y': '6px', '--font-base': '12px' }
-      : t.density === 'comfy'
-      ? { '--row-pad-y': '12px', '--font-base': '14px' }
-      : { '--row-pad-y': '9px', '--font-base': '13px' };
-
   let PageBody = null;
   let screenLabel = '';
   if (page === 'dash') {
-    PageBody = <Dashboard toast={toast} queue={queue} models={models} reports={reports} webhooks={webhooks} nav={nav} />;
+    PageBody = <Dashboard toast={toast} user={user} queue={queue} models={models} reports={reports} webhooks={webhooks} nav={nav} />;
     screenLabel = '01 Dashboard';
   } else if (page === 'live') {
     PageBody = <LiveDecisions toast={toast} nav={nav} />;
@@ -324,7 +243,7 @@ function AuthenticatedApp({ user, connection, setConnection, onLogout }) {
     PageBody = <TransactionsList toast={toast} nav={nav} queue={queue} />;
     screenLabel = '03 Transactions';
   } else if (page === 'txn') {
-    PageBody = <TransactionDetail toast={toast} nav={nav} txn={txn} queue={queue} reports={reports} refreshQueueCount={refreshQueueCount} />;
+    PageBody = <TransactionDetail toast={toast} user={user} nav={nav} txn={txn} queue={queue} reports={reports} refreshQueueCount={refreshQueueCount} />;
     screenLabel = '03b Transaction detail';
   } else if (page === 'queue') {
     PageBody = <ReviewQueue toast={toast} nav={nav} queue={queue} setQueue={setQueue} queueCount={queueCount} refreshQueueCount={refreshQueueCount} />;
@@ -342,7 +261,7 @@ function AuthenticatedApp({ user, connection, setConnection, onLogout }) {
     );
     screenLabel = '05 Investigations';
   } else if (page === 'audit') {
-    PageBody = <AuditLog toast={toast} nav={nav} queue={queue} rules={rules} fromTweak={t.from} toTweak={t.to} />;
+    PageBody = <AuditLog toast={toast} nav={nav} queue={queue} rules={rules} />;
     screenLabel = '06 Audit log';
   } else if (page === 'models') {
     PageBody = (
@@ -396,7 +315,7 @@ function AuthenticatedApp({ user, connection, setConnection, onLogout }) {
   }
 
   return (
-    <div className="app" data-theme={t.dark ? 'dark' : 'light'} style={{ ...accentVars, ...densityVars }}>
+    <div className="app">
       <Sidebar
         active={navActive}
         onNav={nav}
@@ -405,7 +324,6 @@ function AuthenticatedApp({ user, connection, setConnection, onLogout }) {
         onLogout={onLogout}
       />
       <div className="main">
-        <ConnectionBanner connection={connection} />
         <div className="main-scroll">
           <div className="page-shell" data-screen-label={screenLabel}>
             {/* `resetKey` lets the boundary auto-recover when the user
@@ -419,102 +337,8 @@ function AuthenticatedApp({ user, connection, setConnection, onLogout }) {
         </div>
       </div>
       {toastNode}
-
-      <TweaksPanel title="Tweaks">
-        <TweakSection label="Audit range" />
-        <TwkDate label="From" value={t.from} onChange={(v) => setTweak('from', v)} />
-        <TwkDate label="To" value={t.to} onChange={(v) => setTweak('to', v)} />
-        <TweakButton
-          label="Last 24h"
-          onClick={() => {
-            setTweak({ from: lastNHours(24), to: nowLocal() });
-            toast('Range → last 24h');
-          }}
-        />
-        <TweakButton
-          label="Last 7d"
-          onClick={() => {
-            setTweak({ from: lastNHours(24 * 7), to: nowLocal() });
-            toast('Range → last 7d');
-          }}
-        />
-
-        <TweakSection label="Theme" />
-        <TweakToggle label="Dark mode" value={t.dark} onChange={(v) => setTweak('dark', v)} />
-        <TweakColor
-          label="Accent"
-          value={t.accent}
-          options={['#3a55d3', '#1b8a52', '#a76b08', '#c0364a', '#7a5ae0', '#1c1c1f']}
-          onChange={(v) => setTweak('accent', v)}
-        />
-        <TweakRadio
-          label="Density"
-          value={t.density}
-          options={['compact', 'regular', 'comfy']}
-          onChange={(v) => setTweak('density', v)}
-        />
-      </TweaksPanel>
     </div>
   );
-}
-
-function ConnectionBanner({ connection }) {
-  if (connection === 'live') {
-    return (
-      <div
-        title="Reads are coming from the live RDA backend"
-        style={{
-          display: 'flex',
-          alignItems: 'center',
-          gap: 6,
-          padding: '6px 14px',
-          fontSize: 11,
-          background: 'var(--color-background-success)',
-          color: 'var(--color-text-success)',
-          borderBottom: '0.5px solid var(--color-border-success)',
-        }}
-      >
-        <span
-          style={{
-            width: 7,
-            height: 7,
-            borderRadius: '50%',
-            background: 'var(--color-text-success)',
-          }}
-        />
-        <b style={{ fontWeight: 500 }}>LIVE</b>
-        <span style={{ color: 'inherit', opacity: 0.85 }}>
-          Connected to the RDA backend — data shown is from the database.
-        </span>
-      </div>
-    );
-  }
-  if (connection === 'offline') {
-    return (
-      <div
-        title="The RDA backend is unreachable or unauthorised — pages are rendering their empty state instead of fake rows"
-        style={{
-          display: 'flex',
-          alignItems: 'center',
-          gap: 6,
-          padding: '6px 14px',
-          fontSize: 11,
-          background: 'var(--color-background-warning)',
-          color: 'var(--color-text-warning)',
-          borderBottom: '0.5px solid var(--color-border-warning)',
-        }}
-      >
-        <Ti name="alert-triangle" size={11} />
-        <b style={{ fontWeight: 500 }}>OFFLINE</b>
-        <span style={{ color: 'inherit', opacity: 0.85 }}>
-          RDA admin reads failed — every list will be empty until the backend
-          is reachable. Writes will 401/timeout and toast a failure.
-        </span>
-      </div>
-    );
-  }
-  // 'checking' — render nothing rather than flash a status that's about to change.
-  return null;
 }
 
 export default App;

@@ -1,14 +1,191 @@
-// Shared shell — Tabler icon wrapper, helpers, sidebar, page chrome, modal, toasts.
+// Shared shell — Lucide icon wrapper, helpers, sidebar, page chrome, modal, toasts.
 
 import React, { useState, useEffect, useCallback } from 'react';
+import {
+  Activity,
+  ArrowDownNarrowWide,
+  ArrowLeft,
+  ArrowLeftRight,
+  ArrowRight,
+  ArrowUp,
+  ArrowUpNarrowWide,
+  Ban,
+  Bell,
+  Bookmark,
+  Bot,
+  Braces,
+  ChartColumn,
+  Check,
+  ChevronDown,
+  ChevronLeft,
+  ChevronRight,
+  ChevronUp,
+  CircleAlert,
+  CircleCheck,
+  CircleHelp,
+  Copy,
+  Cpu,
+  Download,
+  EllipsisVertical,
+  Eye,
+  EyeOff,
+  ExternalLink,
+  FileSearch,
+  FileText,
+  Filter,
+  Flag,
+  FormInput,
+  GitFork,
+  HeartPulse,
+  History,
+  Info,
+  LayoutDashboard,
+  LineChart,
+  ListChecks,
+  ListOrdered,
+  Loader2,
+  Lock,
+  LogOut,
+  MessageCircle,
+  Dot,
+  Pause,
+  Pencil,
+  Play,
+  Plug,
+  Plus,
+  RefreshCw,
+  Search,
+  SearchX,
+  Save,
+  Send,
+  Settings,
+  ShieldCheck,
+  ShieldX,
+  Shuffle,
+  SkipForward,
+  Sparkles,
+  Target,
+  Terminal,
+  Trash2,
+  TriangleAlert,
+  Users as UsersIcon,
+  Webhook,
+  X,
+  Zap,
+} from 'lucide-react';
 
-// ──────── Tabler icon shorthand ────────
+// ──────── Icon wrapper ────────
+// `<Ti name="..." />` renders a Lucide icon at stroke-width 1.5 (the
+// Ojuri brand spec — see BRAND.md §3.7). The historical Tabler vocabulary
+// is preserved in the lookup table so the 100+ existing callsites don't
+// have to change; new icons should still be added via Lucide naming.
+const ICON_MAP = {
+  'activity-heartbeat': Activity,
+  affiliate: GitFork,
+  'alert-circle': CircleAlert,
+  'alert-triangle': TriangleAlert,
+  'arrow-narrow-left': ArrowLeft,
+  'arrow-right': ArrowRight,
+  'arrow-up': ArrowUp,
+  'arrows-exchange': ArrowLeftRight,
+  'arrows-shuffle': Shuffle,
+  ban: Ban,
+  bell: Bell,
+  bolt: Zap,
+  bookmark: Bookmark,
+  braces: Braces,
+  'chart-line': LineChart,
+  check: Check,
+  'device-floppy': Save,
+  'chevron-down': ChevronDown,
+  'chevron-left': ChevronLeft,
+  'chevron-right': ChevronRight,
+  'chevron-up': ChevronUp,
+  'circle-check': CircleCheck,
+  copy: Copy,
+  cpu: Cpu,
+  'dots-vertical': EllipsisVertical,
+  download: Download,
+  edit: Pencil,
+  eye: Eye,
+  'eye-off': EyeOff,
+  'external-link': ExternalLink,
+  'file-search': FileSearch,
+  'file-type-csv': FileText,
+  filter: Filter,
+  flag: Flag,
+  forms: FormInput,
+  heartbeat: HeartPulse,
+  'help-circle': CircleHelp,
+  history: History,
+  'info-circle': Info,
+  'layout-dashboard': LayoutDashboard,
+  'list-details': ListChecks,
+  'list-numbers': ListOrdered,
+  'loader-2': Loader2,
+  lock: Lock,
+  logout: LogOut,
+  'message-circle': MessageCircle,
+  pencil: Pencil,
+  pause: Pause,
+  'player-pause': Pause,
+  play: Play,
+  'player-play': Play,
+  'player-skip-forward': SkipForward,
+  'plug-connected': Plug,
+  plus: Plus,
+  point: Dot,
+  refresh: RefreshCw,
+  'report-analytics': ChartColumn,
+  robot: Bot,
+  search: Search,
+  'search-off': SearchX,
+  send: Send,
+  settings: Settings,
+  'shield-check': ShieldCheck,
+  // Lucide doesn't ship a shield-lock; the Roles surface uses a plain
+  // lock — same connotation, brand-consistent.
+  'shield-lock': Lock,
+  'shield-x': ShieldX,
+  'sort-ascending': ArrowUpNarrowWide,
+  'sort-descending': ArrowDownNarrowWide,
+  sparkles: Sparkles,
+  target: Target,
+  terminal: Terminal,
+  trash: Trash2,
+  users: UsersIcon,
+  webhook: Webhook,
+  x: X,
+};
+
 export function Ti({ name, size = 16, color, style, ...rest }) {
+  const Icon = ICON_MAP[name];
+  if (!Icon) {
+    // Missing icon: render a thin square so the layout reserves space and
+    // the gap is visually obvious to a maintainer rather than silently zero-width.
+    if (typeof console !== 'undefined') console.warn(`Ti: unknown icon "${name}"`);
+    return (
+      <span
+        style={{
+          display: 'inline-block',
+          width: size,
+          height: size,
+          border: '1px dashed var(--ink-disabled)',
+          borderRadius: 2,
+          ...style,
+        }}
+        aria-hidden="true"
+        {...rest}
+      />
+    );
+  }
   return (
-    <i
-      className={'ti ti-' + name}
-      style={{ fontSize: size, color, lineHeight: 1, ...style }}
+    <Icon
+      size={size}
+      color={color}
+      strokeWidth={1.5}
       aria-hidden="true"
+      style={{ flexShrink: 0, verticalAlign: 'text-bottom', ...style }}
       {...rest}
     />
   );
@@ -39,6 +216,26 @@ export function permLock(user, code, friendlyHint) {
       `Requires the "${Array.isArray(code) ? code.join(' or ') : code}" permission`,
     'data-perm-locked': '1',
   };
+}
+
+// ──────── User-name helpers ────────
+// First name preferred for greetings; falls back to username, then a generic
+// stand-in so the greeting never reads as "Hello, ".
+export function firstName(user) {
+  if (!user) return 'there';
+  const full = (user.fullName || '').trim();
+  if (full) return full.split(/\s+/)[0];
+  return user.username || 'there';
+}
+
+// Short display name for attribution lines ("Reviewer: X"). Prefers
+// "First L." form when a last name exists; falls back to username.
+export function displayName(user) {
+  if (!user) return '—';
+  const parts = (user.fullName || '').trim().split(/\s+/).filter(Boolean);
+  if (parts.length >= 2) return `${parts[0]} ${parts[parts.length - 1][0]}.`;
+  if (parts.length === 1) return parts[0];
+  return user.username || '—';
 }
 
 // ──────── Money / time helpers ────────
@@ -199,11 +396,9 @@ export function Sidebar({ active, onNav, queueCount, user, onLogout }) {
   return (
     <aside className="sidebar" data-testid="sidebar">
       <div className="brand">
-        <div className="brand-icon">
-          <Ti name="shield-half" size={16} />
-        </div>
-        <span className="brand-name">Sentinel</span>
-        <span className="brand-env">prod</span>
+        <span className="brand-mark">Ojuri</span>
+        <span className="brand-sep">/</span>
+        <span className="brand-sub">sentinel</span>
       </div>
       <div
         style={{
@@ -244,7 +439,7 @@ export function Sidebar({ active, onNav, queueCount, user, onLogout }) {
                       size={11}
                       style={{
                         marginLeft: 'auto',
-                        color: 'var(--color-text-quaternary)',
+                        color: 'var(--ink-disabled)',
                       }}
                     />
                   )}

@@ -1,14 +1,14 @@
 // Page 1 — Operator dashboard
 
 import React, { useEffect, useState } from 'react';
-import { Ti, PageHead, fmtNaira, fmtAge } from '../components/shell.jsx';
+import { Ti, PageHead, fmtNaira, fmtAge, firstName } from '../components/shell.jsx';
 import {
   getStatsToday,
   getStatsWindow,
   listReviewQueue,
 } from '../api/client.js';
 
-function Dashboard({ toast, queue, models, reports, webhooks, nav }) {
+function Dashboard({ toast, user, queue, models, reports, webhooks, nav }) {
   const champion = models.find(m => m.status === 'ACTIVE');
   const shadow = models.find(m => m.status === 'SHADOW');
   const newReports = reports.slice(0, 4);
@@ -38,9 +38,15 @@ function Dashboard({ toast, queue, models, reports, webhooks, nav }) {
       .catch(() => {
         /* swallow — tile renders "—" when null */
       });
-    listReviewQueue()
-      .then((rows) => {
-        if (cancelled || !Array.isArray(rows)) return;
+    // `/v1/review-queue` returns `{ rows, total, limit, offset }` — unwrap
+    // before storing. Earlier the response was treated as a raw array which
+    // silently failed the Array.isArray guard, leaving Recent declines empty
+    // until the Review Queue page was visited and populated the shared
+    // `queue` state.
+    listReviewQueue({ limit: 4 })
+      .then((res) => {
+        if (cancelled) return;
+        const rows = Array.isArray(res?.rows) ? res.rows : [];
         setLiveQueue(rows);
       })
       .catch(() => {
@@ -124,7 +130,7 @@ function Dashboard({ toast, queue, models, reports, webhooks, nav }) {
 
   return (
     <>
-      <PageHead title="Hello, Ayo" sub="Here's what needs your attention today.">
+      <PageHead title={`Hello, ${firstName(user)}`} sub="Here's what needs your attention today.">
         <button className="icon-only" title="Search"><Ti name="search"/></button>
         <button className="icon-only" title="Notifications" style={{position:'relative'}}>
           <Ti name="bell"/>

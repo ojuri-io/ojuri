@@ -6,7 +6,7 @@
 // Release buttons hit `POST /v1/decisions/:auditId/override`.
 
 import React, { useState, useEffect } from 'react';
-import { Ti, PageHead, fmtNaira, truncId } from '../components/shell.jsx';
+import { Ti, PageHead, fmtNaira, truncId, displayName } from '../components/shell.jsx';
 import {
   getDecision,
   overrideDecision,
@@ -14,7 +14,7 @@ import {
   postReportMessage,
 } from '../api/client.js';
 
-function TransactionDetail({ toast, nav, txn, queue, reports, refreshQueueCount }) {
+function TransactionDetail({ toast, user, nav, txn, queue, reports, refreshQueueCount }) {
   // Live row from the API (when reachable). When null we fall back to the
   // matching `queue` entry — but never to a random queue[0], that gave us
   // a wrong-row "detail" plus a render-time TypeError when the queue is
@@ -121,7 +121,7 @@ function TransactionDetail({ toast, nav, txn, queue, reports, refreshQueueCount 
   const send = async () => {
     if (!draft.trim()) return;
     const text = draft;
-    setFollowups((f) => [...f, { role: 'user', author: 'Ayo A.', body: text }]);
+    setFollowups((f) => [...f, { role: 'user', author: displayName(user), body: text }]);
     setDraft('');
     setThinking(true);
     try {
@@ -351,7 +351,7 @@ function TransactionDetail({ toast, nav, txn, queue, reports, refreshQueueCount 
           <textarea value={reason} onChange={e=>setReason(e.target.value)} rows={2} placeholder="Customer confirmed unauthorized access via support call #84291…" style={{width:'100%', resize:'vertical', fontFamily:'var(--font-sans)'}}/>
         </div>
         <div style={{display:'flex', alignItems:'center', justifyContent:'space-between', gap:8}}>
-          <p style={{margin:0, fontSize:10, color:'var(--color-text-tertiary)'}}>Reviewer: <span style={{color:'var(--color-text-secondary)'}}>Ayo A. · analyst-7</span></p>
+          <p style={{margin:0, fontSize:10, color:'var(--color-text-tertiary)'}}>Reviewer: <span style={{color:'var(--color-text-secondary)'}}>{displayName(user)}{user?.username ? ` · ${user.username}` : ''}</span></p>
           <div style={{display:'flex', gap:6}}>
             <button onClick={()=>nav('tx')}>Cancel</button>
             <button className={action === 'confirm' ? 'danger-bg' : 'success-bg'} disabled={!reason.trim()} onClick={submit}>
@@ -390,10 +390,20 @@ function Tile({ label, value, tone }) {
 
 function FollowupRow({ m }) {
   const isUser = m.role === 'user';
+  // Author initials derived from whatever name was stamped onto the message
+  // when it was sent — keeps the avatar honest if a different operator
+  // replies later in the conversation.
+  const initials = (m.author || '')
+    .split(/\s+/)
+    .filter(Boolean)
+    .slice(0, 2)
+    .map((p) => p[0])
+    .join('')
+    .toUpperCase() || '··';
   return (
     <div style={{display:'flex', gap:10, alignItems:'flex-start'}}>
       <div style={{width:26, height:26, borderRadius: isUser ? '50%' : 6, background:'var(--color-background-info)', color:'var(--color-text-info)', display:'flex', alignItems:'center', justifyContent:'center', flexShrink:0, fontSize:10, fontWeight:500}}>
-        {isUser ? 'AA' : <Ti name="robot" size={14}/>}
+        {isUser ? initials : <Ti name="robot" size={14}/>}
       </div>
       <div style={{flex:1, padding:'8px 12px', background:'var(--color-background-secondary)', borderRadius:'var(--border-radius-md)'}}>
         <p style={{margin:0, fontSize:12, lineHeight:1.55}}>{m.body}</p>

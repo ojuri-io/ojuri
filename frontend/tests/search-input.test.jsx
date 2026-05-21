@@ -72,10 +72,10 @@ describe('DateRangeFilter', () => {
     const { container } = render(
       <DateRangeFilter from="" to="" onApply={onApply} />,
     );
-    const inputs = container.querySelectorAll('input[type="datetime-local"]');
-    expect(inputs.length).toBe(2);
-    fireEvent.change(inputs[0], { target: { value: '2026-05-01T00:00' } });
-    fireEvent.change(inputs[1], { target: { value: '2026-05-13T00:00' } });
+    const triggers = container.querySelectorAll('.dtp-trigger');
+    expect(triggers.length).toBe(2);
+    fireEvent.click(triggers[0]);
+    fireEvent.click(screen.getByText('Now'));
     expect(onApply).not.toHaveBeenCalled();
   });
 
@@ -84,24 +84,28 @@ describe('DateRangeFilter', () => {
     const { container } = render(
       <DateRangeFilter from="" to="" onApply={onApply} />,
     );
-    const inputs = container.querySelectorAll('input[type="datetime-local"]');
-    fireEvent.change(inputs[0], { target: { value: '2026-05-01T00:00' } });
-    fireEvent.change(inputs[1], { target: { value: '2026-05-13T00:00' } });
+    const triggers = container.querySelectorAll('.dtp-trigger');
+    fireEvent.click(triggers[0]);
+    fireEvent.click(screen.getByText('Now'));
+    fireEvent.keyDown(document, { key: 'Escape' });
+    fireEvent.click(triggers[1]);
+    fireEvent.click(screen.getByText('Now'));
+    fireEvent.keyDown(document, { key: 'Escape' });
     fireEvent.click(screen.getByText('Apply'));
-    expect(onApply).toHaveBeenCalledWith({
-      from: '2026-05-01T00:00',
-      to: '2026-05-13T00:00',
-    });
+    expect(onApply).toHaveBeenCalledTimes(1);
+    const arg = onApply.mock.calls[0][0];
+    expect(arg.from).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/);
+    expect(arg.to).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/);
   });
 
-  it('Enter on a date input commits the current draft', () => {
+  it('Clear in the picker empties the bound without auto-applying', () => {
     const onApply = vi.fn();
     const { container } = render(
-      <DateRangeFilter from="" to="" onApply={onApply} />,
+      <DateRangeFilter from="2026-05-05T08:00" to="" onApply={onApply} />,
     );
-    const inputs = container.querySelectorAll('input[type="datetime-local"]');
-    fireEvent.change(inputs[0], { target: { value: '2026-05-05T08:00' } });
-    fireEvent.keyDown(inputs[0], { key: 'Enter' });
-    expect(onApply).toHaveBeenCalledWith({ from: '2026-05-05T08:00', to: '' });
+    const triggers = container.querySelectorAll('.dtp-trigger');
+    fireEvent.click(triggers[0]);
+    fireEvent.click(screen.getByText('Clear'));
+    expect(onApply).not.toHaveBeenCalled();
   });
 });
