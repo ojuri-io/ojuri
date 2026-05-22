@@ -422,14 +422,23 @@ kbd {
   min-height: 0;
 }
 
-/* Brand wordmark — Ojuri / sentinel, inline on a single baseline. */
+/* Brand lockup — monogram on the left, wordmark "Ojuri / sentinel"
+   on the right. The outer row centers the monogram against the text
+   block; the inner .brand-text keeps the existing baseline alignment
+   so the wordmark's typographic relationships are preserved. */
 .brand {
   display: flex;
-  align-items: baseline;
-  gap: 6px;
+  align-items: center;
+  gap: 10px;
   padding: 8px 6px 12px;
   border-bottom: 1px solid var(--border);
   margin-bottom: 4px;
+  color: var(--ink); /* currentColor source for the inline Monogram */
+}
+.brand-text {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 6px;
 }
 .brand-mark {
   font-family: var(--font-display);

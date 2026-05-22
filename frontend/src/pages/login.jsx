@@ -4,6 +4,7 @@
 
 import React, { useState } from 'react';
 import { Ti } from '../components/shell.jsx';
+import { Monogram } from '../components/monogram.jsx';
 import { PasswordInput } from '../components/password-input.jsx';
 import { login as apiLogin } from '../api/client.js';
 
@@ -70,30 +71,42 @@ function Login({ onSuccess }) {
         }}
       >
         <div style={{ marginBottom: 22 }}>
-          <h1
+          <div
             style={{
-              margin: 0,
-              fontFamily: 'var(--font-display)',
-              fontSize: 32,
-              fontWeight: 600,
-              letterSpacing: '-0.01em',
+              display: 'flex',
+              alignItems: 'center',
+              gap: 14,
               color: 'var(--ink)',
-              lineHeight: 1,
             }}
           >
-            Ojuri
-          </h1>
-          <p
-            style={{
-              margin: '6px 0 0',
-              fontFamily: 'var(--font-code)',
-              fontSize: 12,
-              color: 'var(--ink-muted)',
-              lineHeight: 1,
-            }}
-          >
-            sentinel
-          </p>
+            <Monogram size={40} aria-hidden />
+            <div>
+              <h1
+                style={{
+                  margin: 0,
+                  fontFamily: 'var(--font-display)',
+                  fontSize: 32,
+                  fontWeight: 600,
+                  letterSpacing: '-0.01em',
+                  color: 'var(--ink)',
+                  lineHeight: 1,
+                }}
+              >
+                Ojuri
+              </h1>
+              <p
+                style={{
+                  margin: '6px 0 0',
+                  fontFamily: 'var(--font-code)',
+                  fontSize: 12,
+                  color: 'var(--ink-muted)',
+                  lineHeight: 1,
+                }}
+              >
+                sentinel
+              </p>
+            </div>
+          </div>
           <p
             style={{
               margin: '14px 0 0',

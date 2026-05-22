@@ -73,6 +73,7 @@ import {
   X,
   Zap,
 } from 'lucide-react';
+import { Monogram } from './monogram.jsx';
 
 // ──────── Icon wrapper ────────
 // `<Ti name="..." />` renders a Lucide icon at stroke-width 1.5 (the
@@ -396,9 +397,12 @@ export function Sidebar({ active, onNav, queueCount, user, onLogout }) {
   return (
     <aside className="sidebar" data-testid="sidebar">
       <div className="brand">
-        <span className="brand-mark">Ojuri</span>
-        <span className="brand-sep">/</span>
-        <span className="brand-sub">sentinel</span>
+        <Monogram size={22} aria-hidden />
+        <span className="brand-text">
+          <span className="brand-mark">Ojuri</span>
+          <span className="brand-sep">/</span>
+          <span className="brand-sub">sentinel</span>
+        </span>
       </div>
       <div
         style={{
