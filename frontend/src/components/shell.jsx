@@ -399,7 +399,9 @@ export function Sidebar({ active, onNav, queueCount, user, onLogout }) {
       <div className="brand">
         <Monogram size={22} aria-hidden />
         <span className="brand-text">
-          <span className="brand-mark">Ojuri</span>
+          <span className="brand-mark">
+            Ojuri<span className="brand-dot">.</span>
+          </span>
           <span className="brand-sep">/</span>
           <span className="brand-sub">sentinel</span>
         </span>

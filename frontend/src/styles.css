@@ -448,6 +448,12 @@ kbd {
   color: var(--ink);
   letter-spacing: -0.01em;
 }
+/* Wordmark fullstop — 700 weight on the period only, so the dot
+   reads as a deliberate logo element rather than incidental
+   punctuation (matches the Wordmark component on the website). */
+.brand-dot {
+  font-weight: 700;
+}
 .brand-sep {
   font-family: var(--font-body);
   font-size: 16px;

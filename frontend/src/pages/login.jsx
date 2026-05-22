@@ -92,7 +92,7 @@ function Login({ onSuccess }) {
                   lineHeight: 1,
                 }}
               >
-                Ojuri
+                Ojuri<span style={{ fontWeight: 700 }}>.</span>
               </h1>
               <p
                 style={{
