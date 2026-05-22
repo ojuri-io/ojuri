@@ -406,19 +406,22 @@ kbd {
 }
 
 /* ──────── App layout ──────── */
+/* Sidebar width 240px per design-system spec §6. */
 .app {
   display: grid;
-  grid-template-columns: 208px 1fr;
+  grid-template-columns: 240px 1fr;
   background: var(--surface);
 }
 
+/* Sidebar uses --surface-alt (stone-200) so the cream main area
+   reads as the focal surface and the nav recedes by one layer. */
 .sidebar {
-  background: var(--surface);
+  background: var(--surface-alt);
   border-right: 1px solid var(--border);
   display: flex;
   flex-direction: column;
   padding: 14px 10px;
-  gap: 14px;
+  gap: var(--space-2);
   min-height: 0;
 }
 
@@ -469,48 +472,52 @@ kbd {
 }
 
 .nav-section-label {
-  font-family: var(--font-body);
-  font-size: 10px;
+  font-family: var(--font-mono);
+  font-size: 11px;
   font-weight: 500;
-  letter-spacing: var(--tracking-caps);
+  letter-spacing: 0.06em;
   text-transform: uppercase;
-  color: var(--ink-muted);
-  padding: 0 8px 6px;
+  color: var(--ink-faint);
+  padding: 8px var(--space-3) 6px;
 }
+/* Sidebar items per §6: 36px tall, 12px x-padding, sans 13.5px,
+   muted by default; ink-on-cream when active. */
 .nav-item {
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 7px 8px;
-  font-size: 13px;
-  color: var(--ink-secondary);
-  border-radius: var(--radius-sm);
-  border-left: 3px solid transparent;
+  height: 36px;
+  padding: 0 var(--space-3);
+  font-family: var(--font-body);
+  font-size: 13.5px;
+  color: var(--ink-muted);
+  border-radius: var(--r-sm);
   cursor: pointer;
   user-select: none;
 }
 .nav-item:hover {
-  background: var(--surface-alt);
+  background: var(--surface-sub);
   color: var(--ink);
 }
 .nav-item.active {
-  background: var(--stone-200);
-  color: var(--ink);
-  font-weight: 500;
-  border-left-color: var(--ink);
+  background: var(--ink);
+  color: var(--surface);
 }
 .nav-item.disabled { color: var(--ink-disabled); cursor: not-allowed; }
 .nav-item.disabled:hover { background: transparent; color: var(--ink-disabled); }
+/* Outline-only pill: mono 11px, 1px border, no fill. */
 .nav-count {
   margin-left: auto;
-  font-family: var(--font-code);
-  font-size: 10px;
+  font-family: var(--font-mono);
+  font-size: 11px;
   font-weight: 500;
-  padding: 1px 6px;
-  border-radius: var(--radius-pill);
-  background: var(--stone-200);
-  color: var(--ink-secondary);
+  padding: 1px 7px;
+  border-radius: var(--r-pill);
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--ink-muted);
   flex-shrink: 0;
+  line-height: 1.4;
 }
 .nav-item > span:not(.nav-count) {
   white-space: nowrap;
@@ -520,16 +527,16 @@ kbd {
   flex: 1;
 }
 .nav-count.danger {
-  background: color-mix(in srgb, var(--chart-decline) 12%, transparent);
+  border-color: var(--chart-decline);
   color: var(--chart-decline);
 }
 .nav-count.warn {
-  background: color-mix(in srgb, var(--chart-review) 12%, transparent);
+  border-color: var(--chart-review);
   color: var(--chart-review);
 }
 .nav-item.active .nav-count {
-  background: var(--stone-300);
-  color: var(--ink);
+  border-color: var(--surface);
+  color: var(--surface);
 }
 
 .sidebar-foot {
@@ -648,38 +655,49 @@ kbd {
 }
 
 /* ──────── Pills ──────── */
+/* Status chips per design-system spec §5: rounded pill, 1px border,
+   mono 11px, ~20px tall, 8px horizontal padding. Default reads as a
+   neutral chip; tone modifiers add a chart-colour border + 8% tint. */
 .pill {
   display: inline-flex;
   align-items: center;
   gap: 4px;
-  font-size: 10px;
+  font-family: var(--font-mono);
+  font-size: 11px;
   font-weight: 500;
-  padding: 2px 7px;
-  border-radius: var(--radius-sm);
-  letter-spacing: var(--tracking-caps);
-  background: var(--stone-200);
-  color: var(--ink-secondary);
+  height: 20px;
+  padding: 0 8px;
+  border-radius: var(--r-pill);
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--ink-muted);
   white-space: nowrap;
-  line-height: 1.4;
-  font-family: var(--font-code);
+  letter-spacing: 0;
+  line-height: 1;
 }
 .pill.info {
-  background: var(--stone-200);
-  color: var(--ink);
+  border-color: var(--border);
+  color: var(--ink-secondary);
+  background: transparent;
 }
 .pill.success {
-  background: color-mix(in srgb, var(--chart-allow) 12%, transparent);
+  border-color: var(--chart-allow);
   color: var(--chart-allow);
+  background: color-mix(in srgb, var(--chart-allow) 8%, transparent);
 }
 .pill.danger {
-  background: color-mix(in srgb, var(--chart-decline) 12%, transparent);
+  border-color: var(--chart-decline);
   color: var(--chart-decline);
+  background: color-mix(in srgb, var(--chart-decline) 8%, transparent);
 }
 .pill.warn {
-  background: color-mix(in srgb, var(--chart-review) 12%, transparent);
+  border-color: var(--chart-review);
   color: var(--chart-review);
+  background: color-mix(in srgb, var(--chart-review) 8%, transparent);
 }
-.pill.round { border-radius: var(--radius-pill); padding: 1px 7px; }
+/* .pill is already rounded per spec; .round stays as a no-op for the
+   many existing callsites so we don't have to churn every page. */
+.pill.round { border-radius: var(--r-pill); }
 .pill.sans { font-family: var(--font-body); letter-spacing: 0; }
 .pill.dot::before {
   content: '';
