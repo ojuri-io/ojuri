@@ -36,14 +36,6 @@
   --border:         var(--stone-300);
   --border-strong:  var(--stone-700);
 
-  /* === COLOR: Spec-aligned aliases ===
-     The brand-system spec uses shorter names for the same concepts;
-     these aliases let new code follow the spec without churning the
-     thousands of existing references. Existing names above stay. */
-  --surface-sub:    var(--stone-50);   /* alias for --surface-raised */
-  --ink-2:          var(--stone-700);  /* darker variant of secondary ink */
-  --ink-faint:      var(--stone-500);  /* alias for --ink-muted at brighter setting */
-
   /* === COLOR: Chart palette (dashboard only — never on brand surfaces) === */
   --chart-allow:    #5C7A5C;
   --chart-decline:  #A35140;
@@ -53,9 +45,6 @@
   --font-display: 'Source Serif 4', 'Source Serif Pro', Georgia, 'Times New Roman', serif;
   --font-body:    'Inter', system-ui, -apple-system, 'Segoe UI', sans-serif;
   --font-code:    'JetBrains Mono', 'SF Mono', Menlo, Consolas, monospace;
-  /* Spec-aligned aliases — same fonts, the names the design system uses. */
-  --font-sans: var(--font-body);
-  --font-mono: var(--font-code);
 
   /* === TYPOGRAPHY: Display (Source Serif 4) === */
   --text-display-xl-size:    4rem;       /* 64px */
@@ -130,10 +119,6 @@
   --radius-md:   4px;
   --radius-lg:   8px;
   --radius-pill: 9999px;
-  /* Spec-aligned short aliases. */
-  --r-sm:   var(--radius-sm);
-  --r-md:   var(--radius-md);
-  --r-pill: var(--radius-pill);
 
   /* === BORDERS === */
   --border-thin:    1px solid var(--border);

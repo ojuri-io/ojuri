@@ -1,17 +1,6 @@
 // Login page — the first thing an unauthenticated visitor sees.
 // Posts to POST /v1/auth/login on the RDA backend, stores the JWT,
 // then signals the app shell to swap in the dashboard.
-//
-// Design — Ojuri brand spec §7:
-// - Centered 380px card, vertically centered viewport.
-// - Monogram only (28px); no wordmark duplicate, no "sentinel" sub-label.
-// - One sans 14px helper paragraph in --ink-muted.
-// - USERNAME + PASSWORD inputs using the standard form pattern.
-// - Sign-in button starts disabled and enables when both trimmed inputs
-//   are non-empty; we keep the 'admin' username prefill so first-run
-//   sign-in works without typing — the password is still required.
-// - FIRST-RUN SEED helper at the bottom: thin top border, mono eyebrow,
-//   one sans body line with mono-chip code spans.
 
 import React, { useState } from 'react';
 import { Ti } from '../components/shell.jsx';
@@ -25,16 +14,13 @@ function Login({ onSuccess }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
 
-  const trimmedUser = username.trim();
-  const canSubmit = !busy && trimmedUser.length > 0 && password.length > 0;
-
   const submit = async (e) => {
     e?.preventDefault();
-    if (!canSubmit) return;
+    if (!username.trim() || !password) return;
     setBusy(true);
     setError('');
     try {
-      const res = await apiLogin({ username: trimmedUser, password });
+      const res = await apiLogin({ username: username.trim(), password });
       if (!res?.token) throw new Error('Backend returned no token');
       localStorage.setItem('sentinel.jwt', res.token);
       try {
@@ -50,7 +36,7 @@ function Login({ onSuccess }) {
         setError('Invalid username or password.');
       } else if (msg.includes('503')) {
         setError(
-          'Authentication is not configured on the server. Set AUTH_JWT_SECRET in the RDA .env and restart.',
+          'Authentication is not configured on the server. Set AUTH_JWT_SECRET in the RDA .env and restart.'
         );
       } else if (msg.includes('Failed to fetch') || /NetworkError/i.test(msg)) {
         setError('Could not reach the RDA backend. Is it running on :3000?');
@@ -77,43 +63,65 @@ function Login({ onSuccess }) {
         onSubmit={submit}
         style={{
           width: '100%',
-          maxWidth: 380,
+          maxWidth: 360,
           background: 'var(--surface)',
           border: '1px solid var(--border)',
-          borderRadius: 'var(--r-md)',
-          padding: '32px 32px 28px',
+          borderRadius: 'var(--radius-md)',
+          padding: '32px 32px 24px',
         }}
       >
-        {/* Monogram only — the wordmark, sub-label and any marketing
-            chrome are intentionally absent on this operator surface. */}
-        <div
-          style={{
-            display: 'flex',
-            justifyContent: 'center',
-            color: 'var(--ink)',
-            marginBottom: 18,
-          }}
-        >
-          <Monogram size={28} aria-hidden />
+        <div style={{ marginBottom: 22 }}>
+          <div
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: 14,
+              color: 'var(--ink)',
+            }}
+          >
+            <Monogram size={40} aria-hidden />
+            <div>
+              <h1
+                style={{
+                  margin: 0,
+                  fontFamily: 'var(--font-display)',
+                  fontSize: 32,
+                  fontWeight: 600,
+                  letterSpacing: '-0.01em',
+                  color: 'var(--ink)',
+                  lineHeight: 1,
+                }}
+              >
+                Ojuri<span style={{ fontWeight: 700 }}>.</span>
+              </h1>
+              <p
+                style={{
+                  margin: '6px 0 0',
+                  fontFamily: 'var(--font-code)',
+                  fontSize: 12,
+                  color: 'var(--ink-muted)',
+                  lineHeight: 1,
+                }}
+              >
+                sentinel
+              </p>
+            </div>
+          </div>
+          <p
+            style={{
+              margin: '14px 0 0',
+              fontSize: 13,
+              color: 'var(--ink-secondary)',
+            }}
+          >
+            Sign in to the fraud-ops dashboard.
+          </p>
         </div>
-
-        <p
-          style={{
-            margin: '0 0 22px',
-            fontFamily: 'var(--font-sans)',
-            fontSize: 14,
-            color: 'var(--ink-muted)',
-            textAlign: 'center',
-            lineHeight: 1.5,
-          }}
-        >
-          Sign in to the fraud-ops dashboard.
-        </p>
 
         <label
           className="label-up"
           htmlFor="login-username"
-          style={{ display: 'block', marginBottom: 6 }}
+          style={{ display: 'block', marginBottom: 4 }}
         >
           USERNAME
         </label>
@@ -126,13 +134,13 @@ function Login({ onSuccess }) {
           spellCheck={false}
           value={username}
           onChange={(e) => setUsername(e.target.value.toLowerCase())}
-          style={{ width: '100%', marginBottom: 14 }}
+          style={{ width: '100%', marginBottom: 12 }}
         />
 
         <label
           className="label-up"
           htmlFor="login-password"
-          style={{ display: 'block', marginBottom: 6 }}
+          style={{ display: 'block', marginBottom: 4 }}
         >
           PASSWORD
         </label>
@@ -141,7 +149,7 @@ function Login({ onSuccess }) {
           autoComplete="current-password"
           value={password}
           onChange={(e) => setPassword(e.target.value)}
-          style={{ marginBottom: 16 }}
+          style={{ marginBottom: 14 }}
         />
 
         {error && (
@@ -157,7 +165,7 @@ function Login({ onSuccess }) {
         <button
           type="submit"
           className="primary"
-          disabled={!canSubmit}
+          disabled={busy || !username.trim() || !password}
           style={{
             width: '100%',
             justifyContent: 'center',
@@ -168,44 +176,18 @@ function Login({ onSuccess }) {
           {busy ? 'Signing in…' : 'Sign in'}
         </button>
 
-        {/* First-run seed helper. Stays at the bottom because the
-            credentials it documents only matter on a fresh install;
-            returning operators ignore it. The mono code chips reuse
-            the existing .mono class to inherit JetBrains Mono. */}
-        <div
+        <p
           style={{
-            borderTop: '1px solid var(--border)',
-            marginTop: 22,
-            paddingTop: 16,
+            margin: '14px 0 0',
+            fontSize: 10,
+            color: 'var(--color-text-tertiary)',
+            textAlign: 'center',
           }}
         >
-          <p
-            style={{
-              margin: 0,
-              fontFamily: 'var(--font-mono)',
-              fontSize: 11,
-              letterSpacing: '0.06em',
-              textTransform: 'uppercase',
-              color: 'var(--ink-faint)',
-              lineHeight: 1,
-            }}
-          >
-            First-run seed
-          </p>
-          <p
-            style={{
-              margin: '8px 0 0',
-              fontFamily: 'var(--font-sans)',
-              fontSize: 12.5,
-              color: 'var(--ink-muted)',
-              lineHeight: 1.55,
-            }}
-          >
-            Sign in with <code className="mono">admin</code> /{' '}
-            <code className="mono">admin@fraudit</code>, then rotate the
-            password via <code className="mono">PATCH /v1/admin/users/:id</code>.
-          </p>
-        </div>
+          First-run seed: <code className="mono">admin / admin@fraudit</code>. Change it via
+          <br />
+          <code className="mono">PATCH /v1/admin/users/:id</code> after sign-in.
+        </p>
       </form>
     </div>
   );
