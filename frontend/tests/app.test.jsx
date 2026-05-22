@@ -73,12 +73,13 @@ describe('App', () => {
       render(<App />);
     });
     // /v1/auth/me resolves async — wait for the gate to swap in the dashboard.
+    // The "Things to do" panel header is a stable text landmark on the
+    // dashboard; the old "Hello, X" greeting was dropped in favour of a
+    // mono date stamp because operators use this every day.
     await waitFor(() => {
-      expect(screen.getByText('Hello, Default')).toBeInTheDocument();
+      expect(screen.getByText('Things to do')).toBeInTheDocument();
     });
-    expect(
-      screen.getByText("Here's what needs your attention today."),
-    ).toBeInTheDocument();
+    expect(screen.getByText(/^Today · /)).toBeInTheDocument();
   });
 
   it('exposes the Ojuri / sentinel wordmark in the sidebar once authed', async () => {
@@ -99,7 +100,7 @@ describe('App', () => {
     await act(async () => {
       render(<App />);
     });
-    await waitFor(() => screen.getByText('Hello, Default'));
+    await waitFor(() => screen.getByText('Things to do'));
     await act(async () => {
       window.location.hash = 'live';
       window.dispatchEvent(new HashChangeEvent('hashchange'));
@@ -156,7 +157,7 @@ describe('App', () => {
       fireEvent.click(screen.getByRole('button', { name: /Sign in/i }));
     });
     await waitFor(() => {
-      expect(screen.getByText('Hello, Default')).toBeInTheDocument();
+      expect(screen.getByText('Things to do')).toBeInTheDocument();
     });
     expect(localStorage.getItem('sentinel.jwt')).toBe('fresh-token');
   });

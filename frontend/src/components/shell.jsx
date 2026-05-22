@@ -73,7 +73,6 @@ import {
   X,
   Zap,
 } from 'lucide-react';
-import { Monogram } from './monogram.jsx';
 
 // ──────── Icon wrapper ────────
 // `<Ti name="..." />` renders a Lucide icon at stroke-width 1.5 (the
@@ -397,14 +396,15 @@ export function Sidebar({ active, onNav, queueCount, user, onLogout }) {
   return (
     <aside className="sidebar" data-testid="sidebar">
       <div className="brand">
-        <Monogram size={22} aria-hidden />
-        <span className="brand-text">
-          <span className="brand-mark">
-            Ojuri<span className="brand-dot">.</span>
-          </span>
-          <span className="brand-sep">/</span>
-          <span className="brand-sub">sentinel</span>
+        {/* Wordmark only — operators see this constantly; doubling
+            the monogram next to the wordmark stacks three identifiers
+            (mark + name + product). Pick one — the wordmark wins
+            because "sentinel" still needs the product context. */}
+        <span className="brand-mark">
+          Ojuri<span className="brand-dot">.</span>
         </span>
+        <span className="brand-sep">/</span>
+        <span className="brand-sub">sentinel</span>
       </div>
       <div
         style={{

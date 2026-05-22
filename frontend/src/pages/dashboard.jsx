@@ -1,14 +1,25 @@
 // Page 1 — Operator dashboard
 
-import React, { useEffect, useState } from 'react';
-import { Ti, PageHead, fmtNaira, fmtAge, firstName } from '../components/shell.jsx';
+import React, { useEffect, useMemo, useState } from 'react';
+import { Ti, fmtNaira, fmtAge } from '../components/shell.jsx';
 import {
   getStatsToday,
   getStatsWindow,
   listReviewQueue,
 } from '../api/client.js';
 
+// Operator orientation header — date stamp in mono. No greeting,
+// no marketing copy. Memoised on `Date.now()` so the format is
+// stable for the page lifetime (don't re-render on every state tick).
+function todayLabel() {
+  const now = new Date();
+  const weekday = now.toLocaleDateString('en-US', { weekday: 'short' });
+  const monthDay = now.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+  return `Today · ${weekday}, ${monthDay}`;
+}
+
 function Dashboard({ toast, user, queue, models, reports, webhooks, nav }) {
+  const dateLabel = useMemo(todayLabel, []);
   const champion = models.find(m => m.status === 'ACTIVE');
   const shadow = models.find(m => m.status === 'SHADOW');
   const newReports = reports.slice(0, 4);
@@ -130,13 +141,26 @@ function Dashboard({ toast, user, queue, models, reports, webhooks, nav }) {
 
   return (
     <>
-      <PageHead title={`Hello, ${firstName(user)}`} sub="Here's what needs your attention today.">
-        <button className="icon-only" title="Search"><Ti name="search"/></button>
-        <button className="icon-only" title="Notifications" style={{position:'relative'}}>
-          <Ti name="bell"/>
-          <span style={{position:'absolute', top:6, right:7, width:6, height:6, borderRadius:'50%', background:'var(--color-text-danger)'}}/>
-        </button>
-      </PageHead>
+      {/* Mono date stamp — operators use this every day; the page is
+          self-evident from the sidebar's active item, so the header
+          orients on time, not on a serif welcome. Search + bell were
+          removed because they were unwired placeholders that read
+          as page-scoped controls when they're really global; if
+          revived they belong in a topbar, not here. */}
+      <header style={{ marginBottom: 20 }}>
+        <p
+          style={{
+            margin: 0,
+            fontFamily: 'var(--font-code)',
+            fontSize: 13,
+            letterSpacing: '0.02em',
+            color: 'var(--ink-muted)',
+            lineHeight: 1.2,
+          }}
+        >
+          {dateLabel}
+        </p>
+      </header>
 
       {/* Things to do */}
       <section className="panel" style={{marginBottom:14, padding:'16px 18px'}}>
@@ -147,9 +171,9 @@ function Dashboard({ toast, user, queue, models, reports, webhooks, nav }) {
         <div style={{display:'flex', flexDirection:'column'}}>
           {todos.map((t, i) => (
             <div key={i} onClick={t.onClick} style={{display:'flex', alignItems:'center', gap:12, padding:'12px 0', borderTop: i === 0 ? 'none' : '0.5px solid var(--color-border-tertiary)', cursor:'pointer'}}>
-              <div style={{width:34, height:34, borderRadius:8, background: `var(--color-background-${t.tone === 'plain' ? 'secondary' : t.tone})`, color: t.tone === 'plain' ? 'var(--color-text-primary)' : `var(--color-text-${t.tone})`, display:'flex', alignItems:'center', justifyContent:'center', flexShrink:0}}>
-                <Ti name={t.icon} size={16}/>
-              </div>
+              {/* Inline icon — no off-brand colored tile. Tone is
+                  carried by the title's content, not by background chrome. */}
+              <Ti name={t.icon} size={16} style={{color:'var(--ink-muted)', flexShrink:0}}/>
               <div style={{flex:1, minWidth:0}}>
                 <p style={{margin:0, fontSize:13, fontWeight:500}}>{t.title}</p>
                 <p className="truncate" style={{margin:'1px 0 0', fontSize:12, color:'var(--color-text-secondary)'}}>{t.sub}</p>
@@ -190,16 +214,35 @@ function Dashboard({ toast, user, queue, models, reports, webhooks, nav }) {
             <h2>Today's decisions</h2>
             <span style={{fontSize:11, color:'var(--color-text-tertiary)'}}>{total.toLocaleString()} total</span>
           </div>
-          <div style={{display:'flex', height:6, borderRadius:3, overflow:'hidden', marginBottom:10, background:'var(--color-background-secondary)'}}>
-            {total > 0 && <div style={{width:`${(accept/total)*100}%`, background:'var(--color-text-success)'}}/>}
-            {total > 0 && <div style={{width:`${(decline/total)*100}%`, background:'var(--color-text-danger)'}}/>}
-            {total > 0 && <div style={{width:`${(review/total)*100}%`, background:'var(--color-text-warning)'}}/>}
-          </div>
-          <div style={{display:'flex', justifyContent:'space-between', fontSize:11}}>
-            <div><Dot color="var(--color-text-success)"/>Accept<span style={{marginLeft:6, fontWeight:500}}>{accept.toLocaleString()}</span></div>
-            <div><Dot color="var(--color-text-danger)"/>Decline<span style={{marginLeft:6, fontWeight:500}}>{decline}</span></div>
-            <div><Dot color="var(--color-text-warning)"/>Review<span style={{marginLeft:6, fontWeight:500}}>{review}</span></div>
-          </div>
+          {/* Hide the bar + legends entirely when there's no data.
+              Three "0" legends under an empty axis read as a broken
+              chart, not as a real empty state. */}
+          {total === 0 ? (
+            <p
+              style={{
+                margin: 0,
+                padding: '14px 0',
+                textAlign: 'center',
+                fontSize: 13.5,
+                color: 'var(--ink-muted)',
+              }}
+            >
+              No decisions yet today.
+            </p>
+          ) : (
+            <>
+              <div style={{display:'flex', height:6, borderRadius:3, overflow:'hidden', marginBottom:10, background:'var(--color-background-secondary)'}}>
+                <div style={{width:`${(accept/total)*100}%`, background:'var(--color-text-success)'}}/>
+                <div style={{width:`${(decline/total)*100}%`, background:'var(--color-text-danger)'}}/>
+                <div style={{width:`${(review/total)*100}%`, background:'var(--color-text-warning)'}}/>
+              </div>
+              <div style={{display:'flex', justifyContent:'space-between', fontSize:11}}>
+                <div><Dot color="var(--color-text-success)"/>Accept<span style={{marginLeft:6, fontWeight:500}}>{accept.toLocaleString()}</span></div>
+                <div><Dot color="var(--color-text-danger)"/>Decline<span style={{marginLeft:6, fontWeight:500}}>{decline}</span></div>
+                <div><Dot color="var(--color-text-warning)"/>Review<span style={{marginLeft:6, fontWeight:500}}>{review}</span></div>
+              </div>
+            </>
+          )}
         </section>
       </div>
 
@@ -216,8 +259,17 @@ function Dashboard({ toast, user, queue, models, reports, webhooks, nav }) {
           <div key={i} style={{display:'flex', alignItems:'center', gap:10, padding:'9px 0', borderTop: i === 0 ? 'none' : '0.5px solid var(--color-border-tertiary)'}}>
             <code className="mono" style={{fontSize:11, color:'var(--color-text-secondary)', flexShrink:0}}>{r.id}</code>
             <span style={{fontSize:12, fontWeight:500, flexShrink:0}}>{fmtNaira(r.amount)}</span>
-            <span className={'pill round danger'} style={{fontSize:11, padding:'1px 7px'}}>{r.isRule ? 'rule' : (typeof r.score === 'number' ? r.score.toFixed(2) : '—')}</span>
-            <span className="truncate" style={{fontSize:11, color:'var(--color-text-secondary)'}}>{r.isRule ? `PRE_RULE · ${r.rule || '—'}` : r.reasons}</span>
+            {/* For rule-stage declines, show the rule's short code in
+                mono (e.g. AMOUNT_HIGH, VELOCITY_24H). The literal
+                word "rule" was filler — the rule code tells the
+                operator what to act on. Score declines keep the
+                two-decimal probability. */}
+            <span className="pill danger" style={{fontSize:11}}>
+              {r.isRule ? (r.rule || 'RULE') : (typeof r.score === 'number' ? r.score.toFixed(2) : '—')}
+            </span>
+            <span className="truncate" style={{fontSize:11, color:'var(--color-text-secondary)'}}>
+              {r.isRule ? 'PRE_RULE' : r.reasons}
+            </span>
             <span style={{fontSize:11, color:'var(--color-text-tertiary)', marginLeft:'auto', flexShrink:0, whiteSpace:'nowrap'}}>{r.age}</span>
           </div>
         ))}
