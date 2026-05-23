@@ -37,7 +37,18 @@ export function PasswordInput({
 }) {
   const [visible, setVisible] = useState(false);
   return (
-    <span style={{ position: 'relative', display: 'inline-block', width: '100%' }}>
+    <span
+      style={{
+        // display: block (not inline-block) so the wrapper's height
+        // is exactly the input's height. Inline-block leaves a few
+        // px of baseline descender space below the input, which made
+        // the absolutely-positioned toggle sit below the visual
+        // mid-line even with top:50% + translateY(-50%).
+        position: 'relative',
+        display: 'block',
+        width: '100%',
+      }}
+    >
       <input
         {...rest}
         id={id}

@@ -81,24 +81,33 @@ function Dashboard({ toast, user, queue, models, reports, webhooks, nav }) {
   const total = stats?.total ?? accept + decline + review;
 
   // p50 / p95 latencies are millisecond-decimal — render to one decimal
-  // place to match the original visual density. `—` when the window has
-  // no decisions yet.
+  // place to match the original visual density. Returns `null` when the
+  // window has no decisions yet; the caller decides how to render the
+  // gap (currently a quiet "unmeasured" label, never an em dash).
   const formatLatency = (v) =>
-    typeof v === 'number' && Number.isFinite(v) ? `${v.toFixed(1)} ms` : '—';
+    typeof v === 'number' && Number.isFinite(v) ? `${v.toFixed(1)} ms` : null;
 
   // Recent declines — uses the live review queue when reachable, falling
   // back to whatever the parent passed in (an empty array when the API
   // is offline). Normalises both shapes.
+  //
+  // `ruleCode` is the short identifier shown in the chip (e.g. AMOUNT_HIGH,
+  // FRAUD_TEST_SENDER). `ruleDescr` is the long human-readable name —
+  // surfaced on hover via the chip's `title` attribute so the row's chip
+  // text doesn't dominate the line.
   const recent = sourceQueue.slice(0, 4).map((q) => {
     const reasonCodes = (q.reasonCodes || []).map((c) =>
       typeof c === 'string' ? c : c?.code || '',
     ).filter(Boolean);
+    const ruleCode = q.preRule || q.ruleCode || null;
+    const ruleDescr = q.ruleName || null;
     return {
       id: (q.transactionId || '').slice(0, 8) + '…',
       amount: Number(q.amount ?? 0),
       score: Number(q.championScore ?? 0),
       isRule: q.stage === 'PRE_RULE' || q.decisionSource === 'PRE_RULE',
-      rule: q.preRule || q.ruleName || null,
+      ruleCode,
+      ruleDescr,
       reasons: reasonCodes.slice(0, 2).join(' · ') || '—',
       age: q.ageMin != null ? fmtAge(q.ageMin) + ' ago' : '',
     };
@@ -202,10 +211,10 @@ function Dashboard({ toast, user, queue, models, reports, webhooks, nav }) {
             </div>
           </div>
           <div style={{display:'flex', gap:18, fontSize:11}}>
-            <div><span style={{color:'var(--color-text-tertiary)', display:'block'}}>F1</span><span style={{fontWeight:500}}>{champion?.F1 == null ? '—' : champion.F1.toFixed(3)}</span></div>
-            <div><span style={{color:'var(--color-text-tertiary)', display:'block'}}>AUC</span><span style={{fontWeight:500}}>{champion?.AUC == null ? '—' : champion.AUC.toFixed(3)}</span></div>
-            <div><span style={{color:'var(--color-text-tertiary)', display:'block'}}>p50</span><span style={{fontWeight:500}}>{formatLatency(windowStats?.championLatency?.p50)}</span></div>
-            <div><span style={{color:'var(--color-text-tertiary)', display:'block'}}>p95</span><span style={{fontWeight:500}}>{formatLatency(windowStats?.championLatency?.p95)}</span></div>
+            <ModelMetric label="F1"  value={champion?.F1 == null ? null : champion.F1.toFixed(3)} />
+            <ModelMetric label="AUC" value={champion?.AUC == null ? null : champion.AUC.toFixed(3)} />
+            <ModelMetric label="p50" value={formatLatency(windowStats?.championLatency?.p50)} />
+            <ModelMetric label="p95" value={formatLatency(windowStats?.championLatency?.p95)} />
           </div>
         </section>
 
@@ -246,33 +255,79 @@ function Dashboard({ toast, user, queue, models, reports, webhooks, nav }) {
         </section>
       </div>
 
-      {/* Recent declines */}
+      {/* Recent declines — table with a mono uppercase header row so
+          the columns read as ID / AMOUNT / RULE / STAGE / AGE rather
+          than four anonymous fields. Header + body share the same
+          grid template so values stay column-aligned. */}
       <section className="panel">
         <div className="panel-head">
           <h2>Recent declines</h2>
           <a href="#" onClick={e=>{e.preventDefault(); nav('queue');}}>Open review queue<Ti name="chevron-right" size={11} style={{marginLeft:2, verticalAlign:-1}}/></a>
         </div>
-        {recent.length === 0 && (
+        {recent.length === 0 ? (
           <p style={{margin:'6px 0 0', fontSize:12, color:'var(--color-text-tertiary)'}}>No recent declines — queue is clear.</p>
+        ) : (
+          <>
+            <div
+              role="row"
+              style={{
+                display: 'grid',
+                gridTemplateColumns: 'auto auto auto 1fr auto',
+                gap: 10,
+                alignItems: 'center',
+                padding: '4px 0 8px',
+                borderBottom: '1px solid var(--border)',
+                fontFamily: 'var(--font-code)',
+                fontSize: 11,
+                letterSpacing: '0.06em',
+                textTransform: 'uppercase',
+                color: 'var(--ink-faint)',
+                lineHeight: 1,
+              }}
+            >
+              <span>ID</span>
+              <span>Amount</span>
+              <span>Rule</span>
+              <span>Stage</span>
+              <span>Age</span>
+            </div>
+            {recent.map((r, i) => (
+              <div
+                key={i}
+                role="row"
+                style={{
+                  display: 'grid',
+                  gridTemplateColumns: 'auto auto auto 1fr auto',
+                  gap: 10,
+                  alignItems: 'center',
+                  padding: '9px 0',
+                  borderTop: i === 0 ? 'none' : '0.5px solid var(--color-border-tertiary)',
+                }}
+              >
+                <code className="mono" style={{fontSize:11, color:'var(--color-text-secondary)'}}>{r.id}</code>
+                <span style={{fontSize:12, fontWeight:500, fontVariantNumeric:'tabular-nums'}}>{fmtNaira(r.amount)}</span>
+                {/* Chip = short rule code in mono (e.g. AMOUNT_HIGH).
+                    The long human-readable name moves to the title
+                    attribute as a hover tooltip so it doesn't bloat
+                    the row. Score-based declines keep the
+                    two-decimal probability in the same slot. */}
+                <span
+                  className="pill danger"
+                  style={{fontSize:11}}
+                  title={r.isRule && r.ruleDescr ? r.ruleDescr : undefined}
+                >
+                  {r.isRule
+                    ? (r.ruleCode || 'RULE')
+                    : (typeof r.score === 'number' ? r.score.toFixed(2) : '—')}
+                </span>
+                <span className="truncate" style={{fontSize:11, color:'var(--color-text-secondary)'}}>
+                  {r.isRule ? 'PRE_RULE' : r.reasons}
+                </span>
+                <span style={{fontSize:11, color:'var(--color-text-tertiary)', whiteSpace:'nowrap', fontVariantNumeric:'tabular-nums'}}>{r.age}</span>
+              </div>
+            ))}
+          </>
         )}
-        {recent.map((r, i) => (
-          <div key={i} style={{display:'flex', alignItems:'center', gap:10, padding:'9px 0', borderTop: i === 0 ? 'none' : '0.5px solid var(--color-border-tertiary)'}}>
-            <code className="mono" style={{fontSize:11, color:'var(--color-text-secondary)', flexShrink:0}}>{r.id}</code>
-            <span style={{fontSize:12, fontWeight:500, flexShrink:0}}>{fmtNaira(r.amount)}</span>
-            {/* For rule-stage declines, show the rule's short code in
-                mono (e.g. AMOUNT_HIGH, VELOCITY_24H). The literal
-                word "rule" was filler — the rule code tells the
-                operator what to act on. Score declines keep the
-                two-decimal probability. */}
-            <span className="pill danger" style={{fontSize:11}}>
-              {r.isRule ? (r.rule || 'RULE') : (typeof r.score === 'number' ? r.score.toFixed(2) : '—')}
-            </span>
-            <span className="truncate" style={{fontSize:11, color:'var(--color-text-secondary)'}}>
-              {r.isRule ? 'PRE_RULE' : r.reasons}
-            </span>
-            <span style={{fontSize:11, color:'var(--color-text-tertiary)', marginLeft:'auto', flexShrink:0, whiteSpace:'nowrap'}}>{r.age}</span>
-          </div>
-        ))}
       </section>
     </>
   );
@@ -280,6 +335,33 @@ function Dashboard({ toast, user, queue, models, reports, webhooks, nav }) {
 
 function Dot({ color }) {
   return <span style={{display:'inline-block', width:6, height:6, borderRadius:'50%', background:color, marginRight:5, verticalAlign:1}}/>;
+}
+
+// Model-metric cell. When the metric is null we render a quiet
+// "unmeasured" label in mono / --ink-faint instead of an em dash —
+// an em dash next to "p50" / "p95" read as broken layout. The label
+// communicates that the metric exists but hasn't been measured yet.
+function ModelMetric({ label, value }) {
+  return (
+    <div>
+      <span style={{color:'var(--color-text-tertiary)', display:'block'}}>{label}</span>
+      {value == null ? (
+        <span
+          className="mono"
+          style={{
+            fontSize: 10,
+            color: 'var(--ink-faint)',
+            fontWeight: 400,
+            letterSpacing: '0.02em',
+          }}
+        >
+          unmeasured
+        </span>
+      ) : (
+        <span style={{fontWeight:500}}>{value}</span>
+      )}
+    </div>
+  );
 }
 
 export default Dashboard;
