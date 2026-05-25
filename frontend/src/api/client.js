@@ -183,13 +183,13 @@ export const predict = (payload) =>
     body: JSON.stringify(payload),
   }).then(unwrap);
 
+// Reads return null on offline/401 — every other safe() fallback in
+// this file returns an empty value (`[]`, `{ rows: [], total: 0 }`).
+// The previous realistic-looking placeholders (47 dec/s, 7.8% decline)
+// misled operators into thinking the system was running when RDA was
+// down; per docs/FRONTEND.md the dashboard never displays synthetic data.
 export const metrics = () =>
-  safe(() => fetch('/v1/metrics').then(unwrap), () => ({
-    decisionsPerSec: 47,
-    declineRate: 0.078,
-    overrideRate: 0.021,
-    fiaReportsPerHour: 31,
-  }));
+  safe(() => fetch('/v1/metrics', { headers: adminHeaders({ body: false }) }).then(unwrap), null);
 
 // ──────── API keys (admin) ────────
 export const listApiKeys = () =>

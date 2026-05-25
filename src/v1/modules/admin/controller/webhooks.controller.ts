@@ -48,9 +48,27 @@ class WebhooksController {
     req: FastifyRequest<{ Querystring: { limit?: string; status?: string } }>,
     res: FastifyReply
   ) => {
-    const limit = req.query.limit ? Number(req.query.limit) : undefined;
+    // Validate limit is a positive int 1..500; coerce or fall back to
+    // repo default. Reject statuses outside the known set so a typo
+    // doesn't silently return an empty list.
+    const parsedLimit = Number.parseInt(req.query.limit ?? "", 10);
+    const limit = Number.isFinite(parsedLimit) && parsedLimit > 0
+      ? Math.min(parsedLimit, 500)
+      : undefined;
+
+    const allowedStatuses = new Set(["PENDING", "DELIVERED", "FAILED"]);
+    if (req.query.status && !allowedStatuses.has(req.query.status)) {
+      return res
+        .code(httpStatus.BAD_REQUEST)
+        .send(
+          ErrorResponse(
+            `status must be one of: ${Array.from(allowedStatuses).join(", ")}`
+          )
+        );
+    }
+
     const rows = await this.deliveryRepo.listRecent({
-      limit: Number.isFinite(limit) ? limit : undefined,
+      limit,
       status: req.query.status,
     });
     return res.send(SuccessResponse("Webhook deliveries", rows));

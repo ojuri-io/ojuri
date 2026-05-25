@@ -107,19 +107,26 @@ function registerCustomValidationRules() {
     "The :attribute field is not in the correct format. Example of allowed format is 2348888888888."
   );
 
-  Validator.register(
-    "amount",
-    (value: any) => {
-      return !Number.isSafeInteger(value);
-    },
-    "The :attribute field is invalid"
-  );
+  // The custom "amount" rule isn't referenced by any validator today
+  // (predict.validator.ts uses `numeric|min:0.01|max:9999999999`), and
+  // the previous body was inverted (returned true for non-integers,
+  // false for safe integers — which would have rejected every valid
+  // amount). Removing rather than fixing because adding it to a rule
+  // string with the wrong semantics would silently break input
+  // validation across every payload that uses it.
 }
 
 function setErrorHandler(fastify) {
   fastify.setErrorHandler((err, request, reply) => {
-    const statusCode = err.statusCode || 503;
-    const message = err instanceof AppError ? err.message : "We are unable to proces this request. Please try again.";
+    // Respect explicit 4xx status codes from validation / auth /
+    // not-found errors. Default unknowns to 500 (not 503 — 503 means
+    // "service unavailable, try later" and is the wrong semantic for
+    // a generic uncaught error).
+    const raw = err.statusCode;
+    const statusCode = typeof raw === "number" && raw >= 400 && raw < 600 ? raw : 500;
+    const message = err instanceof AppError
+      ? err.message
+      : "We are unable to process this request. Please try again.";
 
     Logger.error({ err: err.cause || err });
 
