@@ -8,6 +8,7 @@
 
 import React, { useEffect, useMemo, useState } from 'react';
 import { Ti, PageHead, Modal, permLock } from '../components/shell.jsx';
+import { DateTimePicker } from '../components/date-time-picker.jsx';
 import { Pagination, paginate } from '../components/pagination.jsx';
 import {
   listSavedReports,
@@ -472,19 +473,18 @@ function Editor({ draft, setDraft, availableColumns }) {
         <legend style={{ fontSize: 10, color: 'var(--color-text-tertiary)', padding: '0 6px' }}>FILTERS</legend>
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
           <Field label="From">
-            <input
-              type="datetime-local"
+            <DateTimePicker
               value={draft.filters.from}
-              onChange={(e) => setFilter('from', e.target.value)}
-              style={{ width: '100%' }}
+              onChange={(v) => setFilter('from', v)}
+              placeholder="dd mmm yyyy, hh:mm"
             />
           </Field>
           <Field label="To">
-            <input
-              type="datetime-local"
+            <DateTimePicker
               value={draft.filters.to}
-              onChange={(e) => setFilter('to', e.target.value)}
-              style={{ width: '100%' }}
+              onChange={(v) => setFilter('to', v)}
+              placeholder="dd mmm yyyy, hh:mm"
+              align="right"
             />
           </Field>
         </div>

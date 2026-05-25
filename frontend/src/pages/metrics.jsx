@@ -168,9 +168,9 @@ function Metrics() {
             <p style={{ margin: '2px 0 0', fontSize: 11, color: 'var(--color-text-secondary)' }}>Server-side, excludes network</p>
           </div>
           <div style={{ display: 'flex', gap: 10, fontSize: 10, color: 'var(--color-text-secondary)' }}>
-            <LegendStripe color="var(--color-text-info)" label={`p50 · ${fmtMs(windowStats?.championLatency?.p50)}`} />
-            <LegendStripe color="var(--color-text-warning)" label={`p95 · ${fmtMs(windowStats?.championLatency?.p95)}`} />
-            <LegendStripe color="var(--color-text-danger)" label={`p99 · ${fmtMs(windowStats?.championLatency?.p99)}`} />
+            <LegendStripe color="var(--chart-allow)" label={`p50 · ${fmtMs(windowStats?.championLatency?.p50)}`} />
+            <LegendStripe color="var(--chart-review)" label={`p95 · ${fmtMs(windowStats?.championLatency?.p95)}`} />
+            <LegendStripe color="var(--chart-decline)" label={`p99 · ${fmtMs(windowStats?.championLatency?.p99)}`} />
           </div>
         </div>
         <LatencyChart buckets={latency?.buckets || []} />
@@ -286,9 +286,9 @@ function LatencyChart({ buckets }) {
           <text x={pad.l - 4} y={yScale(g) + 3} fontSize="9" fill="var(--color-text-tertiary)" textAnchor="end" fontFamily="var(--font-mono)">{g}</text>
         </g>
       ))}
-      <polyline fill="none" stroke="var(--color-text-danger)" strokeWidth="1.4" points={line('p99')} />
-      <polyline fill="none" stroke="var(--color-text-warning)" strokeWidth="1.4" points={line('p95')} />
-      <polyline fill="none" stroke="var(--color-text-info)" strokeWidth="1.4" points={line('p50')} />
+      <polyline fill="none" stroke="var(--chart-decline)" strokeWidth="1.4" points={line('p99')} />
+      <polyline fill="none" stroke="var(--chart-review)" strokeWidth="1.4" points={line('p95')} />
+      <polyline fill="none" stroke="var(--chart-allow)" strokeWidth="1.4" points={line('p50')} />
       <text x={pad.l} y={H - 8} fontSize="9" fill="var(--color-text-tertiary)" fontFamily="var(--font-mono)">
         {buckets[0]?.ts ? new Date(buckets[0].ts).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' }) : ''}
       </text>

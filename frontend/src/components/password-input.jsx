@@ -37,7 +37,18 @@ export function PasswordInput({
 }) {
   const [visible, setVisible] = useState(false);
   return (
-    <span style={{ position: 'relative', display: 'inline-block', width: '100%' }}>
+    <span
+      style={{
+        // display: block (not inline-block) so the wrapper's height
+        // is exactly the input's height. Inline-block leaves a few
+        // px of baseline descender space below the input, which made
+        // the absolutely-positioned toggle sit below the visual
+        // mid-line even with top:50% + translateY(-50%).
+        position: 'relative',
+        display: 'block',
+        width: '100%',
+      }}
+    >
       <input
         {...rest}
         id={id}
@@ -65,22 +76,34 @@ export function PasswordInput({
         onClick={() => setVisible((v) => !v)}
         disabled={disabled}
         style={{
+          // Flex centering so the SVG sits on the button's own box
+          // axis — the global Ti wrapper sets
+          // `vertical-align: text-bottom` for inline contexts, which
+          // would otherwise push the icon below the input's mid-line.
           position: 'absolute',
-          right: 6,
+          right: 4,
           top: '50%',
           transform: 'translateY(-50%)',
+          display: 'inline-flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          width: 28,
+          height: 28,
           background: 'transparent',
           border: 'none',
-          padding: 4,
+          padding: 0,
           margin: 0,
           cursor: disabled ? 'not-allowed' : 'pointer',
-          color: 'var(--color-text-tertiary)',
-          lineHeight: 0,
+          color: 'var(--ink-muted)',
           opacity: disabled ? 0.4 : 1,
         }}
         title={visible ? 'Hide characters' : 'Show characters'}
       >
-        <Ti name={visible ? 'eye-off' : 'eye'} size={16} />
+        <Ti
+          name={visible ? 'eye-off' : 'eye'}
+          size={16}
+          style={{ verticalAlign: 'middle' }}
+        />
       </button>
     </span>
   );

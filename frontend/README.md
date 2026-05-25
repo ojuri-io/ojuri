@@ -15,12 +15,12 @@ frontend/
   package.json
   src/
     main.jsx              # React 18 root
-    app.jsx               # routing + shared state + tweaks panel
-    styles.css            # design tokens, sidebar, panels, pills, modals
+    app.jsx               # routing + shared state
+    tokens.css            # canonical Ojuri brand tokens (Stone scale, type, spacing)
+    styles.css            # legacy aliases mapped onto tokens; sidebar, panels, pills, modals
     api/client.js         # /v1 (RDA) + /fia (FIA) calls with empty fallback
     components/
       shell.jsx           # Ti, Sidebar, PageHead, Modal, useToasts, helpers
-      tweaks-panel.jsx    # floating tweak controls (accent / density / dark)
     pages/
       dashboard.jsx
       live-decisions.jsx

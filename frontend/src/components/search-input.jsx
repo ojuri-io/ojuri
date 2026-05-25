@@ -12,6 +12,7 @@
 
 import React, { useState, useEffect, useRef } from 'react';
 import { Ti } from './shell.jsx';
+import { DateTimePicker } from './date-time-picker.jsx';
 
 /**
  * Committed-on-Enter text input. The parent never sees mid-typing values.
@@ -203,26 +204,21 @@ export function DateRangeFilter({
       >
         <div>
           <p className="label-up" style={{ margin: '0 0 4px' }}>FROM</p>
-          <input
-            type="datetime-local"
-            className="mono"
+          <DateTimePicker
             value={draftFrom}
-            onChange={(e) => setDraftFrom(e.target.value)}
-            onKeyDown={onKey}
+            onChange={(v) => setDraftFrom(v)}
+            placeholder="dd mmm yyyy, hh:mm"
             title={hint}
-            style={{ width: '100%', fontSize: 12 }}
           />
         </div>
         <div>
           <p className="label-up" style={{ margin: '0 0 4px' }}>TO</p>
-          <input
-            type="datetime-local"
-            className="mono"
+          <DateTimePicker
             value={draftTo}
-            onChange={(e) => setDraftTo(e.target.value)}
-            onKeyDown={onKey}
+            onChange={(v) => setDraftTo(v)}
+            placeholder="dd mmm yyyy, hh:mm"
+            align="right"
             title={hint}
-            style={{ width: '100%', fontSize: 12 }}
           />
         </div>
       </div>

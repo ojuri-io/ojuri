@@ -60,6 +60,7 @@ decisions.
 ````bash
 git clone https://github.com/ojuri-io/ojuri.git
 cd ojuri
+cp env-sample .env                          # provides AUTH_JWT_SECRET, DB creds
 docker compose up -d
 npm install && npm run db:migrate
 ````
@@ -68,6 +69,11 @@ That brings up Postgres, Redis, Kafka, three RDA replicas behind NGINX, two
 PAA workers, and the Prometheus/Grafana stack. FIA is gated behind a profile
 because it carries ~7.6 GB of Phi-3 weights — opt in with
 `docker compose --profile fia up -d fia` when you have the disk.
+
+> Copying `env-sample` to `.env` is required before `docker compose up` —
+> RDA refuses `/v1/auth/login` without `AUTH_JWT_SECRET`, and the Knex-backed
+> admin endpoints need the `DB_*` block. Rotate `AUTH_JWT_SECRET` before any
+> non-dev deploy.
 
 The dashboard runs separately:
 
@@ -89,7 +95,7 @@ curl -X POST http://localhost:3000/v1/predict \
     "receiver_id": "user_b",
     "amount": 1500.00,
     "transaction_type": "TRANSFER",
-    "timestamp": 1717718400,
+    "timestamp": 1717718400000,
     "segment": "high_value"
   }'
 ````

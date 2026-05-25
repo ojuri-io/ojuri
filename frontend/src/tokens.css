@@ -1,0 +1,215 @@
+/*
+ * Ojuri Design Tokens
+ *
+ * The canonical CSS variables for color, typography, spacing, and layout.
+ * See BRAND.md for the rules that govern when and how to use them.
+ *
+ * Token philosophy: stone-scale tokens are the primitives. Semantic tokens
+ * (--surface, --ink, etc.) are aliases. Components should consume semantic
+ * tokens, not primitives, so a future palette change requires updating only
+ * the semantic layer.
+ */
+
+:root {
+  /* === COLOR: Stone scale (warm grey) === */
+  --stone-50:  #FDFCFA;
+  --stone-100: #FAF6F0;
+  --stone-200: #F0EBE2;
+  --stone-300: #D9D2C6;
+  --stone-400: #B0A89B;
+  --stone-500: #857E72;
+  --stone-600: #5C564C;
+  --stone-700: #3F3A33;
+  --stone-800: #2A2620;
+  --stone-900: #1A1612;
+
+  /* === COLOR: Semantic === */
+  --surface:        var(--stone-100);
+  --surface-alt:    var(--stone-200);
+  --surface-raised: var(--stone-50);
+
+  --ink:            var(--stone-900);
+  --ink-secondary:  var(--stone-600);
+  --ink-muted:      var(--stone-500);
+  --ink-disabled:   var(--stone-400);
+
+  --border:         var(--stone-300);
+  --border-strong:  var(--stone-700);
+
+  /* === COLOR: Chart palette (dashboard only — never on brand surfaces) === */
+  --chart-allow:    #5C7A5C;
+  --chart-decline:  #A35140;
+  --chart-review:   #7A6F4A;
+
+  /* === TYPOGRAPHY: Families === */
+  --font-display: 'Source Serif 4', 'Source Serif Pro', Georgia, 'Times New Roman', serif;
+  --font-body:    'Inter', system-ui, -apple-system, 'Segoe UI', sans-serif;
+  --font-code:    'JetBrains Mono', 'SF Mono', Menlo, Consolas, monospace;
+
+  /* === TYPOGRAPHY: Display (Source Serif 4) === */
+  --text-display-xl-size:    4rem;       /* 64px */
+  --text-display-xl-line:    1.0625;     /* 68px */
+  --text-display-xl-weight:  700;
+
+  --text-display-lg-size:    3rem;       /* 48px */
+  --text-display-lg-line:    1.1667;     /* 56px */
+  --text-display-lg-weight:  600;
+
+  --text-display-md-size:    2.25rem;    /* 36px */
+  --text-display-md-line:    1.2222;     /* 44px */
+  --text-display-md-weight:  600;
+
+  --text-display-sm-size:    1.75rem;    /* 28px */
+  --text-display-sm-line:    1.2857;     /* 36px */
+  --text-display-sm-weight:  600;
+
+  /* === TYPOGRAPHY: Body (Inter) === */
+  --text-body-xl-size:   1.375rem;   /* 22px */
+  --text-body-xl-line:   1.4545;     /* 32px */
+  --text-body-xl-weight: 400;
+
+  --text-body-lg-size:   1.125rem;   /* 18px */
+  --text-body-lg-line:   1.5556;     /* 28px */
+  --text-body-lg-weight: 400;
+
+  --text-body-md-size:   1rem;       /* 16px */
+  --text-body-md-line:   1.5;        /* 24px */
+  --text-body-md-weight: 400;
+
+  --text-body-sm-size:   0.875rem;   /* 14px */
+  --text-body-sm-line:   1.4286;     /* 20px */
+  --text-body-sm-weight: 400;
+
+  --text-body-xs-size:   0.75rem;    /* 12px */
+  --text-body-xs-line:   1.3333;     /* 16px */
+  --text-body-xs-weight: 500;
+
+  /* === TYPOGRAPHY: Code (JetBrains Mono) === */
+  --text-code-md-size:   0.875rem;   /* 14px */
+  --text-code-md-line:   1.5714;     /* 22px */
+  --text-code-md-weight: 400;
+
+  --text-code-sm-size:   0.75rem;    /* 12px */
+  --text-code-sm-line:   1.6667;     /* 20px */
+  --text-code-sm-weight: 400;
+
+  /* === TYPOGRAPHY: Letter-spacing === */
+  --tracking-display: -0.02em;
+  --tracking-body:    0;
+  --tracking-caps:    0.05em;
+
+  /* === SPACING (base unit 4px) === */
+  --space-1:  0.25rem;   /* 4px */
+  --space-2:  0.5rem;    /* 8px */
+  --space-3:  0.75rem;   /* 12px */
+  --space-4:  1rem;      /* 16px */
+  --space-5:  1.25rem;   /* 20px */
+  --space-6:  1.5rem;    /* 24px */
+  --space-8:  2rem;      /* 32px */
+  --space-10: 2.5rem;    /* 40px */
+  --space-12: 3rem;      /* 48px */
+  --space-16: 4rem;      /* 64px */
+  --space-20: 5rem;      /* 80px */
+  --space-24: 6rem;      /* 96px */
+  --space-32: 8rem;      /* 128px */
+
+  /* === RADIUS === */
+  --radius-none: 0;
+  --radius-sm:   2px;
+  --radius-md:   4px;
+  --radius-lg:   8px;
+  --radius-pill: 9999px;
+
+  /* === BORDERS === */
+  --border-thin:    1px solid var(--border);
+  --border-medium:  1px solid var(--stone-400);
+  --border-strong:  1px solid var(--border-strong);
+
+  /* === SHADOWS (use sparingly — borders preferred) === */
+  --shadow-subtle: 0 1px 2px rgba(26, 22, 18, 0.04);
+  --shadow-card:   0 4px 12px rgba(26, 22, 18, 0.06);
+
+  /* === LAYOUT === */
+  --max-width-prose:   65ch;    /* Long-form reading width */
+  --max-width-content: 1080px;  /* Main content column */
+  --max-width-wide:    1280px;  /* Wide layouts (rare) */
+}
+
+/* === BASE STYLES === */
+
+html {
+  font-family: var(--font-body);
+  font-size: 16px;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+body {
+  background: var(--surface);
+  color: var(--ink);
+  font-size: var(--text-body-md-size);
+  line-height: var(--text-body-md-line);
+  font-weight: var(--text-body-md-weight);
+  letter-spacing: var(--tracking-body);
+}
+
+h1, h2, h3, h4 {
+  font-family: var(--font-display);
+  color: var(--ink);
+  letter-spacing: var(--tracking-display);
+  margin: 0;
+}
+
+h1 {
+  font-size: var(--text-display-lg-size);
+  line-height: var(--text-display-lg-line);
+  font-weight: var(--text-display-lg-weight);
+}
+
+h2 {
+  font-size: var(--text-display-md-size);
+  line-height: var(--text-display-md-line);
+  font-weight: var(--text-display-md-weight);
+}
+
+h3 {
+  font-size: var(--text-display-sm-size);
+  line-height: var(--text-display-sm-line);
+  font-weight: var(--text-display-sm-weight);
+}
+
+code, pre, kbd {
+  font-family: var(--font-code);
+  font-size: var(--text-code-md-size);
+  line-height: var(--text-code-md-line);
+}
+
+a {
+  color: var(--ink);
+  text-decoration: underline;
+  text-decoration-thickness: 1px;
+  text-underline-offset: 0.15em;
+}
+
+a:hover {
+  color: var(--stone-700);
+}
+
+hr {
+  border: none;
+  border-top: var(--border-thin);
+  margin: var(--space-12) 0;
+}
+
+/* === DARK MODE (deferred — placeholder for future) === */
+/*
+:root[data-theme="dark"] {
+  --surface:        var(--stone-900);
+  --surface-alt:    var(--stone-800);
+  --surface-raised: var(--stone-800);
+  --ink:            var(--stone-100);
+  --ink-secondary:  var(--stone-400);
+  --ink-muted:      var(--stone-500);
+  --border:         var(--stone-700);
+}
+*/

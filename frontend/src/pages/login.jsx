@@ -4,6 +4,7 @@
 
 import React, { useState } from 'react';
 import { Ti } from '../components/shell.jsx';
+import { Monogram } from '../components/monogram.jsx';
 import { PasswordInput } from '../components/password-input.jsx';
 import { login as apiLogin } from '../api/client.js';
 
@@ -54,7 +55,7 @@ function Login({ onSuccess }) {
         display: 'flex',
         alignItems: 'center',
         justifyContent: 'center',
-        background: 'var(--color-background-secondary)',
+        background: 'var(--surface)',
         padding: 24,
       }}
     >
@@ -63,43 +64,58 @@ function Login({ onSuccess }) {
         style={{
           width: '100%',
           maxWidth: 360,
-          background: 'var(--color-background-primary)',
-          border: '0.5px solid var(--color-border-tertiary)',
-          borderRadius: 'var(--border-radius-lg)',
-          boxShadow: 'var(--shadow-lg)',
-          padding: '28px 28px 22px',
+          background: 'var(--surface)',
+          border: '1px solid var(--border)',
+          borderRadius: 'var(--radius-md)',
+          padding: '32px 32px 24px',
         }}
       >
-        <div
-          style={{
-            display: 'flex',
-            alignItems: 'center',
-            gap: 8,
-            marginBottom: 18,
-          }}
-        >
+        <div style={{ marginBottom: 22 }}>
           <div
             style={{
-              width: 32,
-              height: 32,
-              borderRadius: 8,
-              background: 'var(--color-background-info)',
-              color: 'var(--color-text-info)',
               display: 'flex',
               alignItems: 'center',
-              justifyContent: 'center',
+              gap: 14,
+              color: 'var(--ink)',
             }}
           >
-            <Ti name="shield-half" size={18} />
+            <Monogram size={40} aria-hidden />
+            <div>
+              <h1
+                style={{
+                  margin: 0,
+                  fontFamily: 'var(--font-display)',
+                  fontSize: 32,
+                  fontWeight: 600,
+                  letterSpacing: '-0.01em',
+                  color: 'var(--ink)',
+                  lineHeight: 1,
+                }}
+              >
+                Ojuri<span style={{ fontWeight: 700 }}>.</span>
+              </h1>
+              <p
+                style={{
+                  margin: '6px 0 0',
+                  fontFamily: 'var(--font-code)',
+                  fontSize: 12,
+                  color: 'var(--ink-muted)',
+                  lineHeight: 1,
+                }}
+              >
+                sentinel
+              </p>
+            </div>
           </div>
-          <div>
-            <h1 style={{ margin: 0, fontSize: 17, fontWeight: 500, letterSpacing: '-0.01em' }}>
-              Sentinel
-            </h1>
-            <p style={{ margin: 0, fontSize: 11, color: 'var(--color-text-tertiary)' }}>
-              Sign in to the fraud-ops dashboard
-            </p>
-          </div>
+          <p
+            style={{
+              margin: '14px 0 0',
+              fontSize: 13,
+              color: 'var(--ink-secondary)',
+            }}
+          >
+            Sign in to the fraud-ops dashboard.
+          </p>
         </div>
 
         <label

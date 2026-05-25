@@ -1,14 +1,25 @@
 // Page 1 — Operator dashboard
 
-import React, { useEffect, useState } from 'react';
-import { Ti, PageHead, fmtNaira, fmtAge } from '../components/shell.jsx';
+import React, { useEffect, useMemo, useState } from 'react';
+import { Ti, fmtNaira, fmtAge } from '../components/shell.jsx';
 import {
   getStatsToday,
   getStatsWindow,
   listReviewQueue,
 } from '../api/client.js';
 
-function Dashboard({ toast, queue, models, reports, webhooks, nav }) {
+// Operator orientation header — date stamp in mono. No greeting,
+// no marketing copy. Memoised on `Date.now()` so the format is
+// stable for the page lifetime (don't re-render on every state tick).
+function todayLabel() {
+  const now = new Date();
+  const weekday = now.toLocaleDateString('en-US', { weekday: 'short' });
+  const monthDay = now.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+  return `Today · ${weekday}, ${monthDay}`;
+}
+
+function Dashboard({ toast, user, queue, models, reports, webhooks, nav }) {
+  const dateLabel = useMemo(todayLabel, []);
   const champion = models.find(m => m.status === 'ACTIVE');
   const shadow = models.find(m => m.status === 'SHADOW');
   const newReports = reports.slice(0, 4);
@@ -38,9 +49,15 @@ function Dashboard({ toast, queue, models, reports, webhooks, nav }) {
       .catch(() => {
         /* swallow — tile renders "—" when null */
       });
-    listReviewQueue()
-      .then((rows) => {
-        if (cancelled || !Array.isArray(rows)) return;
+    // `/v1/review-queue` returns `{ rows, total, limit, offset }` — unwrap
+    // before storing. Earlier the response was treated as a raw array which
+    // silently failed the Array.isArray guard, leaving Recent declines empty
+    // until the Review Queue page was visited and populated the shared
+    // `queue` state.
+    listReviewQueue({ limit: 4 })
+      .then((res) => {
+        if (cancelled) return;
+        const rows = Array.isArray(res?.rows) ? res.rows : [];
         setLiveQueue(rows);
       })
       .catch(() => {
@@ -64,24 +81,33 @@ function Dashboard({ toast, queue, models, reports, webhooks, nav }) {
   const total = stats?.total ?? accept + decline + review;
 
   // p50 / p95 latencies are millisecond-decimal — render to one decimal
-  // place to match the original visual density. `—` when the window has
-  // no decisions yet.
+  // place to match the original visual density. Returns `null` when the
+  // window has no decisions yet; the caller decides how to render the
+  // gap (currently a quiet "unmeasured" label, never an em dash).
   const formatLatency = (v) =>
-    typeof v === 'number' && Number.isFinite(v) ? `${v.toFixed(1)} ms` : '—';
+    typeof v === 'number' && Number.isFinite(v) ? `${v.toFixed(1)} ms` : null;
 
   // Recent declines — uses the live review queue when reachable, falling
   // back to whatever the parent passed in (an empty array when the API
   // is offline). Normalises both shapes.
+  //
+  // `ruleCode` is the short identifier shown in the chip (e.g. AMOUNT_HIGH,
+  // FRAUD_TEST_SENDER). `ruleDescr` is the long human-readable name —
+  // surfaced on hover via the chip's `title` attribute so the row's chip
+  // text doesn't dominate the line.
   const recent = sourceQueue.slice(0, 4).map((q) => {
     const reasonCodes = (q.reasonCodes || []).map((c) =>
       typeof c === 'string' ? c : c?.code || '',
     ).filter(Boolean);
+    const ruleCode = q.preRule || q.ruleCode || null;
+    const ruleDescr = q.ruleName || null;
     return {
       id: (q.transactionId || '').slice(0, 8) + '…',
       amount: Number(q.amount ?? 0),
       score: Number(q.championScore ?? 0),
       isRule: q.stage === 'PRE_RULE' || q.decisionSource === 'PRE_RULE',
-      rule: q.preRule || q.ruleName || null,
+      ruleCode,
+      ruleDescr,
       reasons: reasonCodes.slice(0, 2).join(' · ') || '—',
       age: q.ageMin != null ? fmtAge(q.ageMin) + ' ago' : '',
     };
@@ -124,13 +150,26 @@ function Dashboard({ toast, queue, models, reports, webhooks, nav }) {
 
   return (
     <>
-      <PageHead title="Hello, Ayo" sub="Here's what needs your attention today.">
-        <button className="icon-only" title="Search"><Ti name="search"/></button>
-        <button className="icon-only" title="Notifications" style={{position:'relative'}}>
-          <Ti name="bell"/>
-          <span style={{position:'absolute', top:6, right:7, width:6, height:6, borderRadius:'50%', background:'var(--color-text-danger)'}}/>
-        </button>
-      </PageHead>
+      {/* Mono date stamp — operators use this every day; the page is
+          self-evident from the sidebar's active item, so the header
+          orients on time, not on a serif welcome. Search + bell were
+          removed because they were unwired placeholders that read
+          as page-scoped controls when they're really global; if
+          revived they belong in a topbar, not here. */}
+      <header style={{ marginBottom: 20 }}>
+        <p
+          style={{
+            margin: 0,
+            fontFamily: 'var(--font-code)',
+            fontSize: 13,
+            letterSpacing: '0.02em',
+            color: 'var(--ink-muted)',
+            lineHeight: 1.2,
+          }}
+        >
+          {dateLabel}
+        </p>
+      </header>
 
       {/* Things to do */}
       <section className="panel" style={{marginBottom:14, padding:'16px 18px'}}>
@@ -141,9 +180,9 @@ function Dashboard({ toast, queue, models, reports, webhooks, nav }) {
         <div style={{display:'flex', flexDirection:'column'}}>
           {todos.map((t, i) => (
             <div key={i} onClick={t.onClick} style={{display:'flex', alignItems:'center', gap:12, padding:'12px 0', borderTop: i === 0 ? 'none' : '0.5px solid var(--color-border-tertiary)', cursor:'pointer'}}>
-              <div style={{width:34, height:34, borderRadius:8, background: `var(--color-background-${t.tone === 'plain' ? 'secondary' : t.tone})`, color: t.tone === 'plain' ? 'var(--color-text-primary)' : `var(--color-text-${t.tone})`, display:'flex', alignItems:'center', justifyContent:'center', flexShrink:0}}>
-                <Ti name={t.icon} size={16}/>
-              </div>
+              {/* Inline icon — no off-brand colored tile. Tone is
+                  carried by the title's content, not by background chrome. */}
+              <Ti name={t.icon} size={16} style={{color:'var(--ink-muted)', flexShrink:0}}/>
               <div style={{flex:1, minWidth:0}}>
                 <p style={{margin:0, fontSize:13, fontWeight:500}}>{t.title}</p>
                 <p className="truncate" style={{margin:'1px 0 0', fontSize:12, color:'var(--color-text-secondary)'}}>{t.sub}</p>
@@ -172,10 +211,10 @@ function Dashboard({ toast, queue, models, reports, webhooks, nav }) {
             </div>
           </div>
           <div style={{display:'flex', gap:18, fontSize:11}}>
-            <div><span style={{color:'var(--color-text-tertiary)', display:'block'}}>F1</span><span style={{fontWeight:500}}>{champion?.F1 == null ? '—' : champion.F1.toFixed(3)}</span></div>
-            <div><span style={{color:'var(--color-text-tertiary)', display:'block'}}>AUC</span><span style={{fontWeight:500}}>{champion?.AUC == null ? '—' : champion.AUC.toFixed(3)}</span></div>
-            <div><span style={{color:'var(--color-text-tertiary)', display:'block'}}>p50</span><span style={{fontWeight:500}}>{formatLatency(windowStats?.championLatency?.p50)}</span></div>
-            <div><span style={{color:'var(--color-text-tertiary)', display:'block'}}>p95</span><span style={{fontWeight:500}}>{formatLatency(windowStats?.championLatency?.p95)}</span></div>
+            <ModelMetric label="F1"  value={champion?.F1 == null ? null : champion.F1.toFixed(3)} />
+            <ModelMetric label="AUC" value={champion?.AUC == null ? null : champion.AUC.toFixed(3)} />
+            <ModelMetric label="p50" value={formatLatency(windowStats?.championLatency?.p50)} />
+            <ModelMetric label="p95" value={formatLatency(windowStats?.championLatency?.p95)} />
           </div>
         </section>
 
@@ -184,37 +223,111 @@ function Dashboard({ toast, queue, models, reports, webhooks, nav }) {
             <h2>Today's decisions</h2>
             <span style={{fontSize:11, color:'var(--color-text-tertiary)'}}>{total.toLocaleString()} total</span>
           </div>
-          <div style={{display:'flex', height:6, borderRadius:3, overflow:'hidden', marginBottom:10, background:'var(--color-background-secondary)'}}>
-            {total > 0 && <div style={{width:`${(accept/total)*100}%`, background:'var(--color-text-success)'}}/>}
-            {total > 0 && <div style={{width:`${(decline/total)*100}%`, background:'var(--color-text-danger)'}}/>}
-            {total > 0 && <div style={{width:`${(review/total)*100}%`, background:'var(--color-text-warning)'}}/>}
-          </div>
-          <div style={{display:'flex', justifyContent:'space-between', fontSize:11}}>
-            <div><Dot color="var(--color-text-success)"/>Accept<span style={{marginLeft:6, fontWeight:500}}>{accept.toLocaleString()}</span></div>
-            <div><Dot color="var(--color-text-danger)"/>Decline<span style={{marginLeft:6, fontWeight:500}}>{decline}</span></div>
-            <div><Dot color="var(--color-text-warning)"/>Review<span style={{marginLeft:6, fontWeight:500}}>{review}</span></div>
-          </div>
+          {/* Hide the bar + legends entirely when there's no data.
+              Three "0" legends under an empty axis read as a broken
+              chart, not as a real empty state. */}
+          {total === 0 ? (
+            <p
+              style={{
+                margin: 0,
+                padding: '14px 0',
+                textAlign: 'center',
+                fontSize: 13.5,
+                color: 'var(--ink-muted)',
+              }}
+            >
+              No decisions yet today.
+            </p>
+          ) : (
+            <>
+              <div style={{display:'flex', height:6, borderRadius:3, overflow:'hidden', marginBottom:10, background:'var(--color-background-secondary)'}}>
+                <div style={{width:`${(accept/total)*100}%`, background:'var(--color-text-success)'}}/>
+                <div style={{width:`${(decline/total)*100}%`, background:'var(--color-text-danger)'}}/>
+                <div style={{width:`${(review/total)*100}%`, background:'var(--color-text-warning)'}}/>
+              </div>
+              <div style={{display:'flex', justifyContent:'space-between', fontSize:11}}>
+                <div><Dot color="var(--color-text-success)"/>Accept<span style={{marginLeft:6, fontWeight:500}}>{accept.toLocaleString()}</span></div>
+                <div><Dot color="var(--color-text-danger)"/>Decline<span style={{marginLeft:6, fontWeight:500}}>{decline}</span></div>
+                <div><Dot color="var(--color-text-warning)"/>Review<span style={{marginLeft:6, fontWeight:500}}>{review}</span></div>
+              </div>
+            </>
+          )}
         </section>
       </div>
 
-      {/* Recent declines */}
+      {/* Recent declines — table with a mono uppercase header row so
+          the columns read as ID / AMOUNT / RULE / STAGE / AGE rather
+          than four anonymous fields. Header + body share the same
+          grid template so values stay column-aligned. */}
       <section className="panel">
         <div className="panel-head">
           <h2>Recent declines</h2>
           <a href="#" onClick={e=>{e.preventDefault(); nav('queue');}}>Open review queue<Ti name="chevron-right" size={11} style={{marginLeft:2, verticalAlign:-1}}/></a>
         </div>
-        {recent.length === 0 && (
+        {recent.length === 0 ? (
           <p style={{margin:'6px 0 0', fontSize:12, color:'var(--color-text-tertiary)'}}>No recent declines — queue is clear.</p>
+        ) : (
+          <>
+            <div
+              role="row"
+              style={{
+                display: 'grid',
+                gridTemplateColumns: 'auto auto auto 1fr auto',
+                gap: 10,
+                alignItems: 'center',
+                padding: '4px 0 8px',
+                borderBottom: '1px solid var(--border)',
+                fontFamily: 'var(--font-code)',
+                fontSize: 11,
+                letterSpacing: '0.06em',
+                textTransform: 'uppercase',
+                color: 'var(--ink-faint)',
+                lineHeight: 1,
+              }}
+            >
+              <span>ID</span>
+              <span>Amount</span>
+              <span>Rule</span>
+              <span>Stage</span>
+              <span>Age</span>
+            </div>
+            {recent.map((r, i) => (
+              <div
+                key={i}
+                role="row"
+                style={{
+                  display: 'grid',
+                  gridTemplateColumns: 'auto auto auto 1fr auto',
+                  gap: 10,
+                  alignItems: 'center',
+                  padding: '9px 0',
+                  borderTop: i === 0 ? 'none' : '0.5px solid var(--color-border-tertiary)',
+                }}
+              >
+                <code className="mono" style={{fontSize:11, color:'var(--color-text-secondary)'}}>{r.id}</code>
+                <span style={{fontSize:12, fontWeight:500, fontVariantNumeric:'tabular-nums'}}>{fmtNaira(r.amount)}</span>
+                {/* Chip = short rule code in mono (e.g. AMOUNT_HIGH).
+                    The long human-readable name moves to the title
+                    attribute as a hover tooltip so it doesn't bloat
+                    the row. Score-based declines keep the
+                    two-decimal probability in the same slot. */}
+                <span
+                  className="pill danger"
+                  style={{fontSize:11}}
+                  title={r.isRule && r.ruleDescr ? r.ruleDescr : undefined}
+                >
+                  {r.isRule
+                    ? (r.ruleCode || 'RULE')
+                    : (typeof r.score === 'number' ? r.score.toFixed(2) : '—')}
+                </span>
+                <span className="truncate" style={{fontSize:11, color:'var(--color-text-secondary)'}}>
+                  {r.isRule ? 'PRE_RULE' : r.reasons}
+                </span>
+                <span style={{fontSize:11, color:'var(--color-text-tertiary)', whiteSpace:'nowrap', fontVariantNumeric:'tabular-nums'}}>{r.age}</span>
+              </div>
+            ))}
+          </>
         )}
-        {recent.map((r, i) => (
-          <div key={i} style={{display:'flex', alignItems:'center', gap:10, padding:'9px 0', borderTop: i === 0 ? 'none' : '0.5px solid var(--color-border-tertiary)'}}>
-            <code className="mono" style={{fontSize:11, color:'var(--color-text-secondary)', flexShrink:0}}>{r.id}</code>
-            <span style={{fontSize:12, fontWeight:500, flexShrink:0}}>{fmtNaira(r.amount)}</span>
-            <span className={'pill round danger'} style={{fontSize:11, padding:'1px 7px'}}>{r.isRule ? 'rule' : (typeof r.score === 'number' ? r.score.toFixed(2) : '—')}</span>
-            <span className="truncate" style={{fontSize:11, color:'var(--color-text-secondary)'}}>{r.isRule ? `PRE_RULE · ${r.rule || '—'}` : r.reasons}</span>
-            <span style={{fontSize:11, color:'var(--color-text-tertiary)', marginLeft:'auto', flexShrink:0, whiteSpace:'nowrap'}}>{r.age}</span>
-          </div>
-        ))}
       </section>
     </>
   );
@@ -222,6 +335,33 @@ function Dashboard({ toast, queue, models, reports, webhooks, nav }) {
 
 function Dot({ color }) {
   return <span style={{display:'inline-block', width:6, height:6, borderRadius:'50%', background:color, marginRight:5, verticalAlign:1}}/>;
+}
+
+// Model-metric cell. When the metric is null we render a quiet
+// "unmeasured" label in mono / --ink-faint instead of an em dash —
+// an em dash next to "p50" / "p95" read as broken layout. The label
+// communicates that the metric exists but hasn't been measured yet.
+function ModelMetric({ label, value }) {
+  return (
+    <div>
+      <span style={{color:'var(--color-text-tertiary)', display:'block'}}>{label}</span>
+      {value == null ? (
+        <span
+          className="mono"
+          style={{
+            fontSize: 10,
+            color: 'var(--ink-faint)',
+            fontWeight: 400,
+            letterSpacing: '0.02em',
+          }}
+        >
+          unmeasured
+        </span>
+      ) : (
+        <span style={{fontWeight:500}}>{value}</span>
+      )}
+    </div>
+  );
 }
 
 export default Dashboard;
