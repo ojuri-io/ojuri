@@ -9,10 +9,11 @@ export interface UrlVerdict {
   resolvedAddress?: string;
 }
 
-const ALLOW_HTTP =
-  (process.env.WEBHOOK_ALLOW_HTTP ?? "false").toLowerCase() === "true";
-const ALLOW_PRIVATE_NETWORKS =
-  (process.env.WEBHOOK_ALLOW_PRIVATE_NETWORKS ?? "false").toLowerCase() === "true";
+function envFlag(name: string): boolean {
+  // Evaluated per-call so test suites (and live config reloads) see the
+  // current value instead of whatever was set at module-load time.
+  return (process.env[name] ?? "false").toLowerCase() === "true";
+}
 
 /**
  * Validate a webhook target URL against SSRF risks.
@@ -45,7 +46,7 @@ export async function isWebhookUrlSafe(rawUrl: string): Promise<UrlVerdict> {
 
   if (url.protocol === "https:") {
     // ok
-  } else if (url.protocol === "http:" && ALLOW_HTTP) {
+  } else if (url.protocol === "http:" && envFlag("WEBHOOK_ALLOW_HTTP")) {
     // explicit dev opt-in
   } else {
     return { ok: false, reason: `unsupported scheme ${url.protocol} (https required)` };
@@ -70,8 +71,9 @@ export async function isWebhookUrlSafe(rawUrl: string): Promise<UrlVerdict> {
     }
   }
 
+  const allowPrivate = envFlag("WEBHOOK_ALLOW_PRIVATE_NETWORKS");
   for (const addr of addresses) {
-    if (!ALLOW_PRIVATE_NETWORKS && isPrivateAddress(addr)) {
+    if (!allowPrivate && isPrivateAddress(addr)) {
       return {
         ok: false,
         reason: `${hostname} resolves to a private/loopback/link-local address (${addr})`,

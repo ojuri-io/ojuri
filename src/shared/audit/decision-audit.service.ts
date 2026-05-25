@@ -1,6 +1,7 @@
 import { singleton } from "tsyringe";
 import { createServiceLogger } from "@shared/utils/logger/service-logger";
 import { ReasonCode } from "@shared/onnx/reason-codes";
+import { metricsService } from "@shared/metrics/metrics.service";
 import DecisionAuditRepo, { AuditListFilters } from "./repositories/decision-audit.repo";
 import { DecisionAudit } from "./model/decision-audit.model";
 
@@ -82,11 +83,14 @@ class DecisionAuditService {
 
       return row.id;
     } catch (err) {
-      // Audit-log failures must never break the decision path.
+      // Audit-log failures must never break the decision path. The
+      // counter makes a sustained spike alertable instead of a silent
+      // regression in case-management coverage.
       log.error("record", "Failed to persist decision audit row", {
         transactionId: rec.transactionId,
         err: String(err),
       });
+      metricsService.recordAuditWriteFailure("record");
       return null;
     }
   }

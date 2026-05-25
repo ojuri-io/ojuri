@@ -40,6 +40,9 @@ class MetricsService {
   private pagerankComputeTime: Histogram<string>;
   private consumerLag: Gauge<string>;
 
+  // Audit log
+  private auditWriteFailures: Counter<string>;
+
   constructor() {
     this.registry = new Registry();
 
@@ -165,6 +168,17 @@ class MetricsService {
       labelNames: ["partition"],
       registers: [this.registry],
     });
+
+    // decisionAuditLog writes are swallowed-on-failure by design (the
+    // prediction path must never break because of an audit-table
+    // hiccup). Expose a counter so a sustained audit-write failure
+    // becomes a visible alert instead of a silent regression.
+    this.auditWriteFailures = new Counter({
+      name: "fraud_detection_audit_write_failures_total",
+      help: "decisionAuditLog write failures (swallowed by DecisionAuditService)",
+      labelNames: ["op"],
+      registers: [this.registry],
+    });
   }
 
   /**
@@ -279,6 +293,15 @@ class MetricsService {
    */
   updateConsumerLag(partition: number, lag: number) {
     this.consumerLag.set({ partition: String(partition) }, lag);
+  }
+
+  /**
+   * Record an audit-log write failure. The decision-path swallows the
+   * error so predictions still succeed, but it gets counted so a
+   * Prometheus alert can fire on a sustained spike.
+   */
+  recordAuditWriteFailure(op: "record" | "override") {
+    this.auditWriteFailures.inc({ op });
   }
 
   /**

@@ -69,14 +69,15 @@ class PredictController {
         // Idempotency replay path. Scoped by (tenantId, key) so adopters
         // who do partition by tenant still get isolation; single-tenant
         // deployments share the "default" namespace, which is fine.
+        let acquiredLock: { release: () => Promise<void> } | null = null;
         if (idempotencyKey) {
           const requestHash = IdempotencyService.hashRequest(request);
-          const outcome = await this.idempotencyService.lookup({
+          const idemInput = {
             tenantId,
             apiKeyId: apiKey?.id ?? null,
             key: idempotencyKey,
-            requestHash,
-          });
+          };
+          const outcome = await this.idempotencyService.lookup({ ...idemInput, requestHash });
           if (outcome.kind === "replay") {
             log.info("predict", "Idempotent replay served from cache", {
               transactionId: request.transaction_id,
@@ -93,6 +94,42 @@ class PredictController {
               .code(httpStatus.UNPROCESSABLE_ENTITY)
               .header("X-Correlation-ID", traceId)
               .send(ErrorResponse("Idempotency-Key reused with a different request body"));
+          }
+
+          // miss → try to win the lock so we are the only request
+          // running ML for this idempotency key. Losers wait for the
+          // leader's stored response (poll the DB ~3s) and replay it.
+          acquiredLock = await this.idempotencyService.acquireLock(idemInput);
+          if (!acquiredLock) {
+            const waited = await this.idempotencyService.waitForReplay({
+              ...idemInput,
+              requestHash,
+            });
+            if (waited.kind === "replay") {
+              return res
+                .code(httpStatus.OK)
+                .header("X-Correlation-ID", traceId)
+                .header("Idempotency-Replay", "true")
+                .send(waited.response);
+            }
+            if (waited.kind === "conflict") {
+              return res
+                .code(httpStatus.UNPROCESSABLE_ENTITY)
+                .header("X-Correlation-ID", traceId)
+                .send(ErrorResponse("Idempotency-Key reused with a different request body"));
+            }
+            // Still in flight after the poll window — bail with 409 so
+            // the client retries (and the next attempt almost certainly
+            // hits the cache instead of duplicating work).
+            return res
+              .code(httpStatus.CONFLICT)
+              .header("X-Correlation-ID", traceId)
+              .header("Retry-After", "1")
+              .send(
+                ErrorResponse(
+                  "Another request with this Idempotency-Key is still in flight"
+                )
+              );
           }
         }
 
@@ -150,6 +187,10 @@ class PredictController {
             .code(httpStatus.INTERNAL_SERVER_ERROR)
             .header("X-Correlation-ID", traceId)
             .send(ErrorResponse("Failed to process prediction request"));
+        } finally {
+          if (acquiredLock) {
+            await acquiredLock.release();
+          }
         }
       }
     );
