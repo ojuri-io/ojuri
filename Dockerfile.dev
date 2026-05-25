@@ -1,4 +1,4 @@
-# Development Dockerfile with hot-reload support
+# Ojuri RDA development Dockerfile with hot-reload support
 FROM node:20-slim
 
 # Install build dependencies

@@ -25,7 +25,7 @@ const appConfig = {
     topic: process.env.KAFKA_TOPIC || "transactions.completed",
     blockedTopic: process.env.KAFKA_BLOCKED_TOPIC || "transactions.blocked",
     consumerGroup: process.env.KAFKA_CONSUMER_GROUP || "pattern-analysis",
-    clientId: process.env.KAFKA_CLIENT_ID || "fraud-service",
+    clientId: process.env.KAFKA_CLIENT_ID || "ojuri-rda",
   },
   onnx: {
     modelPath: process.env.MODEL_PATH || "./models/fraud_model.onnx",

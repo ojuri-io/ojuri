@@ -1,9 +1,15 @@
 {
-  "name": "paa-service",
+  "name": "@ojuri/paa-service",
   "version": "1.0.0",
-  "description": "Pattern Analysis Agent - Kafka consumer for fraud detection feature engineering",
+  "description": "Ojuri PAA \u2014 Pattern Analysis Agent. Kafka consumer that maintains the transaction graph and velocity windows that feed RDA's predictions.",
   "main": "dist/worker.js",
   "author": "Ayodeji Abodunrin <https://ayodejiabodunrin.com/>",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/ojuri-io/ojuri.git",
+    "directory": "paa-service"
+  },
   "scripts": {
     "start:dev": "nodemon",
     "start": "node dist/worker.js",
