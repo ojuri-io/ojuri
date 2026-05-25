@@ -1,3 +1,4 @@
+/// <reference path="./types/fastify.d.ts" />
 import "reflect-metadata";
 import { container } from "tsyringe";
 import App from "./app";
