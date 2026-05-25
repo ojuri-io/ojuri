@@ -21,6 +21,14 @@ services:
       - LOG_LEVEL=debug
       - DB_CLIENT=pg
       - DB_URL=postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-postgres}@postgres:5432/${POSTGRES_DB:-fraud_db}
+      - AUTH_JWT_SECRET=${AUTH_JWT_SECRET}
+      - AUTH_JWT_TTL_SECONDS=${AUTH_JWT_TTL_SECONDS:-28800}
+      - RDA_REQUIRE_API_KEY=${RDA_REQUIRE_API_KEY:-false}
+      - DB_HOST=postgres
+      - DB_PORT=5432
+      - DB_DATABASE=${POSTGRES_DB:-fraud_db}
+      - DB_USERNAME=${POSTGRES_USER:-postgres}
+      - DB_PASSWORD=${POSTGRES_PASSWORD:-postgres}
     volumes:
       - ./src:/app/src
       - ./models:/app/models:ro

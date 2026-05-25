@@ -59,6 +59,14 @@ services:
       - PAA_HEALTH_URL=${PAA_HEALTH_URL:-http://paa-1:9090}
       - FIA_HEALTH_URL=${FIA_HEALTH_URL:-http://fia:9094}
       - MLA_HEALTH_URL=${MLA_HEALTH_URL:-http://host.docker.internal:9095}
+      - AUTH_JWT_SECRET=${AUTH_JWT_SECRET}
+      - AUTH_JWT_TTL_SECONDS=${AUTH_JWT_TTL_SECONDS:-28800}
+      - RDA_REQUIRE_API_KEY=${RDA_REQUIRE_API_KEY:-false}
+      - DB_HOST=postgres
+      - DB_PORT=5432
+      - DB_DATABASE=${POSTGRES_DB:-fraud_db}
+      - DB_USERNAME=${POSTGRES_USER:-postgres}
+      - DB_PASSWORD=${POSTGRES_PASSWORD:-postgres}
     extra_hosts:
       # Required on Linux hosts so `host.docker.internal` resolves
       # for the MLA health probe. macOS Docker Desktop already
@@ -104,6 +112,14 @@ services:
       - LOG_LEVEL=info
       - DB_CLIENT=pg
       - DB_URL=postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-postgres}@postgres:5432/${POSTGRES_DB:-fraud_db}
+      - AUTH_JWT_SECRET=${AUTH_JWT_SECRET}
+      - AUTH_JWT_TTL_SECONDS=${AUTH_JWT_TTL_SECONDS:-28800}
+      - RDA_REQUIRE_API_KEY=${RDA_REQUIRE_API_KEY:-false}
+      - DB_HOST=postgres
+      - DB_PORT=5432
+      - DB_DATABASE=${POSTGRES_DB:-fraud_db}
+      - DB_USERNAME=${POSTGRES_USER:-postgres}
+      - DB_PASSWORD=${POSTGRES_PASSWORD:-postgres}
     volumes:
       - ./models:/app/models:ro
     depends_on:
@@ -144,6 +160,14 @@ services:
       - LOG_LEVEL=info
       - DB_CLIENT=pg
       - DB_URL=postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-postgres}@postgres:5432/${POSTGRES_DB:-fraud_db}
+      - AUTH_JWT_SECRET=${AUTH_JWT_SECRET}
+      - AUTH_JWT_TTL_SECONDS=${AUTH_JWT_TTL_SECONDS:-28800}
+      - RDA_REQUIRE_API_KEY=${RDA_REQUIRE_API_KEY:-false}
+      - DB_HOST=postgres
+      - DB_PORT=5432
+      - DB_DATABASE=${POSTGRES_DB:-fraud_db}
+      - DB_USERNAME=${POSTGRES_USER:-postgres}
+      - DB_PASSWORD=${POSTGRES_PASSWORD:-postgres}
     volumes:
       - ./models:/app/models:ro
     depends_on:
