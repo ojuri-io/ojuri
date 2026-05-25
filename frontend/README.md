@@ -1,10 +1,9 @@
 # Sentinel — fraud-ops dashboard
 
-Front-end for the multi-agent fraud-detection stack in this repo. Implements
-the **Sentinel.html** design handed off from Claude Design (see
-`/tmp/sentinel-design/` if you still have the bundle, or the screenshots in
-`docs/`). One page per file under `src/pages/`, shared chrome under
-`src/components/`, API client under `src/api/`.
+Front-end for the multi-agent fraud-detection stack in this repo. One page
+per file under `src/pages/`, shared chrome under `src/components/`, API
+client under `src/api/`. The design system tokens live in `tokens.css` and
+the brand guide is at the repo root (`brand.md`).
 
 ## Layout
 
@@ -61,12 +60,14 @@ The dev server proxies:
 ## Auth
 
 Admin-gated endpoints (`/v1/admin/...`) require a logged-in user JWT
-(`Authorization: Bearer …`). Get one with the seeded admin:
+(`Authorization: Bearer …`). Get one with the seeded admin — the password
+is **printed once by `npm run db:migrate`** at the repo root; copy it from
+the migration output:
 
 ```bash
 curl -X POST http://localhost:3000/v1/auth/login \
   -H "content-type: application/json" \
-  -d '{"username":"admin","password":"admin@fraudit"}'
+  -d '{"username":"admin","password":"<from migration output>"}'
 ```
 
 Then store the token in the browser:

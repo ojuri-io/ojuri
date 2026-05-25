@@ -1,0 +1,11 @@
+node_modules
+dist
+coverage
+.nyc_output
+*.d.ts
+paa-service
+mla-service
+fia-service
+frontend
+scripts
+test/**/*.spec.ts

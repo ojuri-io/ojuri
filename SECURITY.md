@@ -9,7 +9,7 @@ Ojuri is a fraud detection platform that sits on the authorization path for real
 Use one of the following private channels, in order of preference:
 
 1. **GitHub Security Advisories (preferred).** Open a draft advisory at <https://github.com/ojuri-io/ojuri/security/advisories/new>. This gives us a private workspace, an audit trail, and a path to a coordinated CVE.
-2. **Email.** Send a report to `security@ojuri.io`. <!-- PLACEHOLDER: maintainer to wire this mailbox once the ojuri.io domain is configured. Until then, prefer the GitHub Security Advisory channel above. -->
+2. **Email** (once provisioned). A `security@ojuri.io` mailbox will replace this notice when the domain is set up — until then, please use the GitHub Security Advisory channel above. It is private to the maintainers.
 
 Please include, where you can:
 

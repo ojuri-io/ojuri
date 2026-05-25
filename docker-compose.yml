@@ -234,7 +234,7 @@ services:
     build:
       context: ./paa-service
       dockerfile: Dockerfile
-    container_name: fraud-paa-2
+    container_name: ojuri-paa-2
     environment:
       - NODE_ENV=production
       - APP_NAME=fraud-paa-2
@@ -259,7 +259,7 @@ services:
       - BATCH_SIZE=100
       - MAX_GRAPH_NODES=1000000
     ports:
-      - "9092:9090"
+      - "9093:9090"
     depends_on:
       - redis
       - kafka

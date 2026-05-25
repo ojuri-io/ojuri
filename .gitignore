@@ -22,7 +22,6 @@ coverage
 dist
 
 *.key
-package-lock.json
 .env
 
 # Python virtual environments and caches (FIA / MLA / PAA)

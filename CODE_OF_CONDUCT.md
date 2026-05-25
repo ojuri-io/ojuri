@@ -36,7 +36,7 @@ This Code of Conduct applies within all Ojuri community spaces, and also applies
 
 ## Enforcement
 
-Instances of abusive, harassing, or otherwise unacceptable behavior may be reported to the community leaders responsible for enforcement at conduct@ojuri.io. <!-- PLACEHOLDER: maintainer to wire once the ojuri.io domain mailbox is configured. --> All complaints will be reviewed and investigated promptly and fairly.
+Instances of abusive, harassing, or otherwise unacceptable behavior may be reported by opening a [private GitHub Security Advisory](https://github.com/ojuri-io/ojuri/security/advisories/new) (these are private to the maintainers even though the form is the security one) or by direct message to a project maintainer. An `conduct@ojuri.io` mailbox will replace these channels once the domain is provisioned. All complaints will be reviewed and investigated promptly and fairly.
 
 All community leaders are obligated to respect the privacy and security of the reporter of any incident.
 

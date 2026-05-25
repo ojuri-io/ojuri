@@ -72,7 +72,7 @@ function registerCustomValidationRules() {
   Validator.register(
     "phone",
     (value: any) => {
-      return value.match(/^(?:(?:(?:\+?234(?:\h1)?|01)\h*)?(?:\(\d{3}\)|\d{3})|\d{4})(?:\W*\d{3})?\W*\d{4}$/);
+      return value.match(/^(?:(?:(?:\+?234(?:\s1)?|01)\s*)?(?:\(\d{3}\)|\d{3})|\d{4})(?:\W*\d{3})?\W*\d{4}$/);
     },
     "The :attribute field is not in the correct format. Example of allowed format is 2348888888888."
   );

@@ -35,24 +35,28 @@ serve the SPA behind your existing reverse proxy.
 
 ## Pages
 
+Every read renders an **empty-state** when the backend is unreachable or you
+haven't logged in. The dashboard never displays synthetic data; see
+"Offline behaviour" below.
+
 | Route hash    | Page              | Backed by                                                                 |
 |---------------|-------------------|---------------------------------------------------------------------------|
-| `#dash`       | Dashboard         | mock + champion model from `/v1/admin/models`                             |
+| `#dash`       | Dashboard         | `/v1/admin/models` champion + audit summary; empty state on 401/offline   |
 | `#live`       | Live decisions    | client-side simulator (placeholder for SSE / WebSocket subscription)      |
-| `#tx`         | Transactions list | mock + queue state                                                        |
-| `#txn:<uuid>` | Transaction detail| derived from queue state + FIA follow-up via `/fia/v1/reports/:id/messages` |
-| `#queue`      | Review queue      | mock state; override hits `/v1/decisions/:auditId/override` (planned)     |
+| `#tx`         | Transactions list | audit log read; empty state on 401/offline                                |
+| `#txn:<uuid>` | Transaction detail| audit row + FIA follow-up via `/fia/v1/reports/:id/messages`              |
+| `#queue`      | Review queue      | audit-log filter for `REVIEW` decisions; override → `/v1/decisions/:auditId/override` |
 | `#invest`     | Investigations    | `/fia/v1/reports`, `POST /fia/v1/reports`, `POST /fia/v1/reports/:id/messages` |
-| `#audit`      | Audit log         | mock (planned: `/v1/admin/audit?from=&to=`)                               |
+| `#audit`      | Audit log         | `/v1/admin/audit?from=&to=`                                                |
 | `#rules`      | Rule editor       | `/v1/admin/rules` GET / POST / PUT / DELETE                               |
 | `#models`     | Model registry    | `/v1/admin/models` GET / POST, `/v1/admin/models/:version/status` PATCH    |
-| `#metrics`    | Metrics           | mock (planned: `/v1/metrics` Prometheus scrape parser)                    |
-| `#health`     | System health     | mock (planned: `/livez` + `/readyz` fan-out)                              |
+| `#metrics`    | Metrics           | `/v1/metrics` Prometheus scrape parser                                    |
+| `#health`     | System health     | `/livez` + `/readyz` fan-out                                              |
 | `#integ`      | Integrations      | `/v1/admin/api-keys` + `/v1/admin/webhooks`                               |
 
-Routes that read from `/v1/admin/*` will return mock data on first
-load if you haven't set `sentinel.jwt` yet — the dashboard stays
-functional, but writes will 401 until you log in.
+Routes that call `/v1/admin/*` return an empty fallback (`[]` or
+`{ rows: [], total: 0 }`) when `sentinel.jwt` is unset or the backend
+401s — the page renders its empty state. Writes will 401 until you log in.
 
 ## Auth
 
@@ -63,13 +67,14 @@ Two pieces of state live in `localStorage`:
 | `sentinel.jwt`    | `Authorization: Bearer <…>`   | Any call under `/v1/admin/*` and `/v1/auth/me`|
 | `sentinel.apiKey` | `X-Api-Key: <…>`              | `/v1/predict` and other key-gated endpoints  |
 
-Get the JWT by calling `POST /v1/auth/login` with seed credentials
-`admin / admin@fraudit` (see [`AUTHZ.md`](AUTHZ.md)):
+Get the JWT by calling `POST /v1/auth/login` with the seeded `admin` user —
+the password is **printed once by `npm run db:migrate`** at the repo root;
+copy it from the migration output (see [`AUTHZ.md`](AUTHZ.md)):
 
 ```bash
 curl -X POST http://localhost:3000/v1/auth/login \
   -H "content-type: application/json" \
-  -d '{"username":"admin","password":"admin@fraudit"}'
+  -d '{"username":"admin","password":"<from migration output>"}'
 ```
 
 Then store the token in DevTools and reload:
