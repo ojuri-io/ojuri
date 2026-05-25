@@ -13,6 +13,7 @@ on-demand report generation and conversational follow-ups — see
 """
 
 import json
+import os
 import signal
 import socketserver
 import sys
@@ -298,17 +299,24 @@ class FIAService:
         # "down" even when it was just thinking. Threading server
         # lets health probes return instantly while reports stream.
         ThreadingHTTPServer.allow_reuse_address = True
+        # Default to loopback so a fresh deployment cannot be probed from
+        # the host network without an explicit opt-in. Compose deployments
+        # set FIA_HTTP_BIND=0.0.0.0 in docker-compose.yml because the
+        # container's loopback is isolated from the host anyway.
+        bind_host = os.environ.get("FIA_HTTP_BIND", "127.0.0.1")
         try:
             self._http_server = ThreadingHTTPServer(
-                ("0.0.0.0", config.METRICS_PORT), make_handler(self)
+                (bind_host, config.METRICS_PORT), make_handler(self)
             )
             self._http_thread = threading.Thread(
                 target=self._http_server.serve_forever, name="fia-http", daemon=True
             )
             self._http_thread.start()
-            logger.info("HTTP server listening on :%d", config.METRICS_PORT)
+            logger.info("HTTP server listening on %s:%d", bind_host, config.METRICS_PORT)
         except OSError as e:
-            logger.warning("HTTP server failed to bind on :%d (%s)", config.METRICS_PORT, e)
+            logger.warning(
+                "HTTP server failed to bind on %s:%d (%s)", bind_host, config.METRICS_PORT, e
+            )
 
     def _stop_http_server(self) -> None:
         if self._http_server is not None:

@@ -18,11 +18,17 @@ import json
 import re
 import uuid
 from http.server import BaseHTTPRequestHandler
-from typing import Any, Callable, Dict, List, Optional, Tuple
+from typing import Any, Callable, Dict, Iterable, List, Optional, Tuple
+
+from .auth import AuthSubject, extract_bearer, verify_token
 
 
 _REPORT_BY_ID = re.compile(r"^/v1/reports/([0-9a-fA-F-]{36})$")
 _REPORT_MESSAGES = re.compile(r"^/v1/reports/([0-9a-fA-F-]{36})/messages$")
+
+# Routes that do NOT require auth — health probes only. /stats and
+# everything under /v1/reports* requires a valid bearer token.
+_OPEN_PATHS = {"/livez", "/health", "/readyz"}
 
 
 class FIAHttpHandler(BaseHTTPRequestHandler):
@@ -46,23 +52,51 @@ class FIAHttpHandler(BaseHTTPRequestHandler):
             return self._respond(200 if ready else 503, {"status": "UP" if ready else "DOWN"})
 
         if self.path == "/stats":
+            if not self._require_auth(("metrics:read",)):
+                return
             return self._respond(200, self.service.stats())
 
         if self.path.startswith("/v1/reports"):
+            if not self._require_auth(("reports:read",)):
+                return
             return self._do_get_report()
-
 
         return self._respond(404, {"error": "not found"})
 
     def do_POST(self):  # noqa: N802
         if self.path == "/v1/reports":
+            if not self._require_auth(("reports:request",)):
+                return
             return self._do_create_report()
 
         match = _REPORT_MESSAGES.match(self.path)
         if match:
+            if not self._require_auth(("reports:message",)):
+                return
             return self._do_create_message(match.group(1))
 
         return self._respond(404, {"error": "not found"})
+
+    # ─────────────────────────────────────────────────────────
+    # Authentication
+    # ─────────────────────────────────────────────────────────
+    def _require_auth(self, required_perms: Iterable[str]) -> bool:
+        token = extract_bearer(self.headers.get("Authorization"))
+        if not token:
+            self._respond(401, {"error": "Authentication required"})
+            return False
+        subject = verify_token(token)
+        if not subject:
+            self._respond(401, {"error": "Invalid or expired token"})
+            return False
+        if not subject.has_permission(required_perms):
+            self._respond(
+                403,
+                {"error": "Missing required permission", "required": list(required_perms)},
+            )
+            return False
+        self._auth: AuthSubject = subject
+        return True
 
     # ─────────────────────────────────────────────────────────
     # GET /v1/reports[/:id]

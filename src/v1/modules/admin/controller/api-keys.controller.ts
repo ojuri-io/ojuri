@@ -4,6 +4,7 @@ import httpStatus from "http-status";
 import ApiKeyService from "@shared/auth/api-key.service";
 import { ErrorResponse, SuccessResponse } from "@shared/utils/response.util";
 import { createServiceLogger } from "@shared/utils/logger/service-logger";
+import { resolveTenantScope } from "@shared/authz/tenant-scope";
 import { IssueApiKeyDto, RevokeApiKeyDto } from "../dtos/api-key.dto";
 
 const log = createServiceLogger("ApiKeysController");
@@ -13,10 +14,11 @@ class ApiKeysController {
   constructor(private apiKeyService: ApiKeyService) {}
 
   issue = async (req: FastifyRequest<{ Body: IssueApiKeyDto }>, res: FastifyReply) => {
-    const { tenantId, name, scope, rateLimitPerMinute, expiresAt } = req.body;
+    const { tenantId: requestedTenant, name, scope, rateLimitPerMinute, expiresAt } = req.body;
+    const tenantId = resolveTenantScope(req.auth, requestedTenant);
 
     const result = await this.apiKeyService.issue({
-      tenantId: tenantId ?? "default",
+      tenantId,
       name,
       scope,
       rateLimitPerMinute,
@@ -36,7 +38,8 @@ class ApiKeysController {
   };
 
   list = async (req: FastifyRequest<{ Querystring: { tenantId?: string } }>, res: FastifyReply) => {
-    const rows = await this.apiKeyService.list(req.query.tenantId);
+    const tenantId = resolveTenantScope(req.auth, req.query.tenantId);
+    const rows = await this.apiKeyService.list(tenantId);
     return res.send(SuccessResponse("API keys", rows));
   };
 

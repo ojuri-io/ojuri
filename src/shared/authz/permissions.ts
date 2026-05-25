@@ -75,6 +75,12 @@ export const PERMISSIONS = [
   { code: "settings:read", description: "Read runtime settings (fraud threshold, drift thresholds, retrain history)" },
   { code: "settings:write", description: "Update runtime settings (fraud threshold)" },
   { code: "mla:configure", description: "Update MLA drift config and trigger manual retrains" },
+
+  // Cross-tenant scoping — required to issue API keys, register webhooks,
+  // or create users for a tenant other than the caller's own. Without
+  // this permission, the tenantId in the request body is ignored and the
+  // caller's own tenantId from their JWT is used.
+  { code: "tenants:admin_any", description: "Operate on any tenant's scope (issue keys, register webhooks, manage users across tenants)" },
 ] as const;
 
 export type PermissionCode = (typeof PERMISSIONS)[number]["code"];

@@ -1,8 +1,9 @@
-import { createHash, createHmac, randomBytes } from "crypto";
+import { createHash, createHmac, randomBytes, randomUUID } from "crypto";
 import { singleton } from "tsyringe";
 import { createServiceLogger } from "@shared/utils/logger/service-logger";
 import WebhookSubscriptionRepo from "./repositories/webhook-subscription.repo";
 import WebhookDeliveryRepo, { DeliveryWithSubscription } from "./repositories/webhook-delivery.repo";
+import { isWebhookUrlSafe } from "./url-guard";
 
 const log = createServiceLogger("WebhookService");
 
@@ -34,6 +35,11 @@ class WebhookService {
    * client exactly once. Only the hash is stored.
    */
   async register(input: WebhookSubscriptionInput): Promise<{ id: string; secret: string }> {
+    const verdict = await isWebhookUrlSafe(input.url);
+    if (!verdict.ok) {
+      throw new Error(`Webhook URL rejected: ${verdict.reason}`);
+    }
+
     const secret = input.secret ?? `whsec_${randomBytes(24).toString("base64url")}`;
     const secretHash = createHash("sha256").update(secret).digest("hex");
 
@@ -116,6 +122,7 @@ class WebhookService {
   private async deliverOne(row: DeliveryWithSubscription): Promise<void> {
     const body = JSON.stringify(row.payload);
     const timestamp = Math.floor(Date.now() / 1000).toString();
+    const deliveryId = randomUUID();
 
     // The stored value is `sha256(secret)`, so the signer uses the
     // hash, not the original secret. Clients verify with the secret
@@ -133,19 +140,38 @@ class WebhookService {
     let responseBody: string | null = null;
 
     try {
+      // Re-resolve the URL here to defeat DNS-rebinding attacks where a
+      // hostname that resolved to a public IP at registration time now
+      // resolves to a private one.
+      const verdict = await isWebhookUrlSafe(row.url);
+      if (!verdict.ok) {
+        throw new Error(`Pre-flight URL check failed: ${verdict.reason}`);
+      }
+
       const resp = await fetch(row.url, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
           "X-Webhook-Event": row.event,
+          "X-Webhook-Delivery": deliveryId,
           "X-Webhook-Signature": `t=${timestamp},v1=${signature}`,
         },
         body,
         signal: controller.signal,
+        // Never follow redirects — a 3xx Location header would let a
+        // subscriber redirect us to an internal target, defeating the
+        // pre-flight check.
+        redirect: "manual",
       });
       responseCode = resp.status;
-      responseBody = (await resp.text()).slice(0, 1024);
-      if (!resp.ok) status = "FAILED";
+      // 3xx with `redirect: "manual"` shows up as opaque; treat as failure.
+      if (resp.status >= 300 && resp.status < 400) {
+        status = "FAILED";
+        responseBody = `redirect refused (status ${resp.status})`;
+      } else {
+        responseBody = (await resp.text()).slice(0, 1024);
+        if (!resp.ok) status = "FAILED";
+      }
     } catch (err) {
       status = "FAILED";
       responseBody = (err instanceof Error ? err.message : String(err)).slice(0, 1024);

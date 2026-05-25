@@ -32,12 +32,17 @@ class PredictController {
     const traceId = `req-${(req.headers["x-correlation-id"] as string) || randomUUID()}`;
     const request = req.body;
     const apiKey = req.apiKey;
-    // tenantId defaults to "default" for the typical single-tenant
-    // self-hosted deployment. Adopters who actually slice traffic by
-    // tenant (sandbox vs prod, business units, sub-merchants) still
-    // get scoping by issuing keys with explicit tenantIds.
+    // tenantId is taken from the verified API key first, then from a JWT
+    // subject if present, then defaults to "default". X-Tenant-ID is
+    // *only* honored as a hint when a verified credential is present —
+    // otherwise an unauthenticated caller could scope into another
+    // tenant's namespace by setting the header.
+    const headerTenant = req.headers["x-tenant-id"] as string | undefined;
     const tenantId =
-      apiKey?.tenantId ?? (req.headers["x-tenant-id"] as string | undefined) ?? "default";
+      apiKey?.tenantId ??
+      req.auth?.tenantId ??
+      ((apiKey || req.auth) && headerTenant) ??
+      "default";
     const idempotencyKey = (req.headers["idempotency-key"] as string | undefined) || null;
 
     return TraceContext.runAsync(
@@ -156,13 +161,31 @@ class PredictController {
   /**
    * Apply a human reviewer override. Persists the override on the
    * audit row and fires `decision.overridden` to subscribers.
+   * The reviewer identity comes from the authenticated subject — the
+   * body cannot forge it (audit-log integrity guarantee in SECURITY.md).
    */
   overrideDecision = async (
-    req: FastifyRequest<{ Params: { auditId: string }; Body: { decision: "ACCEPT" | "DECLINE"; reviewer: string; reason?: string } }>,
+    req: FastifyRequest<{
+      Params: { auditId: string };
+      Body: { decision: "ACCEPT" | "DECLINE"; reason?: string };
+    }>,
     res: FastifyReply
   ) => {
     const { auditId } = req.params;
-    const { decision, reviewer, reason } = req.body;
+    const { decision, reason } = req.body;
+
+    if (decision !== "ACCEPT" && decision !== "DECLINE") {
+      return res
+        .code(httpStatus.BAD_REQUEST)
+        .send(ErrorResponse("decision must be ACCEPT or DECLINE"));
+    }
+
+    const reviewer = req.auth?.username ?? null;
+    if (!reviewer) {
+      return res
+        .code(httpStatus.UNAUTHORIZED)
+        .send(ErrorResponse("Authenticated reviewer required for overrides"));
+    }
 
     const row = await this.decisionAudit.override({ auditId, decision, reviewer, reason });
     if (!row) {

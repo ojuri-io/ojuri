@@ -20,9 +20,39 @@ function bootstrapApp(fastify: FastifyInstance) {
 }
 
 function registerThirdPartyModules(fastify) {
-  fastify.register(cors, { origin: true });
+  fastify.register(cors, buildCorsOptions());
 
   fastify.register(loggerPlugin);
+}
+
+/**
+ * Build the CORS origin allowlist from `SENTINEL_CORS_ORIGINS`
+ * (comma-separated). In development we accept the Sentinel dev server and
+ * the local API by default. `Origin: null` is always rejected — `null`
+ * is what file://, sandboxed iframes, and some redirect chains advertise,
+ * and there's no benefit to allowing it for an admin/predict API.
+ */
+function buildCorsOptions() {
+  const raw = process.env.SENTINEL_CORS_ORIGINS ?? "";
+  const configured = raw
+    .split(",")
+    .map((origin) => origin.trim())
+    .filter((origin) => origin.length > 0);
+
+  const allowlist = configured.length > 0
+    ? configured
+    : ["http://localhost:5173", "http://localhost:3000"];
+
+  return {
+    origin: (origin: string | undefined, cb: (err: Error | null, allow?: boolean) => void) => {
+      // Same-origin / non-browser callers (curl, server-to-server) send no Origin.
+      if (!origin) return cb(null, true);
+      if (origin === "null") return cb(null, false);
+      if (allowlist.includes(origin)) return cb(null, true);
+      return cb(null, false);
+    },
+    credentials: true,
+  };
 }
 
 function registerCustomValidationRules() {

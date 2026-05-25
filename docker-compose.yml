@@ -313,6 +313,16 @@ services:
       - PROMPT_TEMPLATE_VERSION=${FIA_PROMPT_TEMPLATE_VERSION:-v1}
       - METRICS_PORT=9094
       - LOG_LEVEL=${FIA_LOG_LEVEL:-INFO}
+      # Shared with RDA so the same operator JWT works for both APIs.
+      # The HTTP server in handler.py verifies HS256 against this secret.
+      - AUTH_JWT_SECRET=${AUTH_JWT_SECRET}
+      - AUTH_JWT_ISSUER=${AUTH_JWT_ISSUER:-}
+      - AUTH_JWT_AUDIENCE=${AUTH_JWT_AUDIENCE:-}
+      # In Compose the container's loopback is isolated from the host, so
+      # binding 0.0.0.0 is required to expose port 9094 through the
+      # published port mapping. Bare-metal deployments should bind to
+      # 127.0.0.1 (the in-process default) and proxy in front.
+      - FIA_HTTP_BIND=${FIA_HTTP_BIND:-0.0.0.0}
       # Pin HuggingFace cache into the named volume so the ~8 GB Phi-3 download
       # survives container recreates.
       - HF_HOME=/app/.hf-cache

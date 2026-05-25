@@ -12,7 +12,6 @@ import socketserver
 import sys
 import threading
 import time
-import pickle
 import os
 from http.server import ThreadingHTTPServer
 from typing import Any, Dict, Optional
@@ -174,15 +173,18 @@ class MLAService:
                 self.model_registry.download_model(
                     object_name=latest_model_info['name'],
                     local_path=local_onnx_path,
-                    download_pickle=True  # Also download pickle for A/B testing
+                    download_booster=True,  # Also download the JSON booster for A/B testing
                 )
 
-                # Load pickled model for A/B testing
-                pickle_path = local_onnx_path.replace('.onnx', '.pkl')
+                # Load the XGBoost JSON booster for A/B testing. Data-only
+                # format — never `pickle.load` operator-controllable
+                # artefacts, since pickle executes arbitrary Python.
+                booster_path = local_onnx_path.replace('.onnx', '.json')
 
-                if os.path.exists(pickle_path):
-                    with open(pickle_path, 'rb') as f:
-                        self.current_model = pickle.load(f)
+                if os.path.exists(booster_path):
+                    from xgboost import XGBClassifier
+                    self.current_model = XGBClassifier()
+                    self.current_model.load_model(booster_path)
 
                     logger.info(f"✅ Production model loaded successfully")
                     logger.info(f"   Version: {latest_model_info['version']}")
@@ -198,7 +200,7 @@ class MLAService:
                     logger.info(f"   Next version will be: {self.next_version}")
 
                 else:
-                    logger.warning("⚠️  Pickle file not found - cannot load for A/B testing")
+                    logger.warning("⚠️  XGBoost JSON booster not found - cannot load for A/B testing")
                     logger.warning("   First retraining will deploy without comparison")
                     self.current_model = None
                     self.next_version = "v1.1"

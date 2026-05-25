@@ -397,7 +397,9 @@ export const listReports = async ({
   if (search) qs.set('search', search);
   if (status) qs.set('status', status);
   try {
-    const data = await fetch(`/fia/v1/reports?${qs.toString()}`).then(unwrap);
+    const data = await fetch(`/fia/v1/reports?${qs.toString()}`, {
+      headers: adminHeaders({ body: false }),
+    }).then(unwrap);
     const reports = Array.isArray(data?.reports)
       ? data.reports
       : Array.isArray(data)
@@ -416,15 +418,18 @@ export const listReports = async ({
 export const requestReport = (transactionId) =>
   fetch('/fia/v1/reports', {
     method: 'POST',
-    headers: { 'content-type': 'application/json' },
+    headers: adminHeaders(),
     body: JSON.stringify({ transactionId }),
   }).then(unwrap);
 
-export const postReportMessage = (reportId, body) =>
+// FIA expects `{ content }` per docs/FIA-API.md. The frontend previously
+// sent `{ body }`, which 400'd silently on every follow-up message and
+// surfaced as "Follow-up failed" in the chat without an actionable error.
+export const postReportMessage = (reportId, content) =>
   fetch(`/fia/v1/reports/${encodeURIComponent(reportId)}/messages`, {
     method: 'POST',
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ body }),
+    headers: adminHeaders(),
+    body: JSON.stringify({ content }),
   }).then(unwrap);
 
 // ──────── Audit log + transactions (admin, with filters) ────────

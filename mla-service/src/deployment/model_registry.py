@@ -26,7 +26,7 @@ import hashlib
 import json
 import logging
 import os
-import pickle
+import re
 import shutil
 import time
 from datetime import datetime
@@ -40,6 +40,13 @@ from src.features.catalog import load_catalog
 
 logger = logging.getLogger(__name__)
 
+# Version labels are constrained to `vMAJOR.MINOR[.PATCH]`. The label is
+# used as a path component when reading model artefacts from
+# `versions/<label>/...`; without this check, a malicious value like
+# `../../etc/passwd` could escape the registry directory entirely. Reject
+# anything that doesn't match before touching the filesystem.
+VERSION_LABEL_RE = re.compile(r"^v\d+\.\d+(?:\.\d+)?$")
+
 
 def _sha256_file(path: str) -> str:
     h = hashlib.sha256()
@@ -47,6 +54,14 @@ def _sha256_file(path: str) -> str:
         for chunk in iter(lambda: f.read(8192), b""):
             h.update(chunk)
     return h.hexdigest()
+
+
+def _assert_safe_version(version: str) -> None:
+    if not isinstance(version, str) or not VERSION_LABEL_RE.match(version):
+        raise ValueError(
+            f"invalid version label: {version!r}. "
+            "expected vMAJOR.MINOR[.PATCH] (e.g. v1.2 or v1.2.3)"
+        )
 
 
 class ModelRegistry:
@@ -100,11 +115,13 @@ class ModelRegistry:
 
         Returns the version label (used by callers for logging).
         """
+        _assert_safe_version(version)
+
         version_dir = self.versions_dir / version
         version_dir.mkdir(parents=True, exist_ok=True)
 
         onnx_dst = version_dir / "model.onnx"
-        pickle_dst = version_dir / "model.pkl"
+        booster_dst = version_dir / "model.json"
         scaler_dst = version_dir / "scaler.npz"
         meta_dst = version_dir / "meta.json"
 
@@ -113,10 +130,13 @@ class ModelRegistry:
         sha256 = _sha256_file(str(onnx_dst))
         logger.info("  ✅ ONNX:    %s (sha256 %s)", onnx_dst, sha256[:12])
 
-        # 2. Pickle — needed for A/B test on the next retrain cycle.
-        with open(pickle_dst, "wb") as f:
-            pickle.dump(model, f)
-        logger.info("  ✅ Pickle:  %s", pickle_dst)
+        # 2. XGBoost native JSON dump — needed for the McNemar A/B test
+        # on the next retrain cycle. We deliberately use the native JSON
+        # format instead of pickle: an attacker who can write into the
+        # versions directory (shared NFS, compromised CI) could otherwise
+        # land arbitrary Python via `pickle.load`. JSON is data-only.
+        model.save_model(str(booster_dst))
+        logger.info("  ✅ Booster: %s", booster_dst)
 
         # 3. Scaler — co-located so RDA-side ONNX inputs match.
         scaler_src = model_path.replace(".onnx", "_scaler.npz")
@@ -216,16 +236,28 @@ class ModelRegistry:
         self,
         object_name: str,
         local_path: str,
-        download_pickle: bool = True,
+        download_booster: bool = True,
     ) -> None:
         """
-        Place the ONNX (and optionally pickle) for `object_name` at
-        `local_path`. With the filesystem registry "download" is just
-        a copy — kept name-compatible with the old MinIO interface.
+        Place the ONNX (and optionally the XGBoost JSON booster) for
+        `object_name` at `local_path`. With the filesystem registry
+        "download" is just a copy — kept name-compatible with the old
+        MinIO interface.
 
-        `object_name` is the version label (e.g. ``v1.2.0``).
+        `object_name` is the version label (e.g. ``v1.2.0``); it is
+        regex-validated before touching the filesystem so a value like
+        ``../other/v1.0`` cannot escape the versions directory.
         """
+        _assert_safe_version(object_name)
+
         src_dir = self.versions_dir / object_name
+        # Defence-in-depth: also ensure the resolved path stays inside
+        # versions_dir even if a future caller bypasses _assert_safe_version.
+        try:
+            src_dir.resolve(strict=True).relative_to(self.versions_dir.resolve())
+        except (FileNotFoundError, ValueError):
+            raise FileNotFoundError(f"Model {object_name} not found in registry")
+
         onnx_src = src_dir / "model.onnx"
         if not onnx_src.exists():
             raise FileNotFoundError(f"Model {object_name} not found at {onnx_src}")
@@ -234,12 +266,12 @@ class ModelRegistry:
         shutil.copyfile(onnx_src, local_path)
         logger.info("  Copied %s → %s", onnx_src, local_path)
 
-        if download_pickle:
-            pickle_src = src_dir / "model.pkl"
-            if pickle_src.exists():
-                pickle_dst = local_path.replace(".onnx", ".pkl")
-                shutil.copyfile(pickle_src, pickle_dst)
-                logger.info("  Copied %s → %s", pickle_src, pickle_dst)
+        if download_booster:
+            booster_src = src_dir / "model.json"
+            if booster_src.exists():
+                booster_dst = local_path.replace(".onnx", ".json")
+                shutil.copyfile(booster_src, booster_dst)
+                logger.info("  Copied %s → %s", booster_src, booster_dst)
 
     # ───────────────────────────────────────────────────────────
     # RDA bridge (best-effort; service stays usable when offline)
