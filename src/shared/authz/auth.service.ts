@@ -9,6 +9,18 @@ import { evaluatePassword } from "./password-policy";
 const log = createServiceLogger("AuthService");
 
 const DEFAULT_TTL_SECONDS = 60 * 60 * 8; // 8h sessions
+const BCRYPT_ROUNDS = 12;
+
+// A precomputed bcrypt hash of a junk value. We bcrypt-compare against
+// this when the username is unknown so the login path runs in
+// approximately constant time regardless of whether the user exists,
+// closing the timing oracle that lets an attacker enumerate usernames.
+// The hash is generated once at module load — bcrypt with the same
+// rounds always takes the same time, so this matches "real" branch.
+const DUMMY_BCRYPT_HASH = bcrypt.hashSync(
+  "ojuri-constant-time-dummy-do-not-use",
+  BCRYPT_ROUNDS
+);
 
 export interface AuthSubject {
   userId: string;
@@ -59,6 +71,13 @@ class AuthService {
   async login(input: { tenantId?: string; username: string; password: string }): Promise<LoginResult> {
     const tenantId = input.tenantId ?? "default";
     const user = await this.users.findByUsername(tenantId, input.username);
+
+    // Run bcrypt against either the real or the dummy hash so both
+    // branches take the same time. An attacker cannot tell from
+    // response latency whether the username exists.
+    const hashToCheck = user?.passwordHash ?? DUMMY_BCRYPT_HASH;
+    const passwordOk = await bcrypt.compare(input.password, hashToCheck);
+
     if (!user || !user.isActive) {
       log.info("login", "Login rejected: unknown or inactive user", {
         tenantId,
@@ -66,9 +85,7 @@ class AuthService {
       });
       throw new InvalidCredentialsError();
     }
-
-    const ok = await bcrypt.compare(input.password, user.passwordHash);
-    if (!ok) {
+    if (!passwordOk) {
       log.info("login", "Login rejected: bad password", { id: user.id });
       throw new InvalidCredentialsError();
     }
@@ -91,7 +108,12 @@ class AuthService {
       username: detail.username,
       permissions,
     };
-    const token = jwt.sign(subject, secret, { expiresIn });
+    const token = jwt.sign(subject, secret, {
+      algorithm: "HS256",
+      expiresIn,
+      ...(process.env.AUTH_JWT_ISSUER ? { issuer: process.env.AUTH_JWT_ISSUER } : {}),
+      ...(process.env.AUTH_JWT_AUDIENCE ? { audience: process.env.AUTH_JWT_AUDIENCE } : {}),
+    });
 
     // Best-effort: never fail login because of a metadata write.
     this.users
@@ -128,10 +150,14 @@ class AuthService {
     const user = await this.users.findById(input.userId);
     if (!user) throw new InvalidCredentialsError();
 
-    // Evaluate strength *before* verifying the current password — a
-    // weak proposal is rejected regardless of whether the caller knew
-    // the old secret, and the deny-list / username check needs the
-    // user row anyway.
+    // Verify the current password FIRST. The previous ordering
+    // (policy → bcrypt) let an attacker who guessed the username probe
+    // the password complexity policy without knowing the current
+    // secret — one bit of information per attempt. Authenticate before
+    // doing any work that depends on the new value.
+    const ok = await bcrypt.compare(input.currentPassword, user.passwordHash);
+    if (!ok) throw new InvalidCredentialsError();
+
     const policy = evaluatePassword(input.newPassword, {
       username: user.username,
       currentPassword: input.currentPassword,
@@ -142,10 +168,7 @@ class AuthService {
       );
     }
 
-    const ok = await bcrypt.compare(input.currentPassword, user.passwordHash);
-    if (!ok) throw new InvalidCredentialsError();
-
-    const passwordHash = await bcrypt.hash(input.newPassword, 10);
+    const passwordHash = await bcrypt.hash(input.newPassword, BCRYPT_ROUNDS);
     await this.users.updateById(input.userId, {
       passwordHash,
       mustChangePassword: false,
@@ -162,7 +185,11 @@ class AuthService {
    */
   verifyToken(token: string): AuthSubject | null {
     try {
-      const decoded = jwt.verify(token, getJwtSecret()) as jwt.JwtPayload;
+      const decoded = jwt.verify(token, getJwtSecret(), {
+        algorithms: ["HS256"],
+        ...(process.env.AUTH_JWT_ISSUER ? { issuer: process.env.AUTH_JWT_ISSUER } : {}),
+        ...(process.env.AUTH_JWT_AUDIENCE ? { audience: process.env.AUTH_JWT_AUDIENCE } : {}),
+      }) as jwt.JwtPayload;
       if (
         typeof decoded.userId !== "string" ||
         typeof decoded.username !== "string" ||
@@ -212,6 +239,9 @@ function getJwtSecret(): string {
   }
   return secret;
 }
+
+// Re-export the rounds so the user-create path uses the same cost as login.
+export { BCRYPT_ROUNDS };
 
 function mergePermissions(roles: { permissions: string[] }[]): string[] {
   const set = new Set<string>();

@@ -1,3 +1,6 @@
+// Forces ts-node to load the FastifyRequest augmentation when running
+// hot-reload — `import` of a .d.ts isn't a runtime concept.
+// eslint-disable-next-line @typescript-eslint/triple-slash-reference
 /// <reference path="./types/fastify.d.ts" />
 import "reflect-metadata";
 import { container } from "tsyringe";

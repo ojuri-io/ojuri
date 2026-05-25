@@ -194,7 +194,10 @@ class FIAService:
             report, latency_ms = self._generator.generate(event)
         except Exception as e:
             logger.error("On-demand generation failed: %s", e, exc_info=True)
-            return {"error": "generation failed", "detail": str(e)}, 500
+            # Raw exception text leaks file paths, library internals, and
+            # DB error fragments to callers. Log full detail server-side,
+            # return a generic message client-side.
+            return {"error": "generation failed"}, 500
 
         try:
             self._writer.write(
@@ -206,7 +209,7 @@ class FIAService:
             )
         except Exception as e:
             logger.error("On-demand persistence failed: %s", e, exc_info=True)
-            return {"error": "persistence failed", "detail": str(e)}, 500
+            return {"error": "persistence failed"}, 500
 
         row = self._writer.get_by_transaction_id(event["transaction_id"]) or {}
         return self._enrich_with_conversation(row), 201
@@ -234,7 +237,7 @@ class FIAService:
             answer, latency_ms = self._generator.chat(report, history_payload, user_message)
         except Exception as e:
             logger.error("Chat generation failed: %s", e, exc_info=True)
-            return {"error": "chat generation failed", "detail": str(e)}, 500
+            return {"error": "chat generation failed"}, 500
 
         self._writer.add_turn(
             report_id=report_id,

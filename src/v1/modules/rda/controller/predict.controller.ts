@@ -4,7 +4,7 @@ import httpStatus from "http-status";
 import { randomUUID } from "crypto";
 import PredictService from "../services/predict.service";
 import { PredictRequestDto } from "../dtos/predict-request.dto";
-import IdempotencyService from "@shared/idempotency/idempotency.service";
+import IdempotencyService, { IDEMPOTENCY_KEY_MAX_LENGTH } from "@shared/idempotency/idempotency.service";
 import DecisionAuditService from "@shared/audit/decision-audit.service";
 import WebhookService from "@shared/webhooks/webhook.service";
 import { ErrorResponse, SuccessResponse } from "@shared/utils/response.util";
@@ -43,7 +43,15 @@ class PredictController {
       req.auth?.tenantId ??
       ((apiKey || req.auth) && headerTenant) ??
       "default";
-    const idempotencyKey = (req.headers["idempotency-key"] as string | undefined) || null;
+    const rawIdempotency = (req.headers["idempotency-key"] as string | undefined) || null;
+    // Cap key length so an attacker can't bloat the idempotencyKeys
+    // table (or trigger an outsized hash) by spamming multi-MB headers.
+    if (rawIdempotency && rawIdempotency.length > IDEMPOTENCY_KEY_MAX_LENGTH) {
+      return res
+        .code(httpStatus.BAD_REQUEST)
+        .send(ErrorResponse(`Idempotency-Key must be ${IDEMPOTENCY_KEY_MAX_LENGTH} characters or fewer`));
+    }
+    const idempotencyKey = rawIdempotency;
 
     return TraceContext.runAsync(
       { traceId, transactionId: request.transaction_id, senderId: request.sender_id },
@@ -65,6 +73,7 @@ class PredictController {
           const requestHash = IdempotencyService.hashRequest(request);
           const outcome = await this.idempotencyService.lookup({
             tenantId,
+            apiKeyId: apiKey?.id ?? null,
             key: idempotencyKey,
             requestHash,
           });
@@ -103,6 +112,7 @@ class PredictController {
           if (idempotencyKey) {
             await this.idempotencyService.store({
               tenantId,
+              apiKeyId: apiKey?.id ?? null,
               key: idempotencyKey,
               requestHash: IdempotencyService.hashRequest(request),
               response: response as unknown as Record<string, unknown>,

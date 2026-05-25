@@ -5,9 +5,14 @@ export const predictValidationRules = {
   transaction_id: "required|uuid",
   sender_id: "required|string|min:1|max:255",
   receiver_id: "required|string|min:1|max:255",
-  amount: "required|numeric|min:0.01",
+  // Upper bound is ~10B base units — covers every realistic payment
+  // and keeps overflows / float-precision loss out of the audit table
+  // (amount column is numeric(18,4)).
+  amount: "required|numeric|min:0.01|max:9999999999",
   transaction_type: "required|string|in:CASH_IN,CASH_OUT,PAYMENT,TRANSFER,DEBIT",
-  timestamp: "required|numeric",
+  // Unix ms; cap at year 2286 so a degenerate value (0, 9.9e18) doesn't
+  // poison the temporal feature calculators downstream.
+  timestamp: "required|numeric|min:0|max:9999999999999",
   segment: "string|max:100",
 
   // Optional context consumed by the feature catalogue. All are
@@ -63,6 +68,8 @@ export const predictValidationMessages = {
   "amount.required": "Amount is required",
   "amount.numeric": "Amount must be a number",
   "amount.min": "Amount must be greater than 0",
+  "amount.max": "Amount is unrealistically large",
+  "timestamp.max": "Timestamp is out of range",
   "transaction_type.required": "Transaction type is required",
   "transaction_type.in": "Transaction type must be one of: CASH_IN, CASH_OUT, PAYMENT, TRANSFER, DEBIT",
   "timestamp.required": "Timestamp is required",

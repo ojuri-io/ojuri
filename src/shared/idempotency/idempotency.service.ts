@@ -6,11 +6,18 @@ import IdempotencyKeyRepo from "./repositories/idempotency-key.repo";
 const log = createServiceLogger("IdempotencyService");
 
 const IDEMPOTENCY_TTL_MS = Number(process.env.IDEMPOTENCY_TTL_MS) || 24 * 60 * 60 * 1000;
+export const IDEMPOTENCY_KEY_MAX_LENGTH = 128;
 
 export type IdempotencyOutcome =
   | { kind: "miss" }
   | { kind: "replay"; response: Record<string, unknown> }
   | { kind: "conflict" };
+
+interface IdempotencyInput {
+  tenantId: string;
+  apiKeyId: string | null;
+  key: string;
+}
 
 @singleton()
 class IdempotencyService {
@@ -20,13 +27,16 @@ class IdempotencyService {
    * Look up an existing idempotent response, or return `miss`. A
    * `conflict` outcome means the same key was reused with a
    * different request body — clients should treat this as 422.
+   *
+   * The storage key is composed of `apiKeyId|key` so two unrelated
+   * clients of the same tenant who happen to share an Idempotency-Key
+   * value get isolation — without this, client A's response (with
+   * sensitive `fraud_probability` and `reason_codes`) leaks to
+   * client B on the first replay.
    */
-  async lookup(input: {
-    tenantId: string;
-    key: string;
-    requestHash: string;
-  }): Promise<IdempotencyOutcome> {
-    const row = await this.repo.findByCompositeKey(input.tenantId, input.key);
+  async lookup(input: IdempotencyInput & { requestHash: string }): Promise<IdempotencyOutcome> {
+    const storageKey = composeKey(input);
+    const row = await this.repo.findByCompositeKey(input.tenantId, storageKey);
     if (!row) return { kind: "miss" };
     if (new Date(row.expiresAt).getTime() < Date.now()) return { kind: "miss" };
     if (row.requestHash !== input.requestHash) return { kind: "conflict" };
@@ -40,9 +50,7 @@ class IdempotencyService {
     };
   }
 
-  async store(input: {
-    tenantId: string;
-    key: string;
+  async store(input: IdempotencyInput & {
     requestHash: string;
     response: Record<string, unknown>;
     ttlMs?: number;
@@ -52,7 +60,7 @@ class IdempotencyService {
     try {
       await this.repo.insertIgnoringConflict({
         tenantId: input.tenantId,
-        key: input.key,
+        key: composeKey(input),
         requestHash: input.requestHash,
         response: input.response,
         expiresAt,
@@ -65,6 +73,10 @@ class IdempotencyService {
   static hashRequest(body: unknown): string {
     return createHash("sha256").update(JSON.stringify(body ?? null)).digest("hex");
   }
+}
+
+function composeKey(input: IdempotencyInput): string {
+  return `${input.apiKeyId ?? "anon"}|${input.key}`;
 }
 
 export default IdempotencyService;

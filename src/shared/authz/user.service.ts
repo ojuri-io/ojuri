@@ -3,9 +3,9 @@ import { singleton } from "tsyringe";
 import UserRepo, { UserWithRoles } from "./repositories/user.repo";
 import RoleRepo from "./repositories/role.repo";
 import { createServiceLogger } from "@shared/utils/logger/service-logger";
+import { BCRYPT_ROUNDS } from "./auth.service";
 
 const log = createServiceLogger("UserService");
-const BCRYPT_ROUNDS = 10;
 
 @singleton()
 class UserService {

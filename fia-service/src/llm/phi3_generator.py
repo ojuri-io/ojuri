@@ -53,7 +53,32 @@ class Phi3ReportGenerator:
             dtype = self._resolve_dtype(torch, device)
             logger.info("Loading LLM '%s' on device=%s dtype=%s", self._model_id, device, dtype)
 
-            tokenizer = AutoTokenizer.from_pretrained(self._model_id, trust_remote_code=True)
+            # `trust_remote_code=True` executes arbitrary Python from the
+            # model's modeling_*.py at load time. Phi-3 needs it because
+            # the architecture ships custom code, but an operator who
+            # points LLM_MODEL_NAME at an unvetted HuggingFace repo (or
+            # a local path an attacker can write to) gets RCE inside FIA.
+            # Hard-code an allowlist; refuse anything else.
+            allowed_remote_code_models = {
+                "microsoft/Phi-3-mini-4k-instruct",
+                "microsoft/Phi-3-mini-128k-instruct",
+                "microsoft/Phi-3-medium-4k-instruct",
+                "microsoft/Phi-3-medium-128k-instruct",
+                "microsoft/Phi-3.5-mini-instruct",
+            }
+            trust_remote = self._model_id in allowed_remote_code_models
+            if not trust_remote and self._model_id not in allowed_remote_code_models:
+                logger.warning(
+                    "LLM_MODEL_NAME=%s is not on the trust_remote_code allowlist. "
+                    "Loading WITHOUT trust_remote_code — model will only work if it ships "
+                    "with stock transformers architecture. To run a custom model, add it to "
+                    "the allowlist in fia-service/src/llm/phi3_generator.py after auditing.",
+                    self._model_id,
+                )
+
+            tokenizer = AutoTokenizer.from_pretrained(
+                self._model_id, trust_remote_code=trust_remote
+            )
 
             # Phi-3 ships flash-attention kernels that only run on CUDA. MPS
             # and CPU need attn_implementation="eager" or model loading errors
@@ -62,7 +87,7 @@ class Phi3ReportGenerator:
             model = AutoModelForCausalLM.from_pretrained(
                 self._model_id,
                 torch_dtype=dtype,
-                trust_remote_code=True,
+                trust_remote_code=trust_remote,
                 attn_implementation=attn_impl,
             )
 
