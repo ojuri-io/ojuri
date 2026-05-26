@@ -94,10 +94,20 @@ because it carries ~7.6 GB of Phi-3 weights — opt in with
 > admin endpoints need the `DB_*` block. Rotate `AUTH_JWT_SECRET` before any
 > non-dev deploy.
 
-> RDA boots without an ONNX model by falling back to a deterministic rule
-> path (`/readyz` will warn). Train your first model with
-> `cd mla-service && python scripts/train_initial_model.py`, then copy
-> `models/fraud_model_*.onnx` to `models/fraud_model.onnx` so RDA picks it up.
+> A 120 KB demo ONNX model (`models/fraud_model.onnx`, derived from a
+> PaySim-trained XGBoost) ships in the repo so `/v1/predict` returns
+> real ML decisions out of the box — `decision_source` will read `"ML"`,
+> not `"MOCK"`. The performance numbers in this README were measured
+> against this same model. Replace it with your own once MLA has trained
+> on your data: `cd mla-service && python scripts/train_initial_model.py`
+> writes `models/versions/<v>/model.onnx`; activate it via the admin UI
+> or copy it to `models/fraud_model.onnx` for RDA to pick up. Replacements
+> are gitignored so retrained models don't accidentally land in commits.
+>
+> If you delete the demo model and don't replace it, RDA falls back to a
+> placeholder inference that returns pseudo-random scores —
+> `/readyz` reports `DOWN` and a loud startup warning fires so the
+> degraded mode is unmissable.
 
 The dashboard runs separately:
 
