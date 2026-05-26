@@ -20,9 +20,39 @@ function bootstrapApp(fastify: FastifyInstance) {
 }
 
 function registerThirdPartyModules(fastify) {
-  fastify.register(cors, { origin: true });
+  fastify.register(cors, buildCorsOptions());
 
   fastify.register(loggerPlugin);
+}
+
+/**
+ * Build the CORS origin allowlist from `SENTINEL_CORS_ORIGINS`
+ * (comma-separated). In development we accept the Sentinel dev server and
+ * the local API by default. `Origin: null` is always rejected — `null`
+ * is what file://, sandboxed iframes, and some redirect chains advertise,
+ * and there's no benefit to allowing it for an admin/predict API.
+ */
+function buildCorsOptions() {
+  const raw = process.env.SENTINEL_CORS_ORIGINS ?? "";
+  const configured = raw
+    .split(",")
+    .map((origin) => origin.trim())
+    .filter((origin) => origin.length > 0);
+
+  const allowlist = configured.length > 0
+    ? configured
+    : ["http://localhost:5173", "http://localhost:3000"];
+
+  return {
+    origin: (origin: string | undefined, cb: (err: Error | null, allow?: boolean) => void) => {
+      // Same-origin / non-browser callers (curl, server-to-server) send no Origin.
+      if (!origin) return cb(null, true);
+      if (origin === "null") return cb(null, false);
+      if (allowlist.includes(origin)) return cb(null, true);
+      return cb(null, false);
+    },
+    credentials: true,
+  };
 }
 
 function registerCustomValidationRules() {
@@ -72,24 +102,31 @@ function registerCustomValidationRules() {
   Validator.register(
     "phone",
     (value: any) => {
-      return value.match(/^(?:(?:(?:\+?234(?:\h1)?|01)\h*)?(?:\(\d{3}\)|\d{3})|\d{4})(?:\W*\d{3})?\W*\d{4}$/);
+      return value.match(/^(?:(?:(?:\+?234(?:\s1)?|01)\s*)?(?:\(\d{3}\)|\d{3})|\d{4})(?:\W*\d{3})?\W*\d{4}$/);
     },
     "The :attribute field is not in the correct format. Example of allowed format is 2348888888888."
   );
 
-  Validator.register(
-    "amount",
-    (value: any) => {
-      return !Number.isSafeInteger(value);
-    },
-    "The :attribute field is invalid"
-  );
+  // The custom "amount" rule isn't referenced by any validator today
+  // (predict.validator.ts uses `numeric|min:0.01|max:9999999999`), and
+  // the previous body was inverted (returned true for non-integers,
+  // false for safe integers — which would have rejected every valid
+  // amount). Removing rather than fixing because adding it to a rule
+  // string with the wrong semantics would silently break input
+  // validation across every payload that uses it.
 }
 
 function setErrorHandler(fastify) {
   fastify.setErrorHandler((err, request, reply) => {
-    const statusCode = err.statusCode || 503;
-    const message = err instanceof AppError ? err.message : "We are unable to proces this request. Please try again.";
+    // Respect explicit 4xx status codes from validation / auth /
+    // not-found errors. Default unknowns to 500 (not 503 — 503 means
+    // "service unavailable, try later" and is the wrong semantic for
+    // a generic uncaught error).
+    const raw = err.statusCode;
+    const statusCode = typeof raw === "number" && raw >= 400 && raw < 600 ? raw : 500;
+    const message = err instanceof AppError
+      ? err.message
+      : "We are unable to process this request. Please try again.";
 
     Logger.error({ err: err.cause || err });
 

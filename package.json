@@ -1,10 +1,28 @@
 {
-  "name": "node-project-template",
+  "name": "ojuri",
   "version": "1.0.0",
-  "description": "",
+  "description": "Self-hosted, real-time fraud detection platform. Multi-agent (RDA / PAA / MLA / FIA), Kafka-decoupled, with an operator dashboard.",
   "main": "dist/server.js",
   "author": "Ayodeji Abodunrin <https://ayodejiabodunrin.com/>",
-  "keywords": [],
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/ojuri-io/ojuri.git"
+  },
+  "bugs": {
+    "url": "https://github.com/ojuri-io/ojuri/issues"
+  },
+  "homepage": "https://github.com/ojuri-io/ojuri#readme",
+  "keywords": [
+    "fraud-detection",
+    "real-time",
+    "kafka",
+    "onnx",
+    "xgboost",
+    "fastify",
+    "self-hosted",
+    "fintech"
+  ],
   "scripts": {
     "start:dev": "nodemon",
     "start": "node dist/server.js",
@@ -29,7 +47,6 @@
     "@types/node": "^25.0.2",
     "@types/opossum": "^8.1.9",
     "@types/stream-to-array": "^2.3.3",
-    "@types/useragent": "^2.3.4",
     "@typescript-eslint/eslint-plugin": "^7.18.0",
     "@typescript-eslint/parser": "^7.18.0",
     "eslint": "^8.57.1",
@@ -49,6 +66,7 @@
     "prettier": "^3.7.4",
     "ts-jest": "^29.4.6",
     "ts-node": "^10.9.2",
+    "tsconfig-paths": "^4.2.0",
     "typescript": "^5.9.3"
   },
   "dependencies": {
@@ -84,7 +102,6 @@
     "reflect-metadata": "^0.2.2",
     "slugify": "^1.6.6",
     "tsyringe": "^4.10.0",
-    "useragent": "^2.3.0",
     "validatorjs": "^3.22.1"
   },
   "_moduleAliases": {

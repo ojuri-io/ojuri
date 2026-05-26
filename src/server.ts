@@ -1,3 +1,7 @@
+// Forces ts-node to load the FastifyRequest augmentation when running
+// hot-reload — `import` of a .d.ts isn't a runtime concept.
+// eslint-disable-next-line @typescript-eslint/triple-slash-reference
+/// <reference path="./types/fastify.d.ts" />
 import "reflect-metadata";
 import { container } from "tsyringe";
 import App from "./app";
@@ -57,6 +61,59 @@ async function start() {
 
   const address = await app.listen(appConfig.server.port);
   logger.info(`${appConfig.app.name} started on ${address}`);
+
+  warnIfUnsafeDefaults();
+}
+
+/**
+ * Surface footguns that ship with a fresh checkout: an unauthenticated
+ * /v1/predict surface, a dev JWT secret, or a localhost-only CORS list
+ * in production. Operators almost always want one of these flipped before
+ * exposing the service to anything beyond their own laptop.
+ */
+function warnIfUnsafeDefaults(): void {
+  const isProduction = process.env.NODE_ENV === "production";
+  const requireApiKey = (process.env.RDA_REQUIRE_API_KEY ?? "false").toLowerCase() === "true";
+  const jwtSecret = process.env.AUTH_JWT_SECRET ?? "";
+  const corsOrigins = process.env.SENTINEL_CORS_ORIGINS ?? "";
+
+  if (!requireApiKey) {
+    logger.warn(
+      "RDA_REQUIRE_API_KEY is false — POST /v1/predict is OPEN to any caller that can reach this process. " +
+        "Set RDA_REQUIRE_API_KEY=true and issue keys via POST /v1/admin/api-keys before exposing this beyond your own host."
+    );
+  }
+
+  if (jwtSecret.startsWith("dev-only-secret") || jwtSecret.length < 32) {
+    const message =
+      "AUTH_JWT_SECRET is the development default or shorter than 32 characters. " +
+      "Generate a real secret (e.g. `openssl rand -base64 48`) and set AUTH_JWT_SECRET before exposing this service.";
+    if (isProduction) {
+      logger.error(message + " Refusing to continue with NODE_ENV=production.");
+      process.exit(1);
+    }
+    logger.warn(message);
+  }
+
+  if (isProduction && (corsOrigins.length === 0 || corsOrigins.includes("localhost"))) {
+    logger.warn(
+      "SENTINEL_CORS_ORIGINS is unset or still points at localhost in production. " +
+        "Set it to your dashboard's public origin(s), e.g. SENTINEL_CORS_ORIGINS=https://sentinel.example.com"
+    );
+  }
+}
+
+async function gracefulShutdown(signal: string): Promise<void> {
+  logger.info({ signal }, "Shutdown signal received — draining");
+  try {
+    const kafkaProducer = container.resolve(KafkaProducer);
+    await kafkaProducer.disconnect();
+  } catch (err) {
+    logger.warn({ err }, "Kafka producer disconnect raised during shutdown");
+  }
+  stopWebhookWorker();
+  app.close();
+  process.exit(0);
 }
 
 process
@@ -66,13 +123,8 @@ process
     app.close();
     process.exit(1);
   })
-  .on("SIGINT", async () => {
-    const kafkaProducer = container.resolve(KafkaProducer);
-    await kafkaProducer.disconnect();
-    stopWebhookWorker();
-    app.close();
-    process.exit(0);
-  });
+  .on("SIGINT", () => gracefulShutdown("SIGINT"))
+  .on("SIGTERM", () => gracefulShutdown("SIGTERM"));
 
 start().catch((err) => {
   logger.error({ err });

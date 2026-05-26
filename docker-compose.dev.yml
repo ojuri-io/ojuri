@@ -5,11 +5,11 @@ services:
     build:
       context: .
       dockerfile: Dockerfile.dev
-    container_name: fraud-rda-dev
+    container_name: ojuri-rda-dev
     environment:
       - NODE_ENV=development
       - PORT=3000
-      - APP_NAME=fraud-rda-dev
+      - APP_NAME=ojuri-rda-dev
       - REDIS_HOST=redis
       - REDIS_PORT=6379
       - REDIS_PASSWORD=${REDIS_PASSWORD:-}
@@ -46,17 +46,17 @@ services:
       kafka:
         condition: service_healthy
     networks:
-      - fraud-network
+      - ojuri-network
 
   # Single PAA instance for development with hot-reload
   paa-dev:
     build:
       context: ./paa-service
       dockerfile: Dockerfile.dev
-    container_name: fraud-paa-dev
+    container_name: ojuri-paa-dev
     environment:
       - NODE_ENV=development
-      - APP_NAME=fraud-paa-dev
+      - APP_NAME=ojuri-paa-dev
       - METRICS_PORT=9090
       - REDIS_HOST=redis
       - REDIS_PORT=6379
@@ -88,18 +88,18 @@ services:
       kafka:
         condition: service_healthy
     networks:
-      - fraud-network
+      - ojuri-network
 
   # Single FIA instance for development. Source mounted; restart container to pick up changes.
   fia-dev:
     build:
       context: ./fia-service
       dockerfile: Dockerfile.dev
-    container_name: fraud-fia-dev
+    container_name: ojuri-fia-dev
     environment:
       - KAFKA_BROKERS=kafka:29092
       - KAFKA_BLOCKED_TOPIC=transactions.blocked
-      - KAFKA_CONSUMER_GROUP=fraud-investigation-dev
+      - KAFKA_CONSUMER_GROUP=ojuri-investigation-dev
       - KAFKA_AUTO_OFFSET_RESET=earliest
       - POSTGRES_HOST=postgres
       - POSTGRES_PORT=5432
@@ -127,7 +127,7 @@ services:
       kafka:
         condition: service_healthy
     networks:
-      - fraud-network
+      - ojuri-network
 
 volumes:
   fia-hf-cache:

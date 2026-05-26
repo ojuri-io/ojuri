@@ -55,25 +55,59 @@ decisions.
 
 ---
 
+## Prerequisites
+
+- **Node 20+** (see `.nvmrc`) and **npm 10+** for RDA, PAA, and the frontend.
+- **Python 3.11** only if you intend to run MLA (training) or FIA (LLM
+  investigation reports) directly on the host. The default `docker compose up`
+  skips both.
+- **Docker 20.10+** with Compose v2.
+- **Host ports** kept free: `80 3000 3001 5173 5433 6380 9090 9091 9093 9094 29092`.
+  Postgres in Docker listens on `5433` (not `5432`) to avoid host conflicts.
+- **Disk and RAM if running FIA**: ~10 GB free disk for the Phi-3 weights and
+  ≥16 GB free RAM for the loaded model. On Apple Silicon, the first
+  investigation triggers a one-time 6–10 minute MPS kernel compilation — this
+  is normal, not a hang.
+
 ## Quick start
 
 ````bash
 git clone https://github.com/ojuri-io/ojuri.git
 cd ojuri
-cp env-sample .env                          # provides AUTH_JWT_SECRET, DB creds
-docker compose up -d
-npm install && npm run db:migrate
+cp .env.example .env                        # provides AUTH_JWT_SECRET, DB creds, CORS
+docker compose up -d                        # builds RDA on first run (a few minutes)
+npm install && npm run db:migrate           # migration prints a one-time admin password
 ````
 
 That brings up Postgres, Redis, Kafka, three RDA replicas behind NGINX, two
 PAA workers, and the Prometheus/Grafana stack. FIA is gated behind a profile
 because it carries ~7.6 GB of Phi-3 weights — opt in with
-`docker compose --profile fia up -d fia` when you have the disk.
+`docker compose --profile fia up -d fia` when you have the disk and RAM.
 
-> Copying `env-sample` to `.env` is required before `docker compose up` —
+> MLA (the model trainer) is intentionally **not** in Compose — it runs on
+> the host venv (`cd mla-service && python -m src.main`). The "System health"
+> page in Sentinel will show MLA as offline until you start it locally; that
+> is expected unless you wire MLA into your own deployment.
+
+> Copying `.env.example` to `.env` is required before `docker compose up` —
 > RDA refuses `/v1/auth/login` without `AUTH_JWT_SECRET`, and the Knex-backed
 > admin endpoints need the `DB_*` block. Rotate `AUTH_JWT_SECRET` before any
 > non-dev deploy.
+
+> A 120 KB demo ONNX model (`models/fraud_model.onnx`, derived from a
+> PaySim-trained XGBoost) ships in the repo so `/v1/predict` returns
+> real ML decisions out of the box — `decision_source` will read `"ML"`,
+> not `"MOCK"`. The performance numbers in this README were measured
+> against this same model. Replace it with your own once MLA has trained
+> on your data: `cd mla-service && python scripts/train_initial_model.py`
+> writes `models/versions/<v>/model.onnx`; activate it via the admin UI
+> or copy it to `models/fraud_model.onnx` for RDA to pick up. Replacements
+> are gitignored so retrained models don't accidentally land in commits.
+>
+> If you delete the demo model and don't replace it, RDA falls back to a
+> placeholder inference that returns pseudo-random scores —
+> `/readyz` reports `DOWN` and a loud startup warning fires so the
+> degraded mode is unmissable.
 
 The dashboard runs separately:
 
@@ -121,9 +155,11 @@ The response shape (from `PredictResponseDto`):
 }
 ````
 
-Log in to the dashboard with the seeded admin (`admin / admin@fraudit`) and
-change the password immediately. To require `X-Api-Key` on `/v1/predict`, set
-`RDA_REQUIRE_API_KEY=true` and issue a key from `POST /v1/admin/api-keys`.
+Log in to the dashboard with the **seeded admin password printed by
+`npm run db:migrate`** — copy it from the migration output. The seeded user
+has `mustChangePassword=true`; the first login forces a rotation. To require
+`X-Api-Key` on `/v1/predict`, set `RDA_REQUIRE_API_KEY=true` and issue a key
+from `POST /v1/admin/api-keys`.
 
 ---
 

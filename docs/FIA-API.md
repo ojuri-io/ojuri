@@ -28,17 +28,36 @@ rule-based reports instead of failing.
 
 ## Endpoints
 
-| Method | Path                                  | Purpose                                  |
-|--------|---------------------------------------|------------------------------------------|
-| GET    | `/livez`                              | Liveness                                 |
-| GET    | `/readyz`                             | Kafka consumer connected                 |
-| GET    | `/stats`                              | Lifetime counters + LLM model version    |
-| GET    | `/v1/reports`                         | List recent reports (paginated)          |
-| GET    | `/v1/reports/{report_id}`             | Read a report + conversation history     |
-| POST   | `/v1/reports`                         | Generate a report for any transaction    |
-| POST   | `/v1/reports/{report_id}/messages`    | Ask a follow-up question                 |
+| Method | Path                                  | Purpose                                  | Auth                  |
+|--------|---------------------------------------|------------------------------------------|-----------------------|
+| GET    | `/livez`                              | Liveness                                 | open                  |
+| GET    | `/readyz`                             | Kafka consumer connected                 | open                  |
+| GET    | `/stats`                              | Lifetime counters + LLM model version    | `metrics:read`        |
+| GET    | `/v1/reports`                         | List recent reports (paginated)          | `reports:read`        |
+| GET    | `/v1/reports/{report_id}`             | Read a report + conversation history     | `reports:read`        |
+| POST   | `/v1/reports`                         | Generate a report for any transaction    | `reports:request`     |
+| POST   | `/v1/reports/{report_id}/messages`    | Ask a follow-up question                 | `reports:message`     |
 
 All payloads are JSON.
+
+## Authentication
+
+Every route except `/livez` and `/readyz` requires an `Authorization:
+Bearer <jwt>` header. FIA shares `AUTH_JWT_SECRET` with RDA, so the
+JWT issued by `POST /v1/auth/login` against RDA is accepted directly —
+no separate FIA login. The token's `permissions[]` claim must include
+the permission listed in the table above (the wildcard `*` granted to
+`SUPER_ADMIN` satisfies all of them).
+
+FIA verifies HS256 signatures using stdlib `hmac` to avoid bloating the
+container image with an extra dependency. Other algorithms (`alg: none`,
+`RS*`, `HS384/512`) are rejected.
+
+The HTTP server binds to `127.0.0.1` by default (see `FIA_HTTP_BIND`).
+Compose flips this to `0.0.0.0` because the container's loopback is
+isolated from the host anyway, but bare-metal deployments should keep
+the loopback default and proxy through RDA or an authenticating front
+door.
 
 ## Generating a report on demand
 

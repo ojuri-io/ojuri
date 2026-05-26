@@ -50,9 +50,10 @@ export function requireAuth(...requiredPermissions: string[]) {
 
 function extractBearer(header: string | undefined): string | undefined {
   if (!header) return undefined;
-  const parts = header.split(" ");
-  if (parts.length === 2 && parts[0].toLowerCase() === "bearer") {
-    return parts[1];
-  }
-  return undefined;
+  // Anchored regex tolerates only single-space separator and rejects
+  // leading/trailing whitespace. The previous split(" ") accepted
+  // "Bearer  token" (two spaces) which split to length 3 and silently
+  // fell through to "no token".
+  const match = header.match(/^Bearer (\S+)$/i);
+  return match ? match[1] : undefined;
 }

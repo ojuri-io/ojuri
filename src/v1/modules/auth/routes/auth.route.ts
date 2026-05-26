@@ -3,6 +3,7 @@ import { container } from "tsyringe";
 import AuthController from "../controller/auth.controller";
 import validate from "@shared/middlewares/validator.middleware";
 import { requireAuth } from "@shared/middlewares/require-auth.middleware";
+import { ipRateLimit } from "@shared/middlewares/ip-rate-limit.middleware";
 import { loginValidationRules, loginValidationMessages } from "../validations/auth.validator";
 
 const authController = container.resolve(AuthController);
@@ -11,7 +12,17 @@ const authRoute: FastifyPluginAsync = async (fastify) => {
   fastify.route({
     method: "POST",
     url: "/auth/login",
-    preHandler: validate(loginValidationRules, loginValidationMessages),
+    // Per-IP throttle to stop credential-stuffing scripts. The
+    // bcrypt-on-every-branch change in AuthService keeps the timing
+    // closed; this caps the volume an attacker can throw at it.
+    preHandler: [
+      ipRateLimit({
+        envKey: "AUTH_LOGIN_RATE_LIMIT_PER_MINUTE",
+        ratePerMinute: 20,
+        routeLabel: "auth.login",
+      }),
+      validate(loginValidationRules, loginValidationMessages),
+    ],
     handler: authController.login,
   });
 

@@ -15,20 +15,20 @@ export const createSha512Hash = (data: any, key: string) => {
   return hash;
 };
 
-export const convertKeysToCamelCase = (obj: Object) => {
+export const convertKeysToCamelCase = (obj: unknown): unknown => {
   if (typeof obj !== "object" || obj === null) {
-    return obj; // Return as is for non-object values
+    return obj;
   }
 
   if (Array.isArray(obj)) {
     return obj.map((item) => convertKeysToCamelCase(item));
   }
 
-  const camelCasedObj = {};
+  const camelCasedObj: Record<string, unknown> = {};
   for (const key in obj) {
-    if (obj.hasOwnProperty(key)) {
-      const camelKey = key[0].toLowerCase() + key.slice(1); // Convert the first character to lowercase
-      camelCasedObj[camelKey] = convertKeysToCamelCase(obj[key]);
+    if (Object.prototype.hasOwnProperty.call(obj, key)) {
+      const camelKey = key[0].toLowerCase() + key.slice(1);
+      camelCasedObj[camelKey] = convertKeysToCamelCase((obj as Record<string, unknown>)[key]);
     }
   }
   return camelCasedObj;

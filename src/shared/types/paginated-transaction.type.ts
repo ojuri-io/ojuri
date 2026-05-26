@@ -1,4 +1,4 @@
-type PaginatedData<T> = {
+export type PaginatedData<T> = {
   data: Array<T>;
   page: number;
   dataSize: number;

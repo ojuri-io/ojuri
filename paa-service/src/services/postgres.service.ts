@@ -162,11 +162,23 @@ class PostgresService {
       const knex = getKnexInstance();
       const thirtyDaysAgo = Date.now() - 30 * 24 * 60 * 60 * 1000;
 
+      // Cap the cold-start replay so a 30-day window on a 50k-txn/day
+      // deployment doesn't OOM the worker (1.5M rows). Override via env
+      // when the host has enough RAM to absorb a larger window.
+      const historicalLimit = Math.max(
+        Number(process.env.HISTORICAL_LOAD_LIMIT) || 100_000,
+        1_000
+      );
+
       const transactions = await knex("transactions")
         .where("timestamp", ">=", thirtyDaysAgo)
-        .orderBy("timestamp", "asc");
+        .orderBy("timestamp", "asc")
+        .limit(historicalLimit);
 
-      log.success("loadGraphData", "Graph data loaded from database", { transactionCount: transactions.length });
+      log.success("loadGraphData", "Graph data loaded from database", {
+        transactionCount: transactions.length,
+        historicalLimit,
+      });
 
       return {
         transactions: transactions.map((t: any) => ({

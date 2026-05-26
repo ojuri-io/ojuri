@@ -1,10 +1,16 @@
 {
-  "name": "sentinel-frontend",
-  "version": "0.1.0",
+  "name": "@ojuri/sentinel-frontend",
+  "version": "1.0.0",
   "private": true,
   "type": "module",
-  "description": "Sentinel — operator dashboard for the multi-agent fraud detection stack.",
+  "description": "Sentinel — Ojuri operator dashboard. Live decisions, rules editor, model registry, audit log, FIA investigations, user/role admin.",
   "author": "Ayodeji Abodunrin <https://ayodejiabodunrin.com/>",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/ojuri-io/ojuri.git",
+    "directory": "frontend"
+  },
   "scripts": {
     "dev": "vite",
     "build": "vite build",

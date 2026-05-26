@@ -1,6 +1,5 @@
 # ============================================
-# Multi-stage Dockerfile for Fraud Detection Service
-# Supports both RDA and PAA modes
+# Multi-stage Dockerfile for Ojuri RDA
 # ============================================
 
 # Stage 1: Builder

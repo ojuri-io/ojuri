@@ -10,14 +10,20 @@ const KEY_PREFIX_LENGTH = 12;
 const KEY_SECRET_BYTES = 24;
 
 interface CacheEntry {
-  context: ApiKeyContext | null;
+  context: ApiKeyContext;
   expiresAt: number;
 }
 
 @singleton()
 class ApiKeyService {
+  // Keyed by sha256(token), NOT the raw plaintext — a heap dump no
+  // longer leaks live API keys. JS Map iteration is insertion-ordered,
+  // so a delete-then-set on hit gives us a poor-man's LRU. Negative
+  // results are NOT cached to prevent an attacker from OOMing the
+  // process by spraying random invalid tokens.
   private cache = new Map<string, CacheEntry>();
   private readonly cacheTtlMs = 30_000;
+  private readonly cacheCap = 10_000;
 
   constructor(private readonly repo: ApiKeyRepo) {}
 
@@ -65,21 +71,25 @@ class ApiKeyService {
     }
 
     const now = Date.now();
-    const cached = this.cache.get(token);
+    const keyHash = createHash("sha256").update(token).digest("hex");
+    const cached = this.cache.get(keyHash);
     if (cached && cached.expiresAt > now) {
+      // Bump to the most-recent end of the insertion order for LRU.
+      this.cache.delete(keyHash);
+      this.cache.set(keyHash, cached);
       return cached.context;
     }
+    if (cached) this.cache.delete(keyHash);
 
-    const keyHash = createHash("sha256").update(token).digest("hex");
     const row = await this.repo.findByHash(keyHash);
 
     if (!row || row.revokedAt) {
-      this.cache.set(token, { context: null, expiresAt: now + 5_000 });
+      // Deliberately NOT cached — an attacker spraying random tokens
+      // could otherwise wedge the heap with junk entries.
       return null;
     }
 
     if (row.expiresAt && new Date(row.expiresAt).getTime() < now) {
-      this.cache.set(token, { context: null, expiresAt: now + 5_000 });
       return null;
     }
 
@@ -91,7 +101,12 @@ class ApiKeyService {
       rateLimitPerMinute: row.rateLimitPerMinute,
     };
 
-    this.cache.set(token, { context, expiresAt: now + this.cacheTtlMs });
+    // Bounded LRU: evict the oldest entry when at capacity.
+    if (this.cache.size >= this.cacheCap) {
+      const oldest = this.cache.keys().next().value;
+      if (oldest) this.cache.delete(oldest);
+    }
+    this.cache.set(keyHash, { context, expiresAt: now + this.cacheTtlMs });
 
     // Fire-and-forget — must not block the predict hot path.
     this.repo

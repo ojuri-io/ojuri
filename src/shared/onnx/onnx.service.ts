@@ -130,12 +130,15 @@ class OnnxService {
       fs.mkdirSync(modelDir, { recursive: true });
     }
 
-    // Note: In production, this would be replaced by the actual trained model
-    // For now, we'll create a simple placeholder that returns random predictions
-    onnxLogger.warn("createPlaceholderModel", "Using placeholder model - replace with actual trained model in production", {});
+    onnxLogger.warn(
+      "createPlaceholderModel",
+      "NO ONNX MODEL LOADED — predictions are running in degraded mock mode. " +
+        "Train your first model with `cd mla-service && python scripts/train_initial_model.py` " +
+        "and copy the resulting .onnx to models/fraud_model.onnx. /readyz will continue to " +
+        "report DOWN until a real model is loaded.",
+      { modelPath: this.modelPath }
+    );
 
-    // We can't easily create an ONNX model programmatically in Node.js
-    // So we'll set a flag to use mock inference
     this.isModelLoaded = false;
   }
 
@@ -359,10 +362,17 @@ class OnnxService {
   }
 
   /**
-   * Check if model is loaded and ready
+   * Check if a real ONNX session is loaded. Previously this returned
+   * `true` even in mock-inference mode (the expression evaluated to
+   * `true` whenever the model failed to load), so `/readyz` reported
+   * green while predictions were random-noise — which is the worst
+   * possible failure mode for a fraud system. Mock mode now reports
+   * NOT ready; the surrounding boot flow still serves degraded
+   * default-feature predictions, but operators get an unmissable
+   * "fix me" signal from the health probe.
    */
   isReady(): boolean {
-    return this.session !== null || !this.isModelLoaded; // Mock mode is also "ready"
+    return this.session !== null;
   }
 
   /**

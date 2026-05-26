@@ -38,7 +38,26 @@ const logger = pino({
       };
     },
   },
-  redact: ["req.body.password", "req.headers.authorization"],
+  // Hide sensitive fields from structured logs. The predict request
+  // body contains sender/receiver IDs and amounts — useful at debug
+  // level for individual operators, but a privacy concern when piped
+  // into a long-term log store. Adopters in regulated jurisdictions
+  // can extend this list via env var if they have a stricter policy.
+  redact: [
+    "req.body.password",
+    "req.body.currentPassword",
+    "req.body.newPassword",
+    "req.headers.authorization",
+    "req.headers['x-api-key']",
+    "req.headers.cookie",
+    "req.body.sender_id",
+    "req.body.receiver_id",
+    "req.body.amount",
+    "req.body.customer_id_number",
+    "req.body.recipient_id_number",
+    "req.body.customer_dob",
+    "req.body.recipient_dob",
+  ],
 });
 
 export default logger;

@@ -1,7 +1,7 @@
 export const registerWebhookValidationRules = {
   url: "required|string|min:8|max:1024",
   events: "required|array",
-  "events.*": "string",
+  "events.*": "string|in:decision.created,decision.overridden,model.activated,rule.activated",
   tenantId: "string|max:255",
   secret: "string|min:16|max:255",
   maxRetries: "numeric|min:0|max:20",
