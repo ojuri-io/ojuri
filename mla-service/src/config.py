@@ -4,10 +4,31 @@ Loads from environment variables with sensible defaults.
 """
 
 import os
+import sys
+import warnings
+from pathlib import Path
 from dotenv import load_dotenv
 from typing import List
 
-load_dotenv()
+# Pin dotenv to `mla-service/.env`. Calling `load_dotenv()` with no args
+# walks UP the directory tree looking for a `.env` — which means a
+# user running `python -m src.main` from inside `mla-service/` silently
+# picks up the repo-root `.env` (intended for RDA). That root file sets
+# KAFKA_CONSUMER_GROUP=pattern-analysis (PAA's group), and MLA then
+# tries to join an existing kafkajs-based group with a different
+# partition-assignment strategy, crashing with
+# `kafka.errors.InconsistentGroupProtocolError`.
+_SERVICE_ENV = Path(__file__).resolve().parent.parent / ".env"
+if _SERVICE_ENV.exists():
+    load_dotenv(_SERVICE_ENV, override=False)
+else:
+    warnings.warn(
+        f"No {_SERVICE_ENV} found; MLA will fall back to environment "
+        "defaults (model-learning-v2 consumer group, localhost:9092). "
+        "Run `cp mla-service/.env.example mla-service/.env` to configure.",
+        RuntimeWarning,
+        stacklevel=2,
+    )
 
 
 class Config:
