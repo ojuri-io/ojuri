@@ -112,6 +112,14 @@ services:
       - LOG_LEVEL=info
       - DB_CLIENT=pg
       - DB_URL=postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-postgres}@postgres:5432/${POSTGRES_DB:-fraud_db}
+      # Service-health fan-out (same defaults as rda-1; without these the
+      # Sentinel "System health" page reports PAA/FIA/MLA as down when
+      # NGINX happens to route the probe to this replica, because the
+      # HealthService falls back to host-side 127.0.0.1 ports that aren't
+      # reachable from inside the container).
+      - PAA_HEALTH_URL=${PAA_HEALTH_URL:-http://paa-1:9090}
+      - FIA_HEALTH_URL=${FIA_HEALTH_URL:-http://fia:9094}
+      - MLA_HEALTH_URL=${MLA_HEALTH_URL:-http://host.docker.internal:9095}
       - AUTH_JWT_SECRET=${AUTH_JWT_SECRET}
       - AUTH_JWT_TTL_SECONDS=${AUTH_JWT_TTL_SECONDS:-28800}
       - RDA_REQUIRE_API_KEY=${RDA_REQUIRE_API_KEY:-false}
@@ -120,6 +128,10 @@ services:
       - DB_DATABASE=${POSTGRES_DB:-fraud_db}
       - DB_USERNAME=${POSTGRES_USER:-postgres}
       - DB_PASSWORD=${POSTGRES_PASSWORD:-postgres}
+    extra_hosts:
+      # Linux hosts need this so `host.docker.internal` (the MLA probe)
+      # resolves; macOS Docker Desktop provides it implicitly.
+      - "host.docker.internal:host-gateway"
     volumes:
       - ./models:/app/models:ro
     depends_on:
@@ -160,6 +172,12 @@ services:
       - LOG_LEVEL=info
       - DB_CLIENT=pg
       - DB_URL=postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-postgres}@postgres:5432/${POSTGRES_DB:-fraud_db}
+      # Service-health fan-out (same defaults as rda-1; without these the
+      # Sentinel "System health" page reports PAA/FIA/MLA as down when
+      # NGINX happens to route the probe to this replica).
+      - PAA_HEALTH_URL=${PAA_HEALTH_URL:-http://paa-1:9090}
+      - FIA_HEALTH_URL=${FIA_HEALTH_URL:-http://fia:9094}
+      - MLA_HEALTH_URL=${MLA_HEALTH_URL:-http://host.docker.internal:9095}
       - AUTH_JWT_SECRET=${AUTH_JWT_SECRET}
       - AUTH_JWT_TTL_SECONDS=${AUTH_JWT_TTL_SECONDS:-28800}
       - RDA_REQUIRE_API_KEY=${RDA_REQUIRE_API_KEY:-false}
@@ -168,6 +186,8 @@ services:
       - DB_DATABASE=${POSTGRES_DB:-fraud_db}
       - DB_USERNAME=${POSTGRES_USER:-postgres}
       - DB_PASSWORD=${POSTGRES_PASSWORD:-postgres}
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     volumes:
       - ./models:/app/models:ro
     depends_on:
