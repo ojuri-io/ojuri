@@ -31,7 +31,7 @@ services:
       dockerfile: Dockerfile
     container_name: ojuri-rda-1
     environment:
-      - NODE_ENV=production
+      - NODE_ENV=${NODE_ENV:-development}
       - PORT=3000
       - APP_NAME=ojuri-rda-1
       - REDIS_HOST=redis
@@ -93,7 +93,7 @@ services:
       dockerfile: Dockerfile
     container_name: ojuri-rda-2
     environment:
-      - NODE_ENV=production
+      - NODE_ENV=${NODE_ENV:-development}
       - PORT=3000
       - APP_NAME=ojuri-rda-2
       - REDIS_HOST=redis
@@ -141,7 +141,7 @@ services:
       dockerfile: Dockerfile
     container_name: ojuri-rda-3
     environment:
-      - NODE_ENV=production
+      - NODE_ENV=${NODE_ENV:-development}
       - PORT=3000
       - APP_NAME=ojuri-rda-3
       - REDIS_HOST=redis
@@ -193,7 +193,7 @@ services:
       dockerfile: Dockerfile
     container_name: ojuri-paa-1
     environment:
-      - NODE_ENV=production
+      - NODE_ENV=${NODE_ENV:-development}
       - APP_NAME=ojuri-paa-1
       - METRICS_PORT=9090
       - REDIS_HOST=redis
@@ -236,7 +236,7 @@ services:
       dockerfile: Dockerfile
     container_name: ojuri-paa-2
     environment:
-      - NODE_ENV=production
+      - NODE_ENV=${NODE_ENV:-development}
       - APP_NAME=ojuri-paa-2
       - METRICS_PORT=9090
       - REDIS_HOST=redis
