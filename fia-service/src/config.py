@@ -41,6 +41,13 @@ class Config:
     FALLBACK_ON_LLM_FAILURE: bool = (
         os.getenv("FIA_FALLBACK_ON_LLM_FAILURE", "true").lower() == "true"
     )
+    # When true, skip the transformers/torch import + Phi-3 weight load
+    # entirely and serve every report from the deterministic rule-based
+    # generator. FALLBACK_ON_LLM_FAILURE only kicks in *after* the load
+    # tries — which is fatal on memory-constrained hosts because the
+    # load itself crashes the docker daemon. Set this for first-touch
+    # demos, CI smoke tests, or Docker Desktop VMs <16 GB.
+    DISABLE_LLM: bool = os.getenv("FIA_DISABLE_LLM", "false").lower() == "true"
 
     # ───────── Operational ─────────
     METRICS_PORT: int = int(os.getenv("METRICS_PORT", "9094"))

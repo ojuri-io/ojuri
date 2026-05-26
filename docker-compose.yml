@@ -330,6 +330,11 @@ services:
       - LLM_MAX_NEW_TOKENS=${FIA_LLM_MAX_NEW_TOKENS:-384}
       - LLM_TEMPERATURE=${FIA_LLM_TEMPERATURE:-0.2}
       - FIA_FALLBACK_ON_LLM_FAILURE=${FIA_FALLBACK_ON_LLM_FAILURE:-true}
+      # Set to true to skip the Phi-3 load entirely (no 7.6 GB download,
+      # no 15 GB resident model). Reports are served from the
+      # deterministic rule-based path. Useful for demos / CI / low-RAM
+      # hosts. See fia-service/src/llm/phi3_generator.py.
+      - FIA_DISABLE_LLM=${FIA_DISABLE_LLM:-false}
       - PROMPT_TEMPLATE_VERSION=${FIA_PROMPT_TEMPLATE_VERSION:-v1}
       - METRICS_PORT=9094
       - LOG_LEVEL=${FIA_LOG_LEVEL:-INFO}

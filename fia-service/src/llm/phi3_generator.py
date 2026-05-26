@@ -32,6 +32,27 @@ class Phi3ReportGenerator:
     # Setup
     # ─────────────────────────────────────────────────────────
     def _init_model(self) -> None:
+        # Short-circuit: operator can disable the LLM load entirely.
+        # `FALLBACK_ON_LLM_FAILURE=true` only kicks in *after* the
+        # transformers stack tries to load Phi-3 — which is the
+        # expensive part (~15 GB resident for Phi-3 mini in fp32) and
+        # the part that crashes the Docker daemon on memory-constrained
+        # hosts. `FIA_DISABLE_LLM=true` skips the import + load
+        # entirely and routes every report through the deterministic
+        # rule-based generator. Useful for:
+        #
+        #   - First-touch demos where the operator just wants to see
+        #     FIA wired end-to-end without burning 15 GB of RAM.
+        #   - CI smoke tests.
+        #   - Hosts where Docker Desktop is capped at <16 GB.
+        if getattr(self._config, "DISABLE_LLM", False):
+            logger.warning(
+                "FIA_DISABLE_LLM=true — skipping Phi-3 load entirely. "
+                "Reports will use the deterministic rule-based fallback."
+            )
+            self._fallback_only = True
+            return
+
         try:
             import torch  # type: ignore
             from transformers import (  # type: ignore
