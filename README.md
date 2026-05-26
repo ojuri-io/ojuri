@@ -109,13 +109,22 @@ because it carries ~7.6 GB of Phi-3 weights — opt in with
 > `/readyz` reports `DOWN` and a loud startup warning fires so the
 > degraded mode is unmissable.
 
-The dashboard runs separately:
+The dashboard runs separately. If you brought the backend up with
+`docker compose up -d` (the quickstart above), tell vite to proxy
+through NGINX before starting it — otherwise the dev server defaults
+to `http://localhost:3000` (a host-side RDA) and login returns a 502
+from the proxy:
 
 ````bash
 cd frontend
 npm install
-npm run dev          # http://localhost:5173
+cp .env.example .env       # then edit: uncomment the "Docker stack" block
+npm run dev                # http://localhost:5173
 ````
+
+For host-side dev (`npm run start:dev` from the repo root for RDA), the
+default targets in `.env.example` already point at `127.0.0.1:3000` —
+`cp .env.example .env` is optional.
 
 Send a test prediction (request fields are snake_case, see
 `src/v1/modules/rda/dtos/predict-request.dto.ts`):
