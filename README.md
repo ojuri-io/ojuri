@@ -177,6 +177,10 @@ has `mustChangePassword=true`; the first login forces a rotation. To require
 `X-Api-Key` on `/v1/predict`, set `RDA_REQUIRE_API_KEY=true` and issue a key
 from `POST /v1/admin/api-keys`.
 
+Lost the seeded password? It's only printed once. `npm run reset:admin` mints
+a fresh random one (or pass `-- --password 'my-chosen-secret-string'` to set
+your own); the new password again has `mustChangePassword=true`.
+
 ---
 
 ## Architecture
