@@ -8,15 +8,11 @@ import { evaluatePassword } from "./password-policy";
 
 const log = createServiceLogger("AuthService");
 
-const DEFAULT_TTL_SECONDS = 60 * 60 * 8; // 8h sessions
+const DEFAULT_TTL_SECONDS = 60 * 60 * 8;
 const BCRYPT_ROUNDS = 12;
 
-// A precomputed bcrypt hash of a junk value. We bcrypt-compare against
-// this when the username is unknown so the login path runs in
-// approximately constant time regardless of whether the user exists,
-// closing the timing oracle that lets an attacker enumerate usernames.
-// The hash is generated once at module load — bcrypt with the same
-// rounds always takes the same time, so this matches "real" branch.
+// Constant-time login: compare against this hash on the unknown-user
+// branch so response latency doesn't leak whether the username exists.
 const DUMMY_BCRYPT_HASH = bcrypt.hashSync(
   "ojuri-constant-time-dummy-do-not-use",
   BCRYPT_ROUNDS
@@ -27,15 +23,6 @@ export interface AuthSubject {
   tenantId: string;
   username: string;
   permissions: string[];
-  /**
-   * Snapshot of `users.mustChangePassword` at the time the token was
-   * minted. `denyIfPasswordRotation` reads this directly from the JWT
-   * instead of a per-request DB lookup, so admin endpoints stay cheap.
-   * Trade-off: a force-rotation set by an admin only takes effect on
-   * the target user's next login (or after their token expires).
-   * `changePassword` mints a fresh token so the happy-path rotator
-   * immediately drops the flag from their session.
-   */
   mustChangePassword: boolean;
 }
 
@@ -49,13 +36,6 @@ export interface LoginResult {
     tenantId: string;
     roles: { id: string; name: string }[];
     permissions: string[];
-    /**
-     * Set on first login for the seeded admin and any user created
-     * with a temp password. Frontend renders a blocking
-     * password-change screen until cleared; server middleware refuses
-     * every non-auth admin route while this is true so the gate
-     * cannot be bypassed by direct API access.
-     */
     mustChangePassword: boolean;
   };
 }
@@ -82,9 +62,6 @@ class AuthService {
     const tenantId = input.tenantId ?? "default";
     const user = await this.users.findByUsername(tenantId, input.username);
 
-    // Run bcrypt against either the real or the dummy hash so both
-    // branches take the same time. An attacker cannot tell from
-    // response latency whether the username exists.
     const hashToCheck = user?.passwordHash ?? DUMMY_BCRYPT_HASH;
     const passwordOk = await bcrypt.compare(input.password, hashToCheck);
 
@@ -101,10 +78,7 @@ class AuthService {
     }
 
     const detail = await this.users.findByIdWithRoles(user.id);
-    if (!detail) {
-      // Race: row deleted between findByUsername and findByIdWithRoles.
-      throw new InvalidCredentialsError();
-    }
+    if (!detail) throw new InvalidCredentialsError(); // user deleted between calls
 
     const permissions = mergePermissions(detail.roles);
     const mustChangePassword = !!user.mustChangePassword;
@@ -117,7 +91,6 @@ class AuthService {
       mustChangePassword,
     });
 
-    // Best-effort: never fail login because of a metadata write.
     this.users
       .touchLastLogin(detail.id)
       .catch((err) => log.warn("login", "touchLastLogin failed", { err: String(err) }));
@@ -137,11 +110,6 @@ class AuthService {
     };
   }
 
-  /**
-   * Mint a fresh signed JWT for the given subject claims. Centralised
-   * so login and post-rotation paths produce structurally identical
-   * tokens (same alg pin, same iss/aud injection).
-   */
   private mintToken(subject: AuthSubject): { token: string; expiresIn: number } {
     const ttl = parseInt(process.env.AUTH_JWT_TTL_SECONDS ?? "", 10);
     const expiresIn = Number.isFinite(ttl) && ttl > 0 ? ttl : DEFAULT_TTL_SECONDS;
@@ -155,12 +123,10 @@ class AuthService {
   }
 
   /**
-   * Rotate the caller's own password. Verifies the current secret,
-   * enforces complexity, persists the new bcrypt hash, clears
-   * `mustChangePassword`, and mints a FRESH JWT. The caller must
-   * replace its stored token with the returned one — the previous
-   * token's `mustChangePassword=true` claim would otherwise keep
-   * triggering the rotation gate for the remainder of its TTL.
+   * Rotate the caller's own password and mint a fresh JWT. The caller
+   * must replace its stored token with the returned one — the previous
+   * token's mustChangePassword=true claim would otherwise keep tripping
+   * the rotation gate for the remainder of its TTL.
    */
   async changePassword(input: {
     userId: string;
@@ -170,11 +136,9 @@ class AuthService {
     const user = await this.users.findById(input.userId);
     if (!user) throw new InvalidCredentialsError();
 
-    // Verify the current password FIRST. The previous ordering
-    // (policy → bcrypt) let an attacker who guessed the username probe
-    // the password complexity policy without knowing the current
-    // secret — one bit of information per attempt. Authenticate before
-    // doing any work that depends on the new value.
+    // Verify before evaluating the new-password policy — otherwise an
+    // attacker who guessed the username could probe the complexity
+    // rules without knowing the current secret.
     const ok = await bcrypt.compare(input.currentPassword, user.passwordHash);
     if (!ok) throw new InvalidCredentialsError();
 
@@ -189,20 +153,11 @@ class AuthService {
     }
 
     const passwordHash = await bcrypt.hash(input.newPassword, BCRYPT_ROUNDS);
-    await this.users.updateById(input.userId, {
-      passwordHash,
-      mustChangePassword: false,
-    });
+    await this.users.updateById(input.userId, { passwordHash, mustChangePassword: false });
     log.info("changePassword", "Password rotated", { userId: input.userId });
 
-    // Mint a fresh JWT with mustChangePassword=false so the caller's
-    // very next request clears the gate without a 23-line workaround.
     const detail = await this.users.findByIdWithRoles(input.userId);
-    if (!detail) {
-      // Should be impossible — we just updated the row — but bail
-      // gracefully rather than throw.
-      throw new InvalidCredentialsError();
-    }
+    if (!detail) throw new InvalidCredentialsError();
     const minted = this.mintToken({
       userId: detail.id,
       tenantId: detail.tenantId,
@@ -216,13 +171,6 @@ class AuthService {
     };
   }
 
-  /**
-   * Verify a presented bearer token. Returns the AuthSubject on success,
-   * null otherwise. Pure JWT validation — no DB hit on the hot path.
-   * Permission changes only take effect on the user's next login (8 h
-   * default); short-cut by setting AUTH_JWT_TTL_SECONDS lower if that
-   * latency is unacceptable for your deployment.
-   */
   verifyToken(token: string): AuthSubject | null {
     try {
       const decoded = jwt.verify(token, getJwtSecret(), {
@@ -243,10 +191,9 @@ class AuthService {
         username: decoded.username,
         tenantId: decoded.tenantId,
         permissions: decoded.permissions as string[],
-        // Default to false for any token minted before this claim was
-        // added — fail-open in the "you're allowed in" direction is the
-        // right call because the previous middleware was the source of
-        // truth for that flag, not the JWT.
+        // Default false for tokens minted before this claim existed —
+        // fail-open here is correct because the previous middleware was
+        // the source of truth, not the token.
         mustChangePassword: typeof decoded.mustChangePassword === "boolean"
           ? decoded.mustChangePassword
           : false,
@@ -287,7 +234,6 @@ function getJwtSecret(): string {
   return secret;
 }
 
-// Re-export the rounds so the user-create path uses the same cost as login.
 export { BCRYPT_ROUNDS };
 
 function mergePermissions(roles: { permissions: string[] }[]): string[] {

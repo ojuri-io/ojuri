@@ -30,9 +30,9 @@ class WebhookService {
   ) {}
 
   /**
-   * Register a new subscription. If `secret` is omitted, one is
-   * generated and returned — the caller must surface it to the
-   * client exactly once. Only the hash is stored.
+   * The returned `secret` is plaintext and only present in this
+   * response — only its sha256 hash is persisted. Surface it to the
+   * caller exactly once or it's lost.
    */
   async register(input: WebhookSubscriptionInput): Promise<{ id: string; secret: string }> {
     const verdict = await isWebhookUrlSafe(input.url);
@@ -71,12 +71,6 @@ class WebhookService {
     return n > 0;
   }
 
-  /**
-   * Fan out an event to all matching, active subscriptions. Each
-   * delivery is enqueued in `webhookDeliveries`, then dispatched
-   * fire-and-forget — failed attempts are retried by the delivery
-   * worker (`processPendingDeliveries`).
-   */
   async publish(
     event: WebhookEvent,
     payload: Record<string, unknown>,
@@ -87,24 +81,14 @@ class WebhookService {
 
     const envelope = { event, data: payload, sent_at: new Date().toISOString() };
     const ids = await this.deliveryRepo.enqueue(
-      subs.map((sub) => ({
-        subscriptionId: sub.id,
-        event,
-        payload: envelope,
-      }))
+      subs.map((sub) => ({ subscriptionId: sub.id, event, payload: envelope }))
     );
 
-    // Fire-and-forget dispatch.
     this.processPendingDeliveries(ids).catch((err) =>
       log.error("publish", "Delivery worker failed", { err: String(err) })
     );
   }
 
-  /**
-   * Attempt to deliver the listed pending deliveries. Used both by
-   * the inline path inside `publish` and by the retry worker that
-   * periodically scans for due retries.
-   */
   async processPendingDeliveries(deliveryIds: string[]): Promise<void> {
     if (deliveryIds.length === 0) return;
 
@@ -124,9 +108,9 @@ class WebhookService {
     const timestamp = Math.floor(Date.now() / 1000).toString();
     const deliveryId = randomUUID();
 
-    // The stored value is `sha256(secret)`, so the signer uses the
-    // hash, not the original secret. Clients verify with the secret
-    // they were given at registration time using the same scheme.
+    // HMAC key is sha256(secret) — the stored form, not the plaintext.
+    // Subscribers run the same hash to verify; the sample in
+    // docs/WEBHOOKS.md mirrors this.
     const signature = createHmac("sha256", row.secretHash)
       .update(`${timestamp}.${body}`)
       .digest("hex");
@@ -140,9 +124,8 @@ class WebhookService {
     let responseBody: string | null = null;
 
     try {
-      // Re-resolve the URL here to defeat DNS-rebinding attacks where a
-      // hostname that resolved to a public IP at registration time now
-      // resolves to a private one.
+      // Re-resolve at delivery time — defeats DNS-rebinding where a
+      // hostname that was public at registration now points internal.
       const verdict = await isWebhookUrlSafe(row.url);
       if (!verdict.ok) {
         throw new Error(`Pre-flight URL check failed: ${verdict.reason}`);
@@ -158,13 +141,11 @@ class WebhookService {
         },
         body,
         signal: controller.signal,
-        // Never follow redirects — a 3xx Location header would let a
-        // subscriber redirect us to an internal target, defeating the
-        // pre-flight check.
+        // `manual` so a 3xx Location can't redirect us to an internal
+        // target after the URL guard passed.
         redirect: "manual",
       });
       responseCode = resp.status;
-      // 3xx with `redirect: "manual"` shows up as opaque; treat as failure.
       if (resp.status >= 300 && resp.status < 400) {
         status = "FAILED";
         responseBody = `redirect refused (status ${resp.status})`;
@@ -182,7 +163,7 @@ class WebhookService {
     let nextAttemptAt: Date | null = null;
     if (status === "FAILED" && attempts < row.maxRetries) {
       status = "PENDING";
-      // Exponential backoff: 30 s * 2^(attempts-1), capped at 1 h.
+      // 30 s × 2^(attempt-1), capped at 1 h.
       const delayMs = Math.min(30_000 * Math.pow(2, attempts - 1), 3_600_000);
       nextAttemptAt = new Date(Date.now() + delayMs);
     }
@@ -196,10 +177,6 @@ class WebhookService {
     });
   }
 
-  /**
-   * Pull pending deliveries that are due. Called by the retry
-   * worker; exported separately so tests can drive it directly.
-   */
   async pullDueDeliveries(limit = 50): Promise<string[]> {
     return this.deliveryRepo.pullDue(limit);
   }
