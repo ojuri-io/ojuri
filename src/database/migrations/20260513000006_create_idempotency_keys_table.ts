@@ -1,8 +1,11 @@
 import { Knex } from "knex";
-import { DB_TABLES } from "../../shared/enums/db-tables.enum";
+
+// The IDEMPOTENCY_KEYS enum entry was removed when the cache moved to
+// Redis (see migration 20260527000001). String literal kept inline so
+// this historical migration stays self-contained.
 
 export async function up(knex: Knex): Promise<void> {
-  return knex.schema.createTable(DB_TABLES.IDEMPOTENCY_KEYS, (table: Knex.TableBuilder) => {
+  return knex.schema.createTable("idempotencyKeys", (table: Knex.TableBuilder) => {
     table.string("key", 255).notNullable();
     table.string("tenantId", 255).notNullable();
     table.string("requestHash", 128).notNullable();
@@ -17,5 +20,5 @@ export async function up(knex: Knex): Promise<void> {
 }
 
 export async function down(knex: Knex): Promise<void> {
-  return knex.schema.dropTable(DB_TABLES.IDEMPOTENCY_KEYS);
+  return knex.schema.dropTable("idempotencyKeys");
 }
