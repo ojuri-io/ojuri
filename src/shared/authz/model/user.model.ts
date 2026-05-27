@@ -14,6 +14,7 @@ export class User extends Model {
   lastLoginAt!: Date | null;
   disabledReason!: string | null;
   mustChangePassword!: boolean;
+  lastNotificationSeenAt!: Date | null;
   createdAt!: Date;
   updatedAt!: Date;
 }

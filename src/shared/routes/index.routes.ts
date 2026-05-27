@@ -6,6 +6,7 @@ import rdaRoute from "../../v1/modules/rda/routes/predict.route";
 import adminRoute from "../../v1/modules/admin/routes/admin.route";
 import authRoute from "../../v1/modules/auth/routes/auth.route";
 import statsRoute from "../../v1/modules/stats/routes/stats.route";
+import notificationsRoute from "../../v1/modules/notifications/routes/notifications.route";
 
 export default {
   app: appRoute,
@@ -16,4 +17,5 @@ export default {
   admin: adminRoute,
   auth: authRoute,
   stats: statsRoute,
+  notifications: notificationsRoute,
 };
