@@ -27,6 +27,16 @@ export interface AuthSubject {
   tenantId: string;
   username: string;
   permissions: string[];
+  /**
+   * Snapshot of `users.mustChangePassword` at the time the token was
+   * minted. `denyIfPasswordRotation` reads this directly from the JWT
+   * instead of a per-request DB lookup, so admin endpoints stay cheap.
+   * Trade-off: a force-rotation set by an admin only takes effect on
+   * the target user's next login (or after their token expires).
+   * `changePassword` mints a fresh token so the happy-path rotator
+   * immediately drops the flag from their session.
+   */
+  mustChangePassword: boolean;
 }
 
 export interface LoginResult {
@@ -97,22 +107,14 @@ class AuthService {
     }
 
     const permissions = mergePermissions(detail.roles);
+    const mustChangePassword = !!user.mustChangePassword;
 
-    const ttl = parseInt(process.env.AUTH_JWT_TTL_SECONDS ?? "", 10);
-    const expiresIn = Number.isFinite(ttl) && ttl > 0 ? ttl : DEFAULT_TTL_SECONDS;
-    const secret = getJwtSecret();
-
-    const subject: AuthSubject = {
+    const { token, expiresIn } = this.mintToken({
       userId: detail.id,
       tenantId: detail.tenantId,
       username: detail.username,
       permissions,
-    };
-    const token = jwt.sign(subject, secret, {
-      algorithm: "HS256",
-      expiresIn,
-      ...(process.env.AUTH_JWT_ISSUER ? { issuer: process.env.AUTH_JWT_ISSUER } : {}),
-      ...(process.env.AUTH_JWT_AUDIENCE ? { audience: process.env.AUTH_JWT_AUDIENCE } : {}),
+      mustChangePassword,
     });
 
     // Best-effort: never fail login because of a metadata write.
@@ -130,23 +132,41 @@ class AuthService {
         tenantId: detail.tenantId,
         roles: detail.roles.map((r) => ({ id: r.id, name: r.name })),
         permissions,
-        mustChangePassword: !!user.mustChangePassword,
+        mustChangePassword,
       },
     };
   }
 
   /**
+   * Mint a fresh signed JWT for the given subject claims. Centralised
+   * so login and post-rotation paths produce structurally identical
+   * tokens (same alg pin, same iss/aud injection).
+   */
+  private mintToken(subject: AuthSubject): { token: string; expiresIn: number } {
+    const ttl = parseInt(process.env.AUTH_JWT_TTL_SECONDS ?? "", 10);
+    const expiresIn = Number.isFinite(ttl) && ttl > 0 ? ttl : DEFAULT_TTL_SECONDS;
+    const token = jwt.sign(subject, getJwtSecret(), {
+      algorithm: "HS256",
+      expiresIn,
+      ...(process.env.AUTH_JWT_ISSUER ? { issuer: process.env.AUTH_JWT_ISSUER } : {}),
+      ...(process.env.AUTH_JWT_AUDIENCE ? { audience: process.env.AUTH_JWT_AUDIENCE } : {}),
+    });
+    return { token, expiresIn };
+  }
+
+  /**
    * Rotate the caller's own password. Verifies the current secret,
-   * enforces a minimum complexity, persists the new bcrypt hash, and
-   * clears `mustChangePassword`. The existing JWT remains valid — its
-   * claims don't carry the flag — and the frontend re-fetches `/me`
-   * after this call to refresh its local state.
+   * enforces complexity, persists the new bcrypt hash, clears
+   * `mustChangePassword`, and mints a FRESH JWT. The caller must
+   * replace its stored token with the returned one — the previous
+   * token's `mustChangePassword=true` claim would otherwise keep
+   * triggering the rotation gate for the remainder of its TTL.
    */
   async changePassword(input: {
     userId: string;
     currentPassword: string;
     newPassword: string;
-  }): Promise<void> {
+  }): Promise<{ token: string; expiresAt: string }> {
     const user = await this.users.findById(input.userId);
     if (!user) throw new InvalidCredentialsError();
 
@@ -174,6 +194,26 @@ class AuthService {
       mustChangePassword: false,
     });
     log.info("changePassword", "Password rotated", { userId: input.userId });
+
+    // Mint a fresh JWT with mustChangePassword=false so the caller's
+    // very next request clears the gate without a 23-line workaround.
+    const detail = await this.users.findByIdWithRoles(input.userId);
+    if (!detail) {
+      // Should be impossible — we just updated the row — but bail
+      // gracefully rather than throw.
+      throw new InvalidCredentialsError();
+    }
+    const minted = this.mintToken({
+      userId: detail.id,
+      tenantId: detail.tenantId,
+      username: detail.username,
+      permissions: mergePermissions(detail.roles),
+      mustChangePassword: false,
+    });
+    return {
+      token: minted.token,
+      expiresAt: new Date(Date.now() + minted.expiresIn * 1000).toISOString(),
+    };
   }
 
   /**
@@ -203,6 +243,13 @@ class AuthService {
         username: decoded.username,
         tenantId: decoded.tenantId,
         permissions: decoded.permissions as string[],
+        // Default to false for any token minted before this claim was
+        // added — fail-open in the "you're allowed in" direction is the
+        // right call because the previous middleware was the source of
+        // truth for that flag, not the JWT.
+        mustChangePassword: typeof decoded.mustChangePassword === "boolean"
+          ? decoded.mustChangePassword
+          : false,
       };
     } catch {
       return null;
