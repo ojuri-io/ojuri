@@ -191,3 +191,93 @@ describe("AuthService.verifyToken", () => {
     expect(svc.verifyToken("not-a-jwt")).toBeNull();
   });
 });
+
+describe("AuthService — mustChangePassword JWT claim", () => {
+  const userRow = {
+    id: "u-1",
+    username: "alice",
+    tenantId: "default",
+    isActive: true,
+    mustChangePassword: true,
+  };
+  const detail = {
+    id: "u-1",
+    username: "alice",
+    fullName: "Alice A",
+    tenantId: "default",
+    roles: [{ id: "r-1", name: "OPERATIONS", permissions: ["rules:read"] }],
+  };
+
+  async function buildUsersMock(pwHash: string) {
+    return {
+      async findByUsername() {
+        return { ...userRow, passwordHash: pwHash };
+      },
+      async findById() {
+        return { ...userRow, passwordHash: pwHash };
+      },
+      async findByIdWithRoles() {
+        return detail;
+      },
+      async updateById() {
+        userRow.mustChangePassword = false;
+      },
+      async touchLastLogin() {
+        /* noop */
+      },
+    };
+  }
+
+  it("login mints a JWT whose mustChangePassword matches the user row", async () => {
+    const pwHash = await bcrypt.hash("CorrectHorseBatteryStaple1!", 4);
+    const users = await buildUsersMock(pwHash);
+    const svc = new AuthService(users as never);
+
+    const result = await svc.login({ username: "alice", password: "CorrectHorseBatteryStaple1!" });
+
+    // Response surface still carries the flag for the frontend.
+    expect(result.user.mustChangePassword).toBe(true);
+
+    // verifyToken on the same token exposes it on the AuthSubject.
+    const subject = svc.verifyToken(result.token);
+    expect(subject).not.toBeNull();
+    expect(subject!.mustChangePassword).toBe(true);
+  });
+
+  it("verifyToken defaults mustChangePassword to false for tokens minted without the claim", () => {
+    // Simulate a pre-existing token that pre-dates the claim by signing one
+    // without including `mustChangePassword` in the payload.
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const jwt = require("jsonwebtoken");
+    const legacyToken = jwt.sign(
+      { userId: "u-1", tenantId: "default", username: "legacy", permissions: ["audit:read"] },
+      process.env.AUTH_JWT_SECRET,
+      { algorithm: "HS256", expiresIn: 60 }
+    );
+
+    const svc = new AuthService({} as never);
+    const subject = svc.verifyToken(legacyToken);
+    expect(subject).not.toBeNull();
+    expect(subject!.mustChangePassword).toBe(false);
+  });
+
+  it("changePassword returns a fresh token with mustChangePassword=false", async () => {
+    const pwHash = await bcrypt.hash("OldPassword1!", 4);
+    userRow.mustChangePassword = true;
+    const users = await buildUsersMock(pwHash);
+    const svc = new AuthService(users as never);
+
+    const result = await svc.changePassword({
+      userId: "u-1",
+      currentPassword: "OldPassword1!",
+      newPassword: "Xq7%vB#m9KrL2NpQ$wZ4!",
+    });
+
+    expect(typeof result.token).toBe("string");
+    expect(typeof result.expiresAt).toBe("string");
+
+    const subject = svc.verifyToken(result.token);
+    expect(subject).not.toBeNull();
+    expect(subject!.mustChangePassword).toBe(false);
+  });
+});

@@ -94,12 +94,17 @@ class AuthController {
         .send(ErrorResponse("currentPassword and newPassword are required"));
     }
     try {
-      await this.authService.changePassword({
+      // changePassword now mints a fresh JWT with mustChangePassword=false.
+      // The caller MUST replace its stored token with this value or
+      // the rotation gate (denyIfPasswordRotation) keeps firing for the
+      // remainder of the old token's TTL — it reads the flag from the
+      // JWT claim instead of doing a per-request DB lookup.
+      const { token, expiresAt } = await this.authService.changePassword({
         userId: subject.userId,
         currentPassword,
         newPassword,
       });
-      return res.send(SuccessResponse("Password changed"));
+      return res.send(SuccessResponse("Password changed", { token, expiresAt }));
     } catch (err) {
       if (err instanceof InvalidCredentialsError) {
         return res

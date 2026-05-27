@@ -45,7 +45,19 @@ function ChangePassword({ user, onSuccess, onLogout }) {
     setBusy(true);
     setError('');
     try {
-      await apiChangePassword({ currentPassword: current, newPassword: next });
+      // The server now mints a fresh JWT with mustChangePassword=false
+      // and returns it in the response. Replace the stored token before
+      // calling /me — without this, the rotation-gate middleware reads
+      // the stale flag from the old token and 423s every subsequent
+      // admin request for the rest of its 8 h TTL.
+      const result = await apiChangePassword({ currentPassword: current, newPassword: next });
+      if (result?.token) {
+        try {
+          localStorage.setItem('sentinel.jwt', result.token);
+        } catch {
+          /* private window — token is in memory for this call chain */
+        }
+      }
       // Re-fetch /me so the app shell picks up the cleared flag and
       // the freshest role list in one go.
       const refreshed = await apiMe();
