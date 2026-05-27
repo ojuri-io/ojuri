@@ -38,6 +38,7 @@
     "db:migrate:rollback": "npm run knex -- migrate:rollback",
     "db:seed": "npm run knex -- seed:run",
     "seed:load": "ts-node -r dotenv/config scripts/seed-load.ts",
+    "demo:load": "ts-node -r dotenv/config scripts/seed-load.ts --file data/demo/sample-transactions.json --concurrency 4",
     "replay": "ts-node -r dotenv/config scripts/replay.ts",
     "reset:admin": "ts-node scripts/reset-admin-password.ts"
   },
