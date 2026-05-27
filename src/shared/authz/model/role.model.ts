@@ -2,7 +2,7 @@ import { DB_TABLES } from "@shared/enums/db-tables.enum";
 import { Model, ModelObject } from "objection";
 
 export class Role extends Model {
-  static tableName = DB_TABLES.ROLES;
+  static override tableName = DB_TABLES.ROLES;
 
   id!: string;
   name!: string;

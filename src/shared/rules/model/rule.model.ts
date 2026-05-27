@@ -3,9 +3,9 @@ import { Model, ModelObject } from "objection";
 import { RuleExpression } from "../rule.types";
 
 export class Rule extends Model {
-  static tableName = DB_TABLES.RULES;
+  static override tableName = DB_TABLES.RULES;
 
-  static jsonAttributes = ["expression"];
+  static override jsonAttributes = ["expression"];
 
   id!: string;
   name!: string;

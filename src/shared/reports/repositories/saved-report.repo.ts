@@ -20,7 +20,7 @@ class SavedReportRepo extends BaseRepository<ISavedReport, SavedReport> {
     return SavedReport.query().findById(id);
   }
 
-  async deleteById(id: string): Promise<number> {
+  override async deleteById(id: string): Promise<number> {
     return SavedReport.query().deleteById(id);
   }
 }

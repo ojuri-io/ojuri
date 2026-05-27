@@ -2,9 +2,9 @@ import { DB_TABLES } from "@shared/enums/db-tables.enum";
 import { Model, ModelObject } from "objection";
 
 export class SavedReport extends Model {
-  static tableName = DB_TABLES.SAVED_REPORTS;
+  static override tableName = DB_TABLES.SAVED_REPORTS;
 
-  static jsonAttributes = ["filters", "columns"];
+  static override jsonAttributes = ["filters", "columns"];
 
   id!: string;
   name!: string;

@@ -3,8 +3,8 @@ import { ErrorCode } from "@shared/enums/error-code.enum";
 export default class AppError extends Error {
   public statusCode: number;
   public isOperational: boolean;
-  public cause: Error | undefined;
-  public errorCode!: ErrorCode;
+  public override cause: Error | undefined;
+  public errorCode: ErrorCode;
 
   constructor(statusCode: number, message: string, cause?: unknown, isOperational = true) {
     super(message);

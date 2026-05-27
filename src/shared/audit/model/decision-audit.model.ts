@@ -3,9 +3,9 @@ import { Model, ModelObject } from "objection";
 import { ReasonCode } from "@shared/onnx/reason-codes";
 
 export class DecisionAudit extends Model {
-  static tableName = DB_TABLES.DECISION_AUDIT_LOG;
+  static override tableName = DB_TABLES.DECISION_AUDIT_LOG;
 
-  static jsonAttributes = ["reasonCodes", "featuresSnapshot"];
+  static override jsonAttributes = ["reasonCodes", "featuresSnapshot"];
 
   id!: string;
   transactionId!: string;

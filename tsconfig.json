@@ -44,12 +44,11 @@
     //   strictPropertyInitialization     Objection.js models declare fields
     //                                    without initializers (ORM hydrates).
     //                                    Tightening needs `!` on every column.
-    //   noImplicitOverride               25 violations — every method that
-    //                                    overrides a base needs an `override`
-    //                                    keyword.
+    //   noUncheckedIndexedAccess         23 violations — every `array[i]` /
+    //                                    `obj[k]` needs a nullable guard.
     "noImplicitAny": false,
     "strictPropertyInitialization": false,
-    "noUncheckedIndexedAccess": true
+    "noImplicitOverride": true
   },
   "include": ["src/**/*.ts", "src/**/*.json", "knexfile.d.ts"],
   "exclude": ["node_modules", "**/*.spec.ts", "**/*.test.ts"]

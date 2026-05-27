@@ -2,9 +2,9 @@ import { DB_TABLES } from "@shared/enums/db-tables.enum";
 import { Model, ModelObject } from "objection";
 
 export class ModelVersion extends Model {
-  static tableName = DB_TABLES.MODEL_VERSIONS;
+  static override tableName = DB_TABLES.MODEL_VERSIONS;
 
-  static jsonAttributes = ["metrics", "metadata"];
+  static override jsonAttributes = ["metrics", "metadata"];
 
   id!: string;
   version!: string;

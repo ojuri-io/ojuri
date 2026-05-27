@@ -2,7 +2,7 @@ import { DB_TABLES } from "@shared/enums/db-tables.enum";
 import { Model, ModelObject } from "objection";
 
 export class SegmentThreshold extends Model {
-  static tableName = DB_TABLES.SEGMENT_THRESHOLDS;
+  static override tableName = DB_TABLES.SEGMENT_THRESHOLDS;
 
   id!: string;
   segment!: string;
