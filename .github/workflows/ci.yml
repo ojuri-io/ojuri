@@ -232,6 +232,45 @@ jobs:
           fi
           echo "CORS correctly refused evil.example"
 
+      # demo:load is the entry point for the README's quickstart "populate
+      # the dashboard with realistic-shaped data" step, paired with the
+      # rules seed that gives a visible ACCEPT / REVIEW / DECLINE split.
+      # Both are easy to break with a careless edit to the sample JSON,
+      # the seed file, or the seed-load CLI flag handling — assert the
+      # full round-trip end-to-end so we catch regressions before adopters do.
+      - name: Smoke npm run db:seed (idempotent — installs demo rules)
+        run: |
+          set -e
+          OUT=$(npm run db:seed 2>&1)
+          echo "$OUT"
+          echo "$OUT" | grep -q "Ran 1 seed files" || { echo "::error::db:seed did not run the expected single seed file"; exit 1; }
+
+      - name: Smoke npm run demo:load against the running stack
+        run: |
+          set -e
+          OUT=$(npm run demo:load -- --url http://localhost 2>&1)
+          echo "$OUT"
+          # Parse the summary line — looks like:
+          #   Done in 137ms — accept=9 decline=7 review=4 errors=0 | p50=...
+          SUMMARY=$(echo "$OUT" | grep -E '^Done in ' | tail -n 1)
+          if [ -z "$SUMMARY" ]; then
+            echo "::error::demo:load did not print a Done summary line"
+            exit 1
+          fi
+          ACCEPT=$(echo "$SUMMARY" | sed -n 's/.*accept=\([0-9]*\).*/\1/p')
+          DECLINE=$(echo "$SUMMARY" | sed -n 's/.*decline=\([0-9]*\).*/\1/p')
+          REVIEW=$(echo "$SUMMARY" | sed -n 's/.*review=\([0-9]*\).*/\1/p')
+          ERRORS=$(echo "$SUMMARY" | sed -n 's/.*errors=\([0-9]*\).*/\1/p')
+          echo "demo:load counts → accept=$ACCEPT decline=$DECLINE review=$REVIEW errors=$ERRORS"
+          # All 20 entries must be accepted by the API (no 4xx/5xx).
+          [ "$ERRORS" = "0" ] || { echo "::error::demo:load reported $ERRORS errors"; exit 1; }
+          # All three decision buckets must be non-empty — that's the whole
+          # point of pairing demo:load with the rules seed. If decline=0
+          # the seed didn't take, or the rules engine isn't firing.
+          [ "$ACCEPT"  -gt 0 ] || { echo "::error::demo:load produced 0 ACCEPTs"; exit 1; }
+          [ "$DECLINE" -gt 0 ] || { echo "::error::demo:load produced 0 DECLINEs — did the rules seed not apply?"; exit 1; }
+          [ "$REVIEW"  -gt 0 ] || { echo "::error::demo:load produced 0 REVIEWs — did the rules seed not apply?"; exit 1; }
+
       - name: Dump logs on failure
         if: failure()
         run: |
