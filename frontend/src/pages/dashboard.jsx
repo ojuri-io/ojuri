@@ -90,15 +90,27 @@ function Dashboard({ toast: _toast, user: _user, queue, models, reports, webhook
     ).filter(Boolean);
     const ruleCode = q.preRule || q.ruleCode || null;
     const ruleDescr = q.ruleName || null;
+    // `/v1/review-queue` returns `createdAt` but not `ageMin`. Mirror the
+    // computation used by the review-queue page so the dashboard column
+    // doesn't render blank for live rows (the props.queue fallback path
+    // does already carry `ageMin`).
+    const ageMin = q.ageMin != null
+      ? Number(q.ageMin)
+      : q.createdAt
+        ? Math.max(0, Math.round((Date.now() - new Date(q.createdAt).getTime()) / 60000))
+        : null;
+    const senderRaw = q.senderId || q.sender || '';
     return {
       id: (q.transactionId || '').slice(0, 8) + '…',
+      sender: senderRaw ? (senderRaw.length > 14 ? senderRaw.slice(0, 14) + '…' : senderRaw) : '—',
+      senderFull: senderRaw,
       amount: Number(q.amount ?? 0),
       score: Number(q.championScore ?? 0),
       isRule: q.stage === 'PRE_RULE' || q.decisionSource === 'PRE_RULE',
       ruleCode,
       ruleDescr,
       reasons: reasonCodes.slice(0, 2).join(' · ') || '—',
-      age: q.ageMin != null ? fmtAge(q.ageMin) + ' ago' : '',
+      age: ageMin != null ? fmtAge(ageMin) + ' ago' : '',
     };
   });
 
@@ -240,12 +252,19 @@ function Dashboard({ toast: _toast, user: _user, queue, models, reports, webhook
           <p style={{margin:'6px 0 0', fontSize:12, color:'var(--color-text-tertiary)'}}>No recent declines — queue is clear.</p>
         ) : (
           <>
+            {/* Column template — six columns spread proportionally so the
+                row spans the panel rather than collapsing with Age stranded
+                on the right. Numeric cells (Amount, Age) are right-aligned
+                so digits stack down the column. Sender was added because
+                the previous five-column layout left ~500px of empty space
+                inside the Stage cell when rows were short PRE_RULE strings. */}
             <div
               role="row"
               style={{
                 display: 'grid',
-                gridTemplateColumns: 'auto auto auto 1fr auto',
-                gap: 10,
+                gridTemplateColumns:
+                  'minmax(90px, 0.9fr) minmax(120px, 1.3fr) minmax(90px, 1fr) auto minmax(110px, 1.4fr) minmax(70px, 0.7fr)',
+                gap: 12,
                 alignItems: 'center',
                 padding: '4px 0 8px',
                 borderBottom: '1px solid var(--border)',
@@ -258,10 +277,11 @@ function Dashboard({ toast: _toast, user: _user, queue, models, reports, webhook
               }}
             >
               <span>ID</span>
-              <span>Amount</span>
+              <span>Sender</span>
+              <span style={{ textAlign: 'right' }}>Amount</span>
               <span>Rule</span>
               <span>Stage</span>
-              <span>Age</span>
+              <span style={{ textAlign: 'right' }}>Age</span>
             </div>
             {recent.map((r, i) => (
               <div
@@ -269,23 +289,27 @@ function Dashboard({ toast: _toast, user: _user, queue, models, reports, webhook
                 role="row"
                 style={{
                   display: 'grid',
-                  gridTemplateColumns: 'auto auto auto 1fr auto',
-                  gap: 10,
+                  gridTemplateColumns:
+                    'minmax(90px, 0.9fr) minmax(120px, 1.3fr) minmax(90px, 1fr) auto minmax(110px, 1.4fr) minmax(70px, 0.7fr)',
+                  gap: 12,
                   alignItems: 'center',
                   padding: '9px 0',
                   borderTop: i === 0 ? 'none' : '0.5px solid var(--color-border-tertiary)',
                 }}
               >
-                <code className="mono" style={{fontSize:11, color:'var(--color-text-secondary)'}}>{r.id}</code>
-                <span style={{fontSize:12, fontWeight:500, fontVariantNumeric:'tabular-nums'}}>{fmtNaira(r.amount)}</span>
+                <code className="mono truncate" style={{fontSize:11, color:'var(--color-text-secondary)'}}>{r.id}</code>
+                <code className="mono truncate" style={{fontSize:11, color:'var(--color-text-secondary)'}} title={r.senderFull || undefined}>{r.sender}</code>
+                <span style={{fontSize:12, fontWeight:500, fontVariantNumeric:'tabular-nums', textAlign:'right'}}>{fmtNaira(r.amount)}</span>
                 {/* Chip = short rule code in mono (e.g. AMOUNT_HIGH).
                     The long human-readable name moves to the title
                     attribute as a hover tooltip so it doesn't bloat
                     the row. Score-based declines keep the
-                    two-decimal probability in the same slot. */}
+                    two-decimal probability in the same slot.
+                    `justifySelf: start` keeps the pill hugging its
+                    text width instead of being stretched by the grid. */}
                 <span
                   className="pill danger"
-                  style={{fontSize:11}}
+                  style={{fontSize:11, justifySelf:'start'}}
                   title={r.isRule && r.ruleDescr ? r.ruleDescr : undefined}
                 >
                   {r.isRule
@@ -295,7 +319,7 @@ function Dashboard({ toast: _toast, user: _user, queue, models, reports, webhook
                 <span className="truncate" style={{fontSize:11, color:'var(--color-text-secondary)'}}>
                   {r.isRule ? 'PRE_RULE' : r.reasons}
                 </span>
-                <span style={{fontSize:11, color:'var(--color-text-tertiary)', whiteSpace:'nowrap', fontVariantNumeric:'tabular-nums'}}>{r.age}</span>
+                <span style={{fontSize:11, color:'var(--color-text-tertiary)', whiteSpace:'nowrap', fontVariantNumeric:'tabular-nums', textAlign:'right'}}>{r.age || '—'}</span>
               </div>
             ))}
           </>
