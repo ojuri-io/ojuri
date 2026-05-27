@@ -29,7 +29,6 @@ const appConfig = {
   },
   onnx: {
     modelPath: process.env.MODEL_PATH || "./models/fraud_model.onnx",
-    modelRegistryUrl: process.env.MODEL_REGISTRY_URL,
     modelPollInterval: Number(process.env.MODEL_POLL_INTERVAL) || 300000,
   },
   fraud: {
