@@ -1,8 +1,9 @@
 import fp from 'fastify-plugin';
+import type { FastifyReply, FastifyRequest } from 'fastify';
 import Logger from '.';
 import { getLogLevelFromStatusCode } from './util';
 
-function logRequest(req, reply) {
+function logRequest(req: FastifyRequest, reply: FastifyReply) {
   const logLevel = getLogLevelFromStatusCode(reply.raw.statusCode);
 
   Logger[logLevel]({

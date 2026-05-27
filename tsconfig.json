@@ -41,10 +41,6 @@
 
     // Deliberately OFF, with rationale:
     //
-    //   noImplicitAny                    Fastify route handlers and several
-    //                                    Validator.register callbacks rely on
-    //                                    inferred `any`. Tightening needs ~40
-    //                                    type annotations plus @types/validatorjs.
     //   strictPropertyInitialization     Objection.js models declare fields
     //                                    without initializers (ORM hydrates).
     //                                    Tightening needs `!` on every column.
@@ -56,6 +52,6 @@
     "noImplicitAny": false,
     "strictPropertyInitialization": true
   },
-  "include": ["src/**/*.ts", "src/**/*.json"],
+  "include": ["src/**/*.ts", "src/**/*.json", "knexfile.d.ts"],
   "exclude": ["node_modules", "**/*.spec.ts", "**/*.test.ts"]
 }
