@@ -17,9 +17,8 @@ import { loadCatalog } from "./shared/features/feature-catalog";
 const app = new App();
 
 async function start() {
-  // Load + validate the feature catalogue first. A malformed catalogue
-  // means an unknown model contract — better to fail boot than to
-  // silently serve predictions with a broken input shape.
+  // Fail boot on a malformed catalogue — silently serving predictions
+  // against a broken input shape is worse than not starting.
   const catalog = loadCatalog();
   logger.info(
     {
@@ -37,16 +36,13 @@ async function start() {
     logger.warn({ err }, "Kafka producer failed to connect - will retry on publish");
   }
 
-  // Warm the runtime-settings cache before the registry resolves
-  // anything — the registry's threshold fallback chain depends on it.
+  // Warm runtime-settings before the model registry — the registry's
+  // threshold fallback chain depends on it.
   const runtimeSettings = container.resolve(RuntimeSettingsService);
   await runtimeSettings.start().catch((err) =>
     logger.warn({ err }, "Runtime settings initial load failed - using env fallbacks until refresh")
   );
 
-  // Hydrate registry caches before accepting traffic so the first
-  // /v1/predict request after boot doesn't synchronously hit Postgres
-  // just to figure out which model and threshold to use.
   const modelRegistry = container.resolve(ModelRegistryService);
   await modelRegistry.initialize().catch((err) =>
     logger.warn({ err }, "Model registry initial load failed - will retry on schedule")
@@ -65,12 +61,6 @@ async function start() {
   warnIfUnsafeDefaults();
 }
 
-/**
- * Surface footguns that ship with a fresh checkout: an unauthenticated
- * /v1/predict surface, a dev JWT secret, or a localhost-only CORS list
- * in production. Operators almost always want one of these flipped before
- * exposing the service to anything beyond their own laptop.
- */
 function warnIfUnsafeDefaults(): void {
   const isProduction = process.env.NODE_ENV === "production";
   const requireApiKey = (process.env.RDA_REQUIRE_API_KEY ?? "false").toLowerCase() === "true";
