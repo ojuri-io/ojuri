@@ -78,6 +78,13 @@ Variables you can reference in `{ "var": "..." }`:
 
 ## Examples
 
+A working set of four rules ships under `src/database/seeds/01_demo_rules.ts`
+and is installed by `npm run db:seed`. They're scoped to the curated demo
+dataset (`data/demo/sample-transactions.json`) and give a first-touch deploy
+a visible ACCEPT / REVIEW / DECLINE split without needing PAA or a trained
+model. Read those for a worked, in-repo example, then replace them with
+your own.
+
 ### Instant blocklist
 
 ```json
