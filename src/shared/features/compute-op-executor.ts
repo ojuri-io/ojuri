@@ -81,7 +81,7 @@ export function executeComputeOp(
     case "numeric_bucket": {
       const v = safeNumber(ctx.request[op.field], 0);
       for (let i = 0; i < op.boundaries.length; i++) {
-        if (v <= op.boundaries[i]) return i;
+        if (v <= op.boundaries[i]!) return i;
       }
       return op.boundaries.length; // overflow bucket
     }

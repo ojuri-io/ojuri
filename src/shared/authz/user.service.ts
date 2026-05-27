@@ -130,7 +130,7 @@ class UserService {
     const user = await this.users.findByIdWithRoles(userId);
     if (!user) throw new NotFoundError("User not found");
     // Guard: a user must keep at least one role.
-    if (user.roles.length === 1 && user.roles[0].id === roleId) {
+    if (user.roles.length === 1 && user.roles[0]?.id === roleId) {
       throw new ConflictError("Cannot remove the user's last remaining role");
     }
     await this.users.unassignRole(userId, roleId);
