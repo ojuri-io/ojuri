@@ -1,0 +1,73 @@
+# Build artefacts — get rebuilt inside the container.
+node_modules
+**/node_modules
+dist
+**/dist
+*.tsbuildinfo
+
+# Sibling services with their own Docker images / Python venvs.
+# RDA's Dockerfile only needs the root TypeScript sources.
+paa-service
+mla-service
+fia-service
+frontend
+
+# Secrets and local environment files must never enter an image layer.
+# Anything matching .env is excluded; .env.example is re-included
+# because it's intended to be public docs.
+.env
+.env.*
+**/.env
+**/.env.*
+!.env.example
+!**/.env.example
+
+# Python venvs (in case a future service grows one at the root).
+.venv
+venv
+**/.venv
+**/venv
+
+# Version-control + local tooling state.
+.git
+.gitignore
+.gitattributes
+.github
+.husky
+.vscode
+.idea
+.nvmrc
+
+# Test + coverage output.
+test
+tests
+**/coverage
+**/.nyc_output
+**/junit*.xml
+
+# Logs + OS junk.
+*.log
+**/*.log
+.DS_Store
+**/.DS_Store
+Thumbs.db
+
+# Local Kafka disk-buffer state (created by the LevelDB fallback).
+.kafka-buffer
+**/.kafka-buffer
+
+# Docker-side scaffolding — keep the daemon from re-shipping itself.
+Dockerfile*
+docker-compose*.yml
+.dockerignore
+
+# Documentation + repo-wide config that doesn't affect the runtime image.
+docs
+CHANGELOG.md
+CONTRIBUTING.md
+ROADMAP.md
+SECURITY.md
+brand.md
+*.md
+!README.md
+LICENSE
