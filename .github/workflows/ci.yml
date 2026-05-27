@@ -164,12 +164,18 @@ jobs:
           cache-dependency-path: package-lock.json
       - name: npm ci
         run: npm ci
-      - name: Run migrations + verify seed prints a one-time password
+      - name: Run migrations + capture the seeded admin password
         run: |
           set -e
           OUT=$(npm run db:migrate 2>&1)
           echo "$OUT"
           echo "$OUT" | grep -q "password:" || { echo "::error::seed banner missing"; exit 1; }
+          # Extract the one-time printed password so a later step can
+          # rotate it and authenticate against the admin surface.
+          PW=$(echo "$OUT" | grep -E '^\s*password:' | head -1 | awk '{print $2}')
+          [ -n "$PW" ] || { echo "::error::could not parse seeded admin password"; exit 1; }
+          echo "::add-mask::$PW"
+          echo "SEEDED_ADMIN_PASSWORD=$PW" >> $GITHUB_ENV
 
       - name: Smoke /v1/predict via NGINX (real ML inference, decision_source=ML)
         run: |
@@ -244,6 +250,59 @@ jobs:
           OUT=$(npm run db:seed 2>&1)
           echo "$OUT"
           echo "$OUT" | grep -q "Ran 1 seed files" || { echo "::error::db:seed did not run the expected single seed file"; exit 1; }
+
+      # RDA's RulesService refreshes its in-memory cache every
+      # RULES_RELOAD_INTERVAL_MS (default 30 s). db:seed just wrote
+      # four PRE rules to Postgres, but the running RDA replicas
+      # cached an empty rule set at startup — firing predict
+      # immediately would bypass them and demo:load would come back
+      # 20/0/0. Use the admin reload endpoint to force an immediate
+      # refresh instead of sleeping a full tick.
+      #
+      # The admin surface is gated by `mustChangePassword`, so we have
+      # to login → rotate → reload. The rotated password is throwaway
+      # (lives only for the remaining steps of this CI run).
+      - name: Force rules-cache reload via POST /v1/admin/rules/reload
+        env:
+          NEW_ADMIN_PASSWORD: "Reload-Test-Pass-2026!"
+        run: |
+          set -e
+
+          # 1. Login with the seeded password — returns a JWT carrying
+          #    mustChangePassword=true. Auth routes accept this token
+          #    but every /admin/* route refuses it.
+          TOK1=$(curl -sS -m 10 -X POST http://localhost/v1/auth/login \
+            -H 'Content-Type: application/json' \
+            -d "{\"username\":\"admin\",\"password\":\"$SEEDED_ADMIN_PASSWORD\"}" \
+            | python3 -c "import json,sys; print(json.load(sys.stdin)['data']['token'])")
+          [ -n "$TOK1" ] || { echo "::error::initial login failed"; exit 1; }
+
+          # 2. Rotate the password — the response mints a fresh JWT
+          #    with mustChangePassword=false. The seeded password is
+          #    invalidated; the new one lives only for this CI run.
+          TOK2=$(curl -sS -m 10 -X POST http://localhost/v1/auth/change-password \
+            -H "Authorization: Bearer $TOK1" \
+            -H 'Content-Type: application/json' \
+            -d "{\"currentPassword\":\"$SEEDED_ADMIN_PASSWORD\",\"newPassword\":\"$NEW_ADMIN_PASSWORD\"}" \
+            | python3 -c "import json,sys; print(json.load(sys.stdin)['data']['token'])")
+          [ -n "$TOK2" ] || { echo "::error::change-password failed"; exit 1; }
+
+          # 3. Hit the reload endpoint. Returns the new in-memory cache
+          #    counts; the demo seed installs four PRE rules, so any
+          #    `pre` count < 4 means the rules engine isn't seeing them.
+          RESP=$(curl -sS -m 10 -X POST http://localhost/v1/admin/rules/reload \
+            -H "Authorization: Bearer $TOK2")
+          echo "$RESP"
+          echo "$RESP" | python3 -c "
+          import json, sys
+          d = json.load(sys.stdin)
+          assert d.get('status') is True, d
+          data = d.get('data') or {}
+          pre = int(data.get('pre', 0))
+          post = int(data.get('post', 0))
+          print(f'rules cache reloaded: pre={pre} post={post}')
+          assert pre >= 4, f'expected >=4 PRE rules (the demo seed installs 4), got {pre}'
+          "
 
       - name: Smoke npm run demo:load against the running stack
         run: |
