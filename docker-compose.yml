@@ -75,9 +75,12 @@ services:
     volumes:
       - ./models:/app/models:ro
     depends_on:
-      - redis
-      - kafka
-      - postgres
+      redis:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
     networks:
       - ojuri-network
     restart: unless-stopped
@@ -135,9 +138,12 @@ services:
     volumes:
       - ./models:/app/models:ro
     depends_on:
-      - redis
-      - kafka
-      - postgres
+      redis:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
     networks:
       - ojuri-network
     restart: unless-stopped
@@ -191,9 +197,12 @@ services:
     volumes:
       - ./models:/app/models:ro
     depends_on:
-      - redis
-      - kafka
-      - postgres
+      redis:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
     networks:
       - ojuri-network
     restart: unless-stopped
@@ -238,9 +247,12 @@ services:
     ports:
       - "9091:9090"
     depends_on:
-      - redis
-      - kafka
-      - postgres
+      redis:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
     networks:
       - ojuri-network
     restart: unless-stopped
@@ -281,9 +293,12 @@ services:
     ports:
       - "9093:9090"
     depends_on:
-      - redis
-      - kafka
-      - postgres
+      redis:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
     networks:
       - ojuri-network
     restart: unless-stopped
