@@ -1,3 +1,4 @@
+import httpStatus from "http-status";
 import { injectable } from "tsyringe";
 import appConfig from "@config/app.config";
 import { createServiceLogger } from "@shared/utils/logger/service-logger";
@@ -10,12 +11,15 @@ import { RuleContext } from "@shared/rules/rule.types";
 import ModelRegistryService from "@shared/models/model-registry.service";
 import DecisionAuditService from "@shared/audit/decision-audit.service";
 import WebhookService from "@shared/webhooks/webhook.service";
+import IdempotencyService from "@shared/idempotency/idempotency.service";
 import { loadCatalog } from "@shared/features/feature-catalog";
 import { buildFeatures } from "@shared/features/feature-builder";
 import FeatureService from "./feature.service";
 import { PredictRequestDto, PredictResponseDto } from "../dtos/predict-request.dto";
 
 const log = createServiceLogger("PredictService");
+
+const IDEMPOTENCY_TTL_MS = Number(process.env.IDEMPOTENCY_TTL_MS) || 24 * 60 * 60 * 1000;
 
 export interface PredictInvocation {
   request: PredictRequestDto;
@@ -25,11 +29,12 @@ export interface PredictInvocation {
   idempotencyKey?: string | null;
 }
 
-/**
- * Fraud prediction service
- * Orchestrates feature retrieval, rule evaluation, ML inference,
- * audit logging, and event publishing.
- */
+export type PredictOutcome =
+  | { kind: "ok"; response: PredictResponseDto; latencyMs: number }
+  | { kind: "replay"; response: Record<string, unknown> }
+  | { kind: "conflict" }
+  | { kind: "in_flight" };
+
 @injectable()
 class PredictService {
   constructor(
@@ -39,8 +44,73 @@ class PredictService {
     private rulesService: RulesService,
     private modelRegistry: ModelRegistryService,
     private decisionAudit: DecisionAuditService,
-    private webhookService: WebhookService
+    private webhookService: WebhookService,
+    private idempotencyService: IdempotencyService
   ) {}
+
+  /**
+   * End-to-end request handler: idempotency lookup, distributed lock,
+   * inference, response cache, metrics. The HTTP layer just maps the
+   * returned discriminator to a status code.
+   */
+  async executePrediction(invocation: PredictInvocation): Promise<PredictOutcome> {
+    const startTime = Date.now();
+    const { idempotencyKey, tenantId, apiKeyId, request } = invocation;
+
+    if (!idempotencyKey) {
+      const response = await this.predict(invocation);
+      const latencyMs = Date.now() - startTime;
+      this.recordOk(latencyMs);
+      return { kind: "ok", response, latencyMs };
+    }
+
+    const idemKey = {
+      tenantId: tenantId ?? "default",
+      apiKeyId: apiKeyId ?? null,
+      key: idempotencyKey,
+    };
+    const requestHash = IdempotencyService.hashRequest(request);
+
+    const cached = await this.idempotencyService.lookup({ ...idemKey, requestHash });
+    if (cached.kind === "replay") return { kind: "replay", response: cached.response };
+    if (cached.kind === "conflict") return { kind: "conflict" };
+
+    const lock = await this.idempotencyService.acquireLock(idemKey);
+    if (!lock) {
+      const waited = await this.idempotencyService.waitForReplay({ ...idemKey, requestHash });
+      if (waited.kind === "replay") return { kind: "replay", response: waited.response };
+      if (waited.kind === "conflict") return { kind: "conflict" };
+      return { kind: "in_flight" };
+    }
+
+    try {
+      const response = await this.predict(invocation);
+      await this.idempotencyService.store({
+        ...idemKey,
+        requestHash,
+        response: response as unknown as Record<string, unknown>,
+        ttlMs: IDEMPOTENCY_TTL_MS,
+      });
+      const latencyMs = Date.now() - startTime;
+      this.recordOk(latencyMs);
+      return { kind: "ok", response, latencyMs };
+    } catch (err) {
+      this.recordError();
+      throw err;
+    } finally {
+      await lock.release();
+    }
+  }
+
+  private recordOk(latencyMs: number): void {
+    metricsService.recordRequest("POST", "/predict", httpStatus.OK);
+    metricsService.recordLatency("POST", "/predict", latencyMs);
+  }
+
+  private recordError(): void {
+    metricsService.recordRequest("POST", "/predict", httpStatus.INTERNAL_SERVER_ERROR);
+    metricsService.recordError("request_error");
+  }
 
   async predict(invocation: PredictInvocation): Promise<PredictResponseDto> {
     const { request, tenantId } = invocation;

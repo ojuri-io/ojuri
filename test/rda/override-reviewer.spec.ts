@@ -29,12 +29,9 @@ function buildController() {
       | undefined,
   };
   const webhooks = { publish: async () => undefined };
-  // Predict + idempotency dependencies aren't exercised by the
-  // override handler; pass empty stubs.
   return {
     audit,
     controller: new PredictController(
-      {} as never,
       {} as never,
       audit as never,
       webhooks as never
