@@ -37,7 +37,7 @@ jobs:
             build: "npm run build"
           - workspace: frontend
             dir: frontend
-            lint: "" # frontend has no .ts lint script; vitest covers source
+            lint: "npm run lint"
             test: "npm test"
             build: "npm run build"
     steps:
