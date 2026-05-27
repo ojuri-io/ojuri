@@ -43,6 +43,11 @@ class MetricsService {
   // Audit log
   private auditWriteFailures: Counter<string>;
 
+  // Idempotency cache
+  private idempotencyLookups: Counter<string>;
+  private idempotencyStores: Counter<string>;
+  private idempotencyEvictions: Counter<string>;
+
   constructor() {
     this.registry = new Registry();
 
@@ -179,6 +184,26 @@ class MetricsService {
       labelNames: ["op"],
       registers: [this.registry],
     });
+
+    this.idempotencyLookups = new Counter({
+      name: "fraud_detection_idempotency_lookups_total",
+      help: "Idempotency-Key lookups by outcome",
+      labelNames: ["outcome"], // hit | miss | conflict | in_flight
+      registers: [this.registry],
+    });
+
+    this.idempotencyStores = new Counter({
+      name: "fraud_detection_idempotency_stores_total",
+      help: "Idempotency response writes",
+      labelNames: ["compressed"], // "true" | "false"
+      registers: [this.registry],
+    });
+
+    this.idempotencyEvictions = new Counter({
+      name: "fraud_detection_idempotency_evictions_total",
+      help: "Idempotency entries evicted by the per-tenant cardinality cap",
+      registers: [this.registry],
+    });
   }
 
   /**
@@ -302,6 +327,18 @@ class MetricsService {
    */
   recordAuditWriteFailure(op: "record" | "override") {
     this.auditWriteFailures.inc({ op });
+  }
+
+  recordIdempotencyLookup(outcome: "hit" | "miss" | "conflict" | "in_flight") {
+    this.idempotencyLookups.inc({ outcome });
+  }
+
+  recordIdempotencyStore(compressed: boolean) {
+    this.idempotencyStores.inc({ compressed: compressed ? "true" : "false" });
+  }
+
+  recordIdempotencyEviction(count: number) {
+    if (count > 0) this.idempotencyEvictions.inc(count);
   }
 
   /**
