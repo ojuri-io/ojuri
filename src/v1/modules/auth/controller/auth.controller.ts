@@ -60,8 +60,8 @@ class AuthController {
       return res.code(httpStatus.UNAUTHORIZED).send(ErrorResponse("User no longer exists"));
     }
 
-    // Re-read the bare user row to pick up `mustChangePassword` — the
-    // roles join doesn't carry it.
+    // Re-read the bare user row to pick up `mustChangePassword` and
+    // `lastNotificationSeenAt` — the roles join doesn't carry them.
     const bare = await this.users.findById(subject.userId);
 
     return res.send(
@@ -75,6 +75,12 @@ class AuthController {
         roles: detail.roles.map((r) => ({ id: r.id, name: r.name })),
         permissions: subject.permissions,
         mustChangePassword: !!bare?.mustChangePassword,
+        // ISO string so the SPA can do `new Date(lastNotificationSeenAt)`
+        // directly. NULL on first sign-in (or after a fresh seed) means
+        // "user has never opened the bell" — every backlog item is unread.
+        lastNotificationSeenAt: bare?.lastNotificationSeenAt
+          ? new Date(bare.lastNotificationSeenAt).toISOString()
+          : null,
       })
     );
   };

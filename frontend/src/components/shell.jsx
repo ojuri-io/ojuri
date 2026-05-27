@@ -520,7 +520,21 @@ function initials(user) {
 // the leading edge of the topbar. CSS hides it on desktop and shows it
 // on tablet / phone. Wiring this is how the parent opens the responsive
 // sidebar drawer.
-export function Topbar({ dateLabel, notifications, user, onLogout, onMenuClick }) {
+export function Topbar({
+  dateLabel,
+  notifications,
+  user,
+  onLogout,
+  onMenuClick,
+  // `lastSeenAt` (ISO string or null) + `onMarkSeen` wire the unread-badge
+  // tracking: badge counts only items whose anchor is newer than lastSeenAt,
+  // and opening the bell calls onMarkSeen() — which POSTs /v1/notifications/seen
+  // and bumps the timestamp. Both are optional; omitting them falls back to
+  // the legacy "badge = total backlog count" behaviour so older callsites
+  // keep working unchanged.
+  lastSeenAt,
+  onMarkSeen,
+}) {
   const [bellOpen, setBellOpen] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
   const bellRef = useRef(null);
@@ -552,7 +566,13 @@ export function Topbar({ dateLabel, notifications, user, onLogout, onMenuClick }
   }, [bellOpen, menuOpen]);
 
   const items = notifications || [];
-  const unread = items.length;
+  // `unread` drives the red badge on the bell. When the parent wires
+  // unread tracking (passes `lastSeenAt`), count only items whose anchor
+  // is newer than lastSeenAt; otherwise fall back to total backlog so
+  // legacy callsites keep their previous behaviour.
+  const total = items.length;
+  const unread =
+    lastSeenAt !== undefined ? unreadCount(items, lastSeenAt) : total;
   const roles = (user?.roles || []).map((r) => r.name).join(', ') || 'no role';
 
   return (
@@ -581,7 +601,21 @@ export function Topbar({ dateLabel, notifications, user, onLogout, onMenuClick }
             aria-haspopup="true"
             aria-expanded={bellOpen}
             onClick={() => {
-              setBellOpen((o) => !o);
+              setBellOpen((o) => {
+                // Fire onMarkSeen on the open transition only — the
+                // close transition shouldn't re-stamp seen, and the
+                // already-open click (a close) is the only other path
+                // here. Wrapped in a guard so the callback stays
+                // optional for legacy callers.
+                if (!o && onMarkSeen) {
+                  try {
+                    onMarkSeen();
+                  } catch {
+                    /* parent surfaces errors; never block the toggle */
+                  }
+                }
+                return !o;
+              });
               setMenuOpen(false);
             }}
           >
@@ -603,10 +637,10 @@ export function Topbar({ dateLabel, notifications, user, onLogout, onMenuClick }
                   Notifications
                 </span>
                 <span style={{ fontSize: 11, color: 'var(--ink-muted)' }}>
-                  {unread} {unread === 1 ? 'item' : 'items'}
+                  {total} {total === 1 ? 'item' : 'items'}
                 </span>
               </div>
-              {unread === 0 ? (
+              {total === 0 ? (
                 <div className="popover-empty">You're all caught up.</div>
               ) : (
                 <div className="notif-list">
@@ -728,6 +762,15 @@ export function Topbar({ dateLabel, notifications, user, onLogout, onMenuClick }
 // dashboard's "Things to do" so the bell count never disagrees with the
 // page below it. Pure function — no hooks, no network — so it can be
 // recomputed cheaply on every render of the parent.
+//
+// Each item carries an `anchor` ISO timestamp (or null) representing
+// the freshness of the driving event. The Topbar compares this anchor
+// against the user's `lastNotificationSeenAt` to compute the unread
+// badge count — items whose source has moved since the last bell open
+// count as unread, the rest stay in the popover as "backlog still
+// needs your attention" without nagging the badge. A null anchor means
+// "we don't know how fresh this is" and falls through as unread, which
+// keeps the bell honest when timestamps aren't available yet.
 export function computeNotifications({
   queueCount,
   queue,
@@ -737,6 +780,21 @@ export function computeNotifications({
   nav,
 }) {
   const items = [];
+  const toIso = (v) => {
+    if (!v) return null;
+    const d = v instanceof Date ? v : new Date(v);
+    return Number.isNaN(d.getTime()) ? null : d.toISOString();
+  };
+  const maxCreatedAt = (rows) => {
+    if (!Array.isArray(rows) || rows.length === 0) return null;
+    let best = 0;
+    for (const r of rows) {
+      const t = new Date(r?.createdAt || 0).getTime();
+      if (t > best) best = t;
+    }
+    return best > 0 ? new Date(best).toISOString() : null;
+  };
+
   const qCount =
     typeof queueCount === 'number' ? queueCount : Array.isArray(queue) ? queue.length : 0;
   if (qCount > 0) {
@@ -745,6 +803,7 @@ export function computeNotifications({
       title: `${qCount} declined transaction${qCount === 1 ? '' : 's'} pending review`,
       sub: 'Operator action needed in the review queue.',
       when: 'Now',
+      anchor: maxCreatedAt(queue),
       onClick: () => nav && nav('queue'),
     });
   }
@@ -756,6 +815,7 @@ export function computeNotifications({
       title: `${recentReports.length} new investigation report${recentReports.length === 1 ? '' : 's'}`,
       sub: `${fraud} fraud confirmed · phi-3-mini`,
       when: 'Today',
+      anchor: maxCreatedAt(recentReports),
       onClick: () => nav && nav('invest'),
     });
   }
@@ -766,20 +826,60 @@ export function computeNotifications({
       title: `Model ${shadow.version} ready to activate`,
       sub: 'Promote shadow → active in the Models page.',
       when: 'Today',
+      anchor: toIso(shadow.createdAt || shadow.updatedAt),
       onClick: () => nav && nav('models'),
     });
   }
   const failing = Array.isArray(webhooks) ? webhooks.filter((w) => w.status === 'failing') : [];
   if (failing.length > 0) {
+    // Failing webhooks don't carry a uniform `createdAt`; fall back to
+    // `updatedAt` and finally `lastDelivery.timestamp`. Null is fine —
+    // unknown = unread, which is the safe default.
+    const anchor = (() => {
+      let best = 0;
+      for (const w of failing) {
+        const t = new Date(
+          w?.updatedAt || w?.lastDelivery?.timestamp || 0,
+        ).getTime();
+        if (t > best) best = t;
+      }
+      return best > 0 ? new Date(best).toISOString() : null;
+    })();
     items.push({
       icon: 'webhook',
       title: `${failing.length} webhook deliver${failing.length === 1 ? 'y' : 'ies'} failing`,
       sub: 'Check Integrations.',
       when: 'Recent',
+      anchor,
       onClick: () => nav && nav('integ'),
     });
   }
   return items;
+}
+
+// How many notification items count as "unread" relative to a given
+// `lastSeenAt` ISO timestamp. Pure helper so the Topbar and any future
+// consumer compute the same number.
+//
+//   anchor missing      → unread (defensive)
+//   no lastSeenAt yet   → all unread (first-time user)
+//   anchor > lastSeenAt → unread
+//   anchor ≤ lastSeenAt → seen
+export function unreadCount(items, lastSeenAt) {
+  if (!Array.isArray(items) || items.length === 0) return 0;
+  if (!lastSeenAt) return items.length;
+  const seenMs = new Date(lastSeenAt).getTime();
+  if (Number.isNaN(seenMs)) return items.length;
+  let n = 0;
+  for (const it of items) {
+    if (!it?.anchor) {
+      n++;
+      continue;
+    }
+    const anchorMs = new Date(it.anchor).getTime();
+    if (Number.isNaN(anchorMs) || anchorMs > seenMs) n++;
+  }
+  return n;
 }
 
 // ──────── Page chrome ────────

@@ -129,6 +129,16 @@ class UserRepo {
     await User.query().where({ id }).patch({ lastLoginAt: new Date() });
   }
 
+  // Bump `lastNotificationSeenAt` to `now`. Returns the timestamp the
+  // row was written with so the caller can echo it back to the client
+  // — keeps the dashboard's badge count in lock-step with the server's
+  // truth without a separate read.
+  async markNotificationsSeen(id: string): Promise<Date> {
+    const seenAt = new Date();
+    await User.query().where({ id }).patch({ lastNotificationSeenAt: seenAt });
+    return seenAt;
+  }
+
   async assignRole(userId: string, roleId: string, assignedBy?: string): Promise<void> {
     // Defensive: ignore the duplicate-key error so re-assignment is a no-op.
     try {
