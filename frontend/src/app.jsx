@@ -172,20 +172,6 @@ function AuthenticatedApp({ user, onLogout }) {
   const [toastNode, toast] = useToasts();
   const dateLabel = React.useMemo(todayLabel, []);
 
-  // Responsive sidebar drawer. Open state is only meaningful at ≤1024px;
-  // when the viewport widens past the breakpoint we auto-close so the
-  // backdrop / `aria-hidden` flags don't linger on the now-visible nav.
-  const [drawerOpen, setDrawerOpen] = useState(false);
-  useEffect(() => {
-    if (typeof window === 'undefined' || !window.matchMedia) return;
-    const mq = window.matchMedia('(min-width: 1025px)');
-    const onChange = (e) => {
-      if (e.matches) setDrawerOpen(false);
-    };
-    mq.addEventListener?.('change', onChange);
-    return () => mq.removeEventListener?.('change', onChange);
-  }, []);
-
   // Shared state — all start empty and are hydrated from the API. No
   // mock seeding; an unreachable backend renders the empty state for
   // the page rather than a fake row the operator can't actually action.
@@ -361,8 +347,6 @@ function AuthenticatedApp({ user, onLogout }) {
         onNav={nav}
         queueCount={typeof queueCount === 'number' ? queueCount : queue.length}
         user={user}
-        mobileOpen={drawerOpen}
-        onClose={() => setDrawerOpen(false)}
       />
       <div className="main">
         <Topbar
@@ -370,7 +354,6 @@ function AuthenticatedApp({ user, onLogout }) {
           notifications={notifications}
           user={user}
           onLogout={onLogout}
-          onMenuClick={() => setDrawerOpen((o) => !o)}
         />
         <div className="main-scroll">
           <div className="page-shell" data-screen-label={screenLabel}>
