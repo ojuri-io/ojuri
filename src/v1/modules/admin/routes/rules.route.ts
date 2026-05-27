@@ -46,6 +46,18 @@ const rulesRoute: FastifyPluginAsync = async (fastify) => {
     preHandler: [requireAuth("rules:delete")],
     handler: rulesController.delete,
   });
+
+  // Force the in-memory cache to pick up the latest active rules
+  // without waiting for the next RULES_RELOAD_INTERVAL_MS tick.
+  // Gated by `rules:update` because that's the same permission that
+  // already lets a caller flip isActive — a cache flush is implicitly
+  // less invasive than an update.
+  fastify.route({
+    method: "POST",
+    url: "/admin/rules/reload",
+    preHandler: [requireAuth("rules:update")],
+    handler: rulesController.reload,
+  });
 };
 
 export default rulesRoute;
