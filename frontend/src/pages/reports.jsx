@@ -6,7 +6,7 @@
 // audit list endpoint already accepts; columns are projected
 // server-side before CSV/JSON serialisation.
 
-import React, { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { Ti, PageHead, Modal, permLock } from '../components/shell.jsx';
 import { DateTimePicker } from '../components/date-time-picker.jsx';
 import { Pagination, paginate } from '../components/pagination.jsx';

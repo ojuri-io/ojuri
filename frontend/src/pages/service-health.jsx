@@ -5,7 +5,7 @@
 // panel was removed in this revision — there's no underlying incidents
 // log feature yet, so showing one would have been theatre.
 
-import React, { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { Ti, PageHead } from '../components/shell.jsx';
 import { getServiceHealth, getInfraHealth } from '../api/client.js';
 
@@ -95,7 +95,7 @@ function ServiceHealth({ toast }) {
   );
 }
 
-function ServiceCard({ name, description, status, kvs = [], url, latencyMs, when }) {
+function ServiceCard({ name, description, status, kvs = [], url, latencyMs, when: _when }) {
   const dotColor =
     status === 'UP'
       ? 'var(--color-text-success)'

@@ -2,7 +2,7 @@
 // Posts to POST /v1/auth/login on the RDA backend, stores the JWT,
 // then signals the app shell to swap in the dashboard.
 
-import React, { useState } from 'react';
+import { useState } from 'react';
 import { Ti } from '../components/shell.jsx';
 import { Monogram } from '../components/monogram.jsx';
 import { PasswordInput } from '../components/password-input.jsx';

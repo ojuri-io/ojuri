@@ -5,8 +5,8 @@
 // row, as a last resort) so the design still demos. The Confirm /
 // Release buttons hit `POST /v1/decisions/:auditId/override`.
 
-import React, { useState, useEffect } from 'react';
-import { Ti, PageHead, fmtNaira, truncId, displayName } from '../components/shell.jsx';
+import { useState, useEffect } from 'react';
+import { Ti, fmtNaira, truncId, displayName } from '../components/shell.jsx';
 import {
   getDecision,
   overrideDecision,
@@ -14,7 +14,7 @@ import {
   postReportMessage,
 } from '../api/client.js';
 
-function TransactionDetail({ toast, user, nav, txn, queue, reports, refreshQueueCount }) {
+function TransactionDetail({ toast, user, nav, txn, queue, reports: _reports, refreshQueueCount }) {
   // Live row from the API (when reachable). When null we fall back to the
   // matching `queue` entry — but never to a random queue[0], that gave us
   // a wrong-row "detail" plus a render-time TypeError when the queue is
@@ -56,6 +56,10 @@ function TransactionDetail({ toast, user, nav, txn, queue, reports, refreshQueue
     return () => {
       cancelled = true;
     };
+    // `fromQueue` is the snapshot of the row at the moment we navigated
+    // in. Including it would re-fetch every time the queue list itself
+    // ticks, which defeats the cache-vs-network split.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [txn]);
 
   // Loading + empty states — never render the detail body with no `t`.

@@ -5,7 +5,7 @@
 // `denyIfPasswordRotation` middleware, so a user can't reach any
 // admin route until they complete this flow.
 
-import React, { useMemo, useState } from 'react';
+import { useMemo, useState } from 'react';
 import { Ti } from '../components/shell.jsx';
 import { PasswordInput } from '../components/password-input.jsx';
 import { changePassword as apiChangePassword, me as apiMe } from '../api/client.js';

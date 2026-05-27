@@ -1,6 +1,6 @@
 // Page 1 — Operator dashboard
 
-import React, { useEffect, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Ti, fmtNaira, fmtAge } from '../components/shell.jsx';
 import {
   getStatsToday,
@@ -8,7 +8,7 @@ import {
   listReviewQueue,
 } from '../api/client.js';
 
-function Dashboard({ toast, user, queue, models, reports, webhooks, nav }) {
+function Dashboard({ toast: _toast, user: _user, queue, models, reports, webhooks, nav }) {
   const champion = models.find(m => m.status === 'ACTIVE');
   const shadow = models.find(m => m.status === 'SHADOW');
   const newReports = reports.slice(0, 4);
@@ -58,7 +58,7 @@ function Dashboard({ toast, user, queue, models, reports, webhooks, nav }) {
   }, []);
 
   const sourceQueue = Array.isArray(liveQueue) ? liveQueue : queue;
-  const slaCount = sourceQueue.filter(q => (q.ageMin ?? 0) >= 240).length;
+  const _slaCount = sourceQueue.filter(q => (q.ageMin ?? 0) >= 240).length;
   const oldestAge = sourceQueue.length ? Math.max(...sourceQueue.map(q => q.ageMin ?? 0), 0) : 0;
   // `amount` is a string-numeric from /v1/review-queue (pg numeric) —
   // coerce so the running sum stays numeric rather than concatenating.

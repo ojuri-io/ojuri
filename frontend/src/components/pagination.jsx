@@ -19,7 +19,6 @@
 // `paginate(rows, page, pageSize)` slices a client-side array so each
 // caller doesn't reinvent the math.
 
-import React from 'react';
 import { Ti } from './shell.jsx';
 
 export function Pagination({

@@ -12,7 +12,7 @@
 // out-of-range values, but the server enforces the same bounds and is
 // the source of truth (a curl bypass gets the same 422 message).
 
-import React, { useEffect, useState, useMemo, useCallback } from 'react';
+import React, { useEffect, useState, useCallback } from 'react';
 import { PageHead, Ti } from '../components/shell.jsx';
 import {
   listRuntimeSettings,

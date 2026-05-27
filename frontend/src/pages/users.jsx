@@ -20,7 +20,7 @@ import {
 
 function Users({ toast, currentUser, user }) {
   const me = user || currentUser;
-  const canCreate = hasPermission(me, 'users:create');
+  const _canCreate = hasPermission(me, 'users:create');
   const canUpdate = hasPermission(me, 'users:update');
   const canDelete = hasPermission(me, 'users:delete');
   const [users, setUsers] = useState([]);

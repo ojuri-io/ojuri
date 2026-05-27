@@ -470,7 +470,7 @@ function LegendSwatch({ color, label }) {
 
 function RowMenu({ status, onClose, onActivate, onShadow, onRetire, onBacktest, onMeta }) {
   useEffect(() => {
-    const close = (e) => onClose();
+    const close = (_e) => onClose();
     setTimeout(() => window.addEventListener('click', close), 0);
     return () => window.removeEventListener('click', close);
   }, [onClose]);

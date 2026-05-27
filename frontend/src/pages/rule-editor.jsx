@@ -4,7 +4,7 @@ import React, { useState, useEffect, useMemo } from 'react';
 import { Ti, PageHead, Modal, actionPill, hasPermission, permLock } from '../components/shell.jsx';
 import { SearchInput } from '../components/search-input.jsx';
 import { saveRule, deleteRule, setRuleActive } from '../api/client.js';
-import { RuleBuilder, fromJsonLogic, toJsonLogic } from './rule-builder.jsx';
+import { RuleBuilder, toJsonLogic } from './rule-builder.jsx';
 import { EXAMPLES } from './rule-templates.js';
 
 const RULE_OPS = ['var','==','!=','>','>=','<','<=','and','or','not','in'];
@@ -115,7 +115,7 @@ function ruleEval(expr, ctx) {
 }
 
 function RuleEditor({ toast, rules, setRules, user }) {
-  const canCreate = hasPermission(user, 'rules:create');
+  const _canCreate = hasPermission(user, 'rules:create');
   const canUpdate = hasPermission(user, 'rules:update');
   const canDelete = hasPermission(user, 'rules:delete');
   const [activeId, setActiveId] = useState(rules[0]?.id);
@@ -142,6 +142,10 @@ function RuleEditor({ toast, rules, setRules, user }) {
     setEditorJson(JSON.stringify(active.expression, null, 2));
     setName(active.name); setAction(active.action); setStage(active.stage); setPriority(active.priority);
     setDirty(false);
+    // `active` is derived from `activeId` + the rules list; depending on
+    // it directly would re-fire the effect when its parent re-renders
+    // (e.g. after an unrelated rules-list refresh) and clobber edits.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeId]);
 
   useEffect(() => {

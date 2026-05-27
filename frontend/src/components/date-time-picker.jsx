@@ -11,7 +11,7 @@
 // reach the popover surface. The whole point of the Ojuri brand is staying
 // out of accent palettes, so the native control is a brand miss.
 
-import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
+import { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import { Ti } from './shell.jsx';
 
 const WEEKDAYS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];

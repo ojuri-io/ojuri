@@ -7,8 +7,8 @@
 // the date range. When the API is unreachable the page renders its empty
 // state — no synthetic rows.
 
-import React, { useState, useEffect, useMemo } from 'react';
-import { Ti, PageHead, fmtNaira, fmtAge, truncId } from '../components/shell.jsx';
+import { useState, useEffect, useMemo } from 'react';
+import { Ti, PageHead, fmtNaira, truncId } from '../components/shell.jsx';
 import { SearchInput, DateRangeFilter } from '../components/search-input.jsx';
 import { Pagination } from '../components/pagination.jsx';
 import { listTransactions, exportTransactions } from '../api/client.js';
@@ -79,7 +79,7 @@ function downloadBlob(filename, mime, body) {
   setTimeout(() => URL.revokeObjectURL(url), 500);
 }
 
-function TransactionsList({ toast, nav, queue }) {
+function TransactionsList({ toast, nav, queue: _queue }) {
   const [decision, setDecision] = useState('ALL');
   const [search, setSearch] = useState('');
   const [range, setRange] = useState({ from: '', to: '' });

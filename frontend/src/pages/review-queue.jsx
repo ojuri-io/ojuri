@@ -4,7 +4,7 @@
 // don't refetch on every keystroke. Confirm / Release fire `POST
 // /v1/decisions/:auditId/override` and optimistically remove the row.
 
-import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
+import { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import {
   Ti,
   PageHead,
@@ -72,7 +72,7 @@ function normaliseQueueRow(r) {
   };
 }
 
-function ReviewQueue({ toast, nav, queue, setQueue, queueCount, refreshQueueCount }) {
+function ReviewQueue({ toast, nav, queue, setQueue, queueCount: _queueCount, refreshQueueCount }) {
   // Trigger the parent's count refresh after every override action. If
   // the parent didn't pass one through (e.g. older callsite), fall back
   // to a noop so the page still works.
@@ -171,6 +171,10 @@ function ReviewQueue({ toast, nav, queue, setQueue, queueCount, refreshQueueCoun
     return () => {
       cancelled = true;
     };
+    // `similar` is intentionally omitted — it's the value this effect
+    // writes to via setSimilar. Including it would re-trigger the
+    // fetch on every successful write and cause a feedback loop.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [current?.auditId]);
 
   useEffect(() => {
@@ -192,6 +196,9 @@ function ReviewQueue({ toast, nav, queue, setQueue, queueCount, refreshQueueCoun
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
+    // `doSkip` is intentionally omitted — it's a stable handler closed
+    // over the same state we already track in the dep array.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [filtered, focus, current, overrideOpen, needInfoOpen]);
 
   useEffect(() => {
@@ -277,6 +284,10 @@ function ReviewQueue({ toast, nav, queue, setQueue, queueCount, refreshQueueCoun
       for (const id of prev) if (live.has(id)) next.add(id);
       return next;
     });
+    // `selected` is intentionally omitted — we read it through the
+    // setter callback above to avoid a re-trigger every time the
+    // selection itself changes.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [queue]);
 
   /**
@@ -886,7 +897,7 @@ function OverrideModal({ kind, current, onClose, onSubmit }) {
   );
 }
 
-function NeedInfoModal({ current, onClose, onSend }) {
+function NeedInfoModal({ current: _current, onClose, onSend }) {
   const [msg, setMsg] = useState('Re-check the device fingerprint against case INV-04812 — was there a match?');
   return (
     <Modal

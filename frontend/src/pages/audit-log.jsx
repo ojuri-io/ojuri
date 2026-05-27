@@ -7,7 +7,7 @@
 // backend is unreachable the page shows an empty state — no synthetic
 // rows. The OFFLINE banner in app.jsx tells the operator why.
 
-import React, { useState, useMemo, useEffect } from 'react';
+import { useState, useMemo, useEffect } from 'react';
 import { Ti, PageHead, fmtNaira, truncId } from '../components/shell.jsx';
 import { SearchInput, DateRangeFilter } from '../components/search-input.jsx';
 import { Pagination } from '../components/pagination.jsx';
@@ -50,7 +50,7 @@ function normaliseRow(r) {
   };
 }
 
-function AuditLog({ toast, nav, rules }) {
+function AuditLog({ toast, nav, rules: _rules }) {
   // Committed (applied) filters — drive the fetch.
   //
   // Start with NO date range (and no decision / reason / flag
