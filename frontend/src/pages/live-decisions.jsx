@@ -5,7 +5,7 @@
 // p95 / total-since-start are all derived from the rolling window. The
 // previous client-side simulator has been retired.
 
-import React, { useState, useEffect, useRef, useMemo } from 'react';
+import { useState, useEffect, useRef, useMemo } from 'react';
 import { Ti, PageHead, fmtNaira } from '../components/shell.jsx';
 import { listRecentDecisions } from '../api/client.js';
 
@@ -23,7 +23,7 @@ function LiveDecisions({ nav }) {
   const [totalSinceStart, setTotalSinceStart] = useState(0);
   const [sparkBuckets, setSparkBuckets] = useState(() => new Array(SPARK_BUCKETS).fill(0));
   const lastSeenRef = useRef(null);
-  const startedAtRef = useRef(Date.now());
+  const _startedAtRef = useRef(Date.now());
   const sessionStartRef = useRef(Date.now());
 
   // Set of audit-row ids already merged into `rows`. Defends against
@@ -90,7 +90,8 @@ function LiveDecisions({ nav }) {
     return () => clearInterval(id);
   }, [rows]);
 
-  const sessionDurationSec = useMemo(() => Math.max(1, (Date.now() - sessionStartRef.current) / 1000), [totalSinceStart]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- intentional: recomputes per render-window; totalSinceStart is the change trigger
+  const _sessionDurationSec = useMemo(() => Math.max(1, (Date.now() - sessionStartRef.current) / 1000), [totalSinceStart]);
 
   const windowRows = useMemo(() => {
     const cutoff = Date.now() - WINDOW_SECONDS * 1000;

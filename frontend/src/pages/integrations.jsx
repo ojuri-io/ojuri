@@ -341,7 +341,7 @@ function WebhookCard({ w, toast, onRemove }) {
 }
 
 // ──────── Menus & modals ────────
-function KeyMenu({ key_, onClose, onRotate, onRevoke }) {
+function KeyMenu({ key_: _key, onClose, onRotate, onRevoke }) {
   useEffect(() => {
     const close = () => onClose();
     setTimeout(() => window.addEventListener('click', close), 0);

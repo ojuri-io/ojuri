@@ -1,6 +1,6 @@
 // Page 7 — Investigations (FIA reports list with conversation thread)
 
-import React, { useState, useMemo, useEffect, useCallback } from 'react';
+import { useState, useMemo, useEffect, useCallback } from 'react';
 import {
   Ti,
   PageHead,
@@ -12,7 +12,6 @@ import {
 } from '../components/shell.jsx';
 import {
   requestReport as apiRequestReport,
-  postReportMessage,
   listReports,
 } from '../api/client.js';
 import { SearchInput } from '../components/search-input.jsx';

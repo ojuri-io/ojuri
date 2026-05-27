@@ -12,8 +12,8 @@
 // malformed overlay refuses to start the server, so the UI never sees
 // an inconsistent state.
 
-import React, { useEffect, useMemo, useState } from 'react';
-import { PageHead, Ti } from '../components/shell.jsx';
+import { useEffect, useMemo, useState } from 'react';
+import { PageHead } from '../components/shell.jsx';
 import { getFeatureCatalog } from '../api/client.js';
 
 const SOURCE_LABEL = {

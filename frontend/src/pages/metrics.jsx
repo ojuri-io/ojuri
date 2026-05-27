@@ -5,8 +5,8 @@
 // reads from /v1/stats/today's `topReasonCodes` field. When the window
 // is empty we render "—" instead of a stale seeded value.
 
-import React, { useState, useEffect, useMemo } from 'react';
-import { Ti, PageHead } from '../components/shell.jsx';
+import { useState, useEffect, useMemo } from 'react';
+import { PageHead } from '../components/shell.jsx';
 import {
   getStatsToday,
   getStatsWindow,

@@ -20,7 +20,7 @@
 //   • The toggle does NOT echo the password value via aria-live —
 //     showing plaintext is purely a visual affordance.
 
-import React, { useState } from 'react';
+import { useState } from 'react';
 import { Ti } from './shell.jsx';
 
 export function PasswordInput({

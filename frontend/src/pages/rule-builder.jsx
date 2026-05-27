@@ -7,7 +7,7 @@
 // truth stays the JSON expression — the builder is just a different
 // view onto it.
 
-import React, { useMemo } from 'react';
+import { useMemo } from 'react';
 import { Ti } from '../components/shell.jsx';
 import { OPS, coerceLiteral, coerceList, fromJsonLogic, toJsonLogic } from './rule-templates.js';
 

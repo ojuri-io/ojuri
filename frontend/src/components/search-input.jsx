@@ -10,7 +10,7 @@
 // `search` state is what filters/fetches; the input's local draft is only
 // surfaced on Enter or on blur if the draft differs from `value`.
 
-import React, { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { Ti } from './shell.jsx';
 import { DateTimePicker } from './date-time-picker.jsx';
 
@@ -185,7 +185,7 @@ export function DateRangeFilter({
     onApply({ from: draftFrom, to: draftTo });
   };
 
-  const onKey = (e) => {
+  const _onKey = (e) => {
     if (e.key === 'Enter') {
       e.preventDefault();
       commit();
