@@ -1,5 +1,8 @@
 # Ojuri
 
+[![CI](https://github.com/ojuri-io/ojuri/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/ojuri-io/ojuri/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+
 > Open source fraud detection that bears witness to every transaction.
 
 Ojuri is a multi-agent fraud detection platform for fintech, payments, and

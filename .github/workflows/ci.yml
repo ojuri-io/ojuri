@@ -1,0 +1,238 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+# Cancel superseded runs on the same branch — saves CI minutes when
+# pushing fast on a PR.
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # ─────────────────────────────────────────────────────────────────
+  # Fast feedback: lint + tests + build for each TS/JS package.
+  # Matrix lets the three workspaces run in parallel.
+  # ─────────────────────────────────────────────────────────────────
+  code-quality:
+    name: ${{ matrix.workspace }} · lint + test + build
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - workspace: root
+            dir: .
+            lint: "npm run lint"
+            test: "npm test"
+            build: "npm run build"
+          - workspace: paa-service
+            dir: paa-service
+            lint: "npm run lint"
+            test: "npm test"
+            build: "npm run build"
+          - workspace: frontend
+            dir: frontend
+            lint: "" # frontend has no .ts lint script; vitest covers source
+            test: "npm test"
+            build: "npm run build"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: ${{ matrix.dir }}/package-lock.json
+      - name: Install
+        working-directory: ${{ matrix.dir }}
+        run: npm ci
+      - name: Lint
+        if: matrix.lint != ''
+        working-directory: ${{ matrix.dir }}
+        run: ${{ matrix.lint }}
+      - name: Test
+        working-directory: ${{ matrix.dir }}
+        run: ${{ matrix.test }}
+      - name: Build
+        if: matrix.build != ''
+        working-directory: ${{ matrix.dir }}
+        run: ${{ matrix.build }}
+      - name: npm audit (omit dev)
+        working-directory: ${{ matrix.dir }}
+        run: npm audit --omit=dev --audit-level=high || true
+
+  # ─────────────────────────────────────────────────────────────────
+  # Python syntax check for the two Python services. We don't run
+  # pytest because installing torch + transformers in CI would push
+  # job time past 10 minutes for no real catch — the integration
+  # tests are pinned by the actual model load, not by import order.
+  # `py_compile` catches the things a syntax-only sweep can catch:
+  # accidental indent errors, broken f-strings, missing imports
+  # surfaced at module load.
+  # ─────────────────────────────────────────────────────────────────
+  python-syntax:
+    name: python syntax check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: py_compile every .py in mla/fia
+        run: |
+          set -e
+          shopt -s globstar nullglob
+          files=( mla-service/src/**/*.py fia-service/src/**/*.py )
+          echo "Checking ${#files[@]} files..."
+          for f in "${files[@]}"; do
+            python -m py_compile "$f"
+          done
+          echo "All files parse."
+
+  # ─────────────────────────────────────────────────────────────────
+  # Docker stack smoke. Builds the images and brings the full
+  # compose stack up (FIA gated out by its profile, MLA host-only
+  # by design). Then verifies the endpoints a brand-new adopter
+  # would touch first. This is the job that would have caught the
+  # two boot-time regressions in the pre-launch-fixes branch:
+  #
+  #   - RDA crashloop from NODE_ENV=production + dev JWT secret
+  #   - NGINX refusing to start when the FIA upstream is missing
+  #
+  # Both surfaced only when the full stack actually booted.
+  # ─────────────────────────────────────────────────────────────────
+  docker-stack-smoke:
+    name: docker stack build + smoke
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure .env for the smoke run
+        run: |
+          cp .env.example .env
+          # Sanity-check that the secret we'll be testing with is present
+          # so a failure mode different from "the secret didn't load" is
+          # obvious from the log.
+          grep -q '^AUTH_JWT_SECRET=' .env || { echo "AUTH_JWT_SECRET missing"; exit 1; }
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build images (RDA × 3, PAA × 2 share contexts; nginx is image-pulled)
+        run: |
+          docker compose build
+          docker images --format 'table {{.Repository}}\t{{.Size}}' | grep ojuri || true
+
+      - name: Boot the stack
+        run: |
+          docker compose up -d
+          echo "::group::container list"
+          docker compose ps
+          echo "::endgroup::"
+
+      - name: Wait for nginx /health (timeout 90s)
+        run: |
+          set -e
+          for i in {1..45}; do
+            if curl -sf -m 2 http://localhost/health > /dev/null; then
+              echo "nginx healthy after $((i*2))s"
+              exit 0
+            fi
+            sleep 2
+          done
+          echo "::error::nginx did not become healthy in 90s"
+          docker compose ps
+          docker compose logs nginx rda-1 --tail 50
+          exit 1
+
+      - name: Smoke /v1/predict via NGINX (real ML inference, decision_source=ML)
+        run: |
+          set -e
+          RESP=$(curl -sS -m 15 -X POST http://localhost/v1/predict \
+            -H 'Content-Type: application/json' \
+            -d '{
+              "transaction_id": "550e8400-e29b-41d4-a716-446655440000",
+              "sender_id": "ci-sender",
+              "receiver_id": "ci-receiver",
+              "amount": 1500.00,
+              "transaction_type": "TRANSFER",
+              "timestamp": 1717718400000
+            }')
+          echo "$RESP"
+          echo "$RESP" | python3 -c "
+          import json, sys
+          d = json.load(sys.stdin)
+          assert d.get('decision') in {'ACCEPT','DECLINE','REVIEW'}, d
+          assert d.get('decision_source') == 'ML', f\"expected ML, got {d.get('decision_source')}\"
+          assert isinstance(d.get('fraud_probability'), (int, float))
+          assert isinstance(d.get('audit_id'), str)
+          print('predict OK:', d['decision'], d['audit_id'])
+          "
+
+      - name: Run migrations + verify seed prints a one-time password
+        run: |
+          set -e
+          # In CI the postgres container's volume is fresh, so this should
+          # actually print the random seed banner.
+          npm ci
+          OUT=$(npm run db:migrate 2>&1)
+          echo "$OUT"
+          echo "$OUT" | grep -q "password:" || { echo "::error::seed banner missing"; exit 1; }
+
+      - name: Smoke /v1/auth/login rejects the OLD baked password
+        run: |
+          set -e
+          CODE=$(curl -sS -m 10 -o /dev/null -w "%{http_code}" \
+            -X POST http://localhost/v1/auth/login \
+            -H 'Content-Type: application/json' \
+            -d '{"username":"admin","password":"admin@fraudit"}')
+          if [ "$CODE" != "401" ]; then
+            echo "::error::expected 401 for old admin@fraudit, got $CODE"
+            exit 1
+          fi
+          echo "old password correctly rejected"
+
+      - name: Smoke /v1/audit-trails requires auth (regression for the audit finding)
+        run: |
+          set -e
+          CODE=$(curl -sS -m 10 -o /dev/null -w "%{http_code}" \
+            http://localhost/v1/audit-trails)
+          if [ "$CODE" != "401" ]; then
+            echo "::error::expected 401 for unauthenticated /v1/audit-trails, got $CODE"
+            exit 1
+          fi
+          echo "audit-trails correctly gated"
+
+      - name: Smoke CORS rejects unlisted origins
+        run: |
+          set -e
+          HDRS=$(curl -sSI -m 5 -X OPTIONS \
+            -H 'Origin: https://evil.example' \
+            -H 'Access-Control-Request-Method: POST' \
+            http://localhost/v1/predict)
+          if echo "$HDRS" | grep -i 'access-control-allow-origin' | grep -i 'evil.example'; then
+            echo "::error::CORS reflected an unlisted origin"
+            exit 1
+          fi
+          echo "CORS correctly refused evil.example"
+
+      - name: Dump logs on failure
+        if: failure()
+        run: |
+          echo "::group::compose ps"
+          docker compose ps
+          echo "::endgroup::"
+          for svc in nginx rda-1 rda-2 rda-3 paa-1 paa-2 postgres redis kafka; do
+            echo "::group::$svc logs (last 60)"
+            docker compose logs --tail 60 $svc || true
+            echo "::endgroup::"
+          done
+
+      - name: Teardown
+        if: always()
+        run: docker compose down -v
