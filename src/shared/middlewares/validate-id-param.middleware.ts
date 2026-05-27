@@ -1,4 +1,4 @@
-import { FastifyReply } from "fastify";
+import { FastifyReply, HookHandlerDoneFunction } from "fastify";
 import Validator from "validatorjs";
 import httpStatus from "http-status";
 import { ErrorResponse } from "../utils/response.util";
@@ -12,7 +12,7 @@ const validationMessages = {
   "uuid.id": "id should be a valid uuid",
 };
 
-const validateIdParam = (request: any, reply: FastifyReply, done) => {
+const validateIdParam = (request: any, reply: FastifyReply, done: HookHandlerDoneFunction) => {
   const validation = new Validator(request.params, rules, validationMessages);
 
   const errors = validation.errors.all();
