@@ -14,12 +14,12 @@ class RedisClient {
   }
 
   private createClient() {
-    const retryStrategy = (attempts) => {
+    const retryStrategy = (attempts: number) => {
       const delay = Math.min(attempts * 1000, 15000);
       return delay;
     };
 
-    const reconnectOnError = (err) => {
+    const reconnectOnError = (err: Error) => {
       const targetError = "READONLY";
       if (err.message.slice(0, targetError.length) === targetError) {
         // Only reconnect when the error starts with 'READONLY'

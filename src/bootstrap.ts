@@ -1,10 +1,10 @@
-import cors from "@fastify/cors";
+import cors, { FastifyCorsOptions } from "@fastify/cors";
 import AppError from "@shared/error/app.error";
 import Logger from "@shared/utils/logger";
 import loggerPlugin from "@shared/utils/logger/plugin";
 import { ErrorResponse } from "@shared/utils/response.util";
 import initializeDatabase from "./database";
-import { FastifyInstance } from "fastify";
+import { FastifyError, FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 
 import Validator from "validatorjs";
 import "./shared/subscribers/audit-log.subscriber";
@@ -19,13 +19,13 @@ function bootstrapApp(fastify: FastifyInstance) {
   setErrorHandler(fastify);
 }
 
-function registerThirdPartyModules(fastify) {
+function registerThirdPartyModules(fastify: FastifyInstance) {
   fastify.register(cors, buildCorsOptions());
 
   fastify.register(loggerPlugin);
 }
 
-function buildCorsOptions() {
+function buildCorsOptions(): FastifyCorsOptions {
   const raw = process.env.SENTINEL_CORS_ORIGINS ?? "";
   const configured = raw
     .split(",")
@@ -37,7 +37,7 @@ function buildCorsOptions() {
     : ["http://localhost:5173", "http://localhost:3000"];
 
   return {
-    origin: (origin: string | undefined, cb: (err: Error | null, allow?: boolean) => void) => {
+    origin: (origin, cb) => {
       // No-Origin = same-origin or non-browser caller — allow through.
       // "null" = file://, sandboxed iframe, redirect chain — refuse.
       if (!origin) return cb(null, true);
@@ -53,55 +53,43 @@ function registerCustomValidationRules() {
 
   Validator.register(
     "password",
-    (value: string) => {
-      return /^(?=.*[A-Z])(?=.*[a-z])(?=.*\d)(?=.*[@#$%^&+=!])(?!.*\s).{8,}$/.test(value);
-    },
+    (value) => /^(?=.*[A-Z])(?=.*[a-z])(?=.*\d)(?=.*[@#$%^&+=!])(?!.*\s).{8,}$/.test(String(value)),
     "The :attribute field must be at least 8 characters and must contain at least one uppercase, one lowercase, one digit, and one special character"
   );
 
   Validator.register(
     "name",
-    (value) => {
-      return /^[a-zA-Z-]{2,50}$/.test(value);
-    },
+    (value) => /^[a-zA-Z-]{2,50}$/.test(String(value)),
     "The :attribute field is not valid"
   );
 
   Validator.register(
     "cleanString",
-    (value) => {
-      return /^[a-zA-Z0-9_ -]{1,100}$/.test(value);
-    },
+    (value) => /^[a-zA-Z0-9_ -]{1,100}$/.test(String(value)),
     "The :attribute field is not valid. Please ensure it doesn't contain special characters and not more than 100 characters"
   );
 
   Validator.register(
     "username",
-    (value) => {
-      return /^[a-zA-Z-][a-zA-Z0-9_-]{1,20}$/.test(value);
-    },
+    (value) => /^[a-zA-Z-][a-zA-Z0-9_-]{1,20}$/.test(String(value)),
     "The :attribute field is not valid"
   );
 
   Validator.register(
     "uuid",
-    (value) => {
-      return uuidRegex.test(value);
-    },
+    (value) => uuidRegex.test(String(value)),
     ":attribute is not a valid UUID"
   );
 
   Validator.register(
     "phone",
-    (value: any) => {
-      return value.match(/^(?:(?:(?:\+?234(?:\s1)?|01)\s*)?(?:\(\d{3}\)|\d{3})|\d{4})(?:\W*\d{3})?\W*\d{4}$/);
-    },
+    (value) => /^(?:(?:(?:\+?234(?:\s1)?|01)\s*)?(?:\(\d{3}\)|\d{3})|\d{4})(?:\W*\d{3})?\W*\d{4}$/.test(String(value)),
     "The :attribute field is not in the correct format. Example of allowed format is 2348888888888."
   );
 }
 
-function setErrorHandler(fastify) {
-  fastify.setErrorHandler((err, request, reply) => {
+function setErrorHandler(fastify: FastifyInstance) {
+  fastify.setErrorHandler((err: FastifyError, _request: FastifyRequest, reply: FastifyReply) => {
     const raw = err.statusCode;
     const statusCode = typeof raw === "number" && raw >= 400 && raw < 600 ? raw : 500;
     const message = err instanceof AppError
