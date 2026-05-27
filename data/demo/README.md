@@ -22,11 +22,23 @@ The exact `decision` you'll get back depends on your active model
 threshold and any rules you have enabled — the entries are *shaped* to
 land in those buckets, but rules and thresholds are the source of truth.
 
+> **Cold-start note.** Out of the box the ONNX model returns ACCEPT for
+> every entry. Two reasons: (a) the model leans on graph + velocity features
+> that PAA writes into Redis — empty on a fresh deploy, so RDA falls back
+> to defaults; (b) the amount-level signals the dataset relies on aren't
+> in the model's top-N reason codes. Running `npm run db:seed` first
+> installs four demo rules (under `demo: …`) keyed on `amount`,
+> `transaction_type`, and `segment`, which produces a roughly
+> **9 ACCEPT / 4 REVIEW / 7 DECLINE** split immediately. Those rules are
+> intentionally simple — replace them with your own once you've trained
+> a model on your data.
+
 ## How to fire it
 
 With a running RDA on `localhost:3000`:
 
 ```bash
+npm run db:seed     # first run only — installs the four demo rules
 npm run demo:load
 ```
 
