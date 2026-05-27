@@ -35,35 +35,6 @@ describe('Sidebar', () => {
     expect(onNav).toHaveBeenCalledWith('live');
   });
 
-  it('renders the logged-in user and their role(s)', () => {
-    render(
-      <Sidebar
-        active="dash"
-        onNav={() => {}}
-        queueCount={0}
-        user={{
-          username: 'admin',
-          fullName: 'Default Admin',
-          roles: [{ id: 'r1', name: 'SUPER_ADMIN' }],
-        }}
-      />,
-    );
-    expect(screen.getByText('Default Admin')).toBeInTheDocument();
-    expect(screen.getByText('SUPER_ADMIN')).toBeInTheDocument();
-  });
-
-  it('fires onLogout when the sign-out button is clicked', () => {
-    const onLogout = vi.fn();
-    render(
-      <Sidebar
-        active="dash"
-        onNav={() => {}}
-        queueCount={0}
-        user={{ username: 'admin', fullName: 'Default Admin', roles: [] }}
-        onLogout={onLogout}
-      />,
-    );
-    fireEvent.click(screen.getByLabelText('Sign out'));
-    expect(onLogout).toHaveBeenCalled();
-  });
+  // Identity + sign-out moved to the global Topbar. See topbar.test.jsx
+  // for the user-menu coverage.
 });

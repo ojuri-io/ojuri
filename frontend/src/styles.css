@@ -282,9 +282,10 @@ input[type="radio"] {
   margin-bottom: 8px;
 }
 .dtp-pop-title {
-  font-family: var(--font-display);
-  font-size: 14px;
+  font-family: var(--font-body);
+  font-size: 13px;
   font-weight: 600;
+  letter-spacing: -0.011em;
   color: var(--ink);
 }
 .dtp-nav {
@@ -526,14 +527,6 @@ kbd {
   color: var(--ink);
 }
 
-.sidebar-foot {
-  margin-top: auto;
-  padding-top: 12px;
-  border-top: 1px solid var(--border);
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
 .avatar {
   width: 28px; height: 28px;
   border-radius: 50%;
@@ -546,6 +539,195 @@ kbd {
   justify-content: center;
   flex-shrink: 0;
 }
+
+/* ──────── Topbar ────────
+   Global app chrome. Lives above .main-scroll inside .main. Holds the
+   date stamp on the left and the notification bell + user menu on the
+   right. Page-scoped controls do not belong here — put them in
+   <PageHead>'s actions slot instead. */
+.topbar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  height: 42px;
+  padding: 0 16px;
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+  position: relative;
+  z-index: 10;
+}
+.topbar-left {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.topbar-date {
+  font-family: var(--font-code);
+  font-size: 12px;
+  letter-spacing: 0.02em;
+  color: var(--ink-muted);
+  line-height: 1;
+  white-space: nowrap;
+}
+.topbar-actions {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+.topbar-pop-anchor {
+  position: relative;
+}
+.topbar-bell {
+  position: relative;
+  width: 30px;
+  height: 30px;
+  color: var(--ink-secondary);
+}
+.topbar-bell:hover { color: var(--ink); }
+.topbar-badge {
+  position: absolute;
+  top: 3px;
+  right: 3px;
+  min-width: 14px;
+  height: 14px;
+  padding: 0 4px;
+  font-family: var(--font-code);
+  font-size: 9px;
+  font-weight: 600;
+  line-height: 14px;
+  text-align: center;
+  color: var(--surface);
+  background: var(--chart-decline);
+  border-radius: 7px;
+  border: 1.5px solid var(--surface);
+  box-sizing: content-box;
+}
+.topbar-user {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  height: 30px;
+  padding: 0 8px;
+  max-width: 220px;
+}
+.topbar-user-name {
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--ink);
+  max-width: 140px;
+}
+.avatar.avatar--sm {
+  width: 22px;
+  height: 22px;
+  font-size: 10px;
+}
+
+/* ──────── Popover (used by bell + user menu) ──────── */
+.popover {
+  position: absolute;
+  top: calc(100% + 6px);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-card);
+  min-width: 300px;
+  z-index: 50;
+  overflow: hidden;
+}
+.popover--right { right: 0; }
+.popover--narrow { min-width: 220px; }
+.popover-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--border);
+}
+.popover-empty {
+  padding: 24px 12px;
+  text-align: center;
+  font-size: 12px;
+  color: var(--ink-muted);
+}
+
+/* Notification list inside the bell popover. */
+.notif-list {
+  display: flex;
+  flex-direction: column;
+  max-height: 420px;
+  overflow-y: auto;
+}
+.notif-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 10px 12px;
+  background: transparent;
+  border: none;
+  border-bottom: 1px solid var(--border);
+  border-radius: 0;
+  text-align: left;
+  cursor: pointer;
+  font-family: inherit;
+  width: 100%;
+}
+.notif-item:last-child { border-bottom: none; }
+.notif-item:hover { background: var(--surface-alt); }
+.notif-title {
+  display: block;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--ink);
+  line-height: 1.4;
+}
+.notif-sub {
+  display: block;
+  margin-top: 2px;
+  font-size: 11px;
+  color: var(--ink-secondary);
+  line-height: 1.4;
+}
+.notif-when {
+  font-size: 10px;
+  color: var(--ink-muted);
+  white-space: nowrap;
+  flex-shrink: 0;
+  margin-top: 2px;
+  font-family: var(--font-code);
+}
+
+/* User menu (in popover). */
+.user-menu-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px;
+  border-bottom: 1px solid var(--border);
+}
+.user-menu-actions {
+  display: flex;
+  flex-direction: column;
+  padding: 4px;
+}
+.user-menu-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  background: transparent;
+  border: none;
+  border-radius: var(--radius-sm);
+  width: 100%;
+  text-align: left;
+  font-size: 12px;
+  color: var(--ink);
+  cursor: pointer;
+  font-family: inherit;
+}
+.user-menu-item:hover { background: var(--surface-alt); }
 
 /* ──────── Main ──────── */
 .main {
@@ -590,16 +772,16 @@ kbd {
 .crumbs .sep { padding: 0 4px; color: var(--ink-disabled); }
 .page-head h1 {
   margin: 0;
-  font-family: var(--font-display);
-  font-size: 36px;
-  line-height: 1.15;
+  font-family: var(--font-body);
+  font-size: 20px;
+  line-height: 1.3;
   font-weight: 600;
-  letter-spacing: -0.01em;
+  letter-spacing: -0.011em;
   color: var(--ink);
 }
 .page-head .sub {
-  margin: 6px 0 0;
-  font-size: 14px;
+  margin: 4px 0 0;
+  font-size: 13px;
   color: var(--ink-secondary);
   font-family: var(--font-body);
 }
@@ -636,9 +818,10 @@ kbd {
   white-space: nowrap;
 }
 .panel-head h2.lg {
-  font-family: var(--font-display);
-  font-size: 22px;
+  font-family: var(--font-body);
+  font-size: 15px;
   font-weight: 600;
+  letter-spacing: -0.011em;
 }
 
 /* ──────── Pills ──────── */
@@ -843,9 +1026,10 @@ kbd {
 .modal-head { padding: 14px 16px 12px; border-bottom: 1px solid var(--border); }
 .modal-head h3 {
   margin: 0;
-  font-family: var(--font-display);
-  font-size: 20px;
+  font-family: var(--font-body);
+  font-size: 15px;
   font-weight: 600;
+  letter-spacing: -0.011em;
   color: var(--ink);
 }
 .modal-head p {

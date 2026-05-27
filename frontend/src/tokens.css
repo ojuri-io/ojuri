@@ -153,29 +153,32 @@ body {
   letter-spacing: var(--tracking-body);
 }
 
+/* App-grade headings: sans-serif chrome at functional sizes.
+   The editorial Source Serif treatment is reserved for the wordmark
+   (.brand-mark, login wordmark) and hero statistics (.stat-display). */
 h1, h2, h3, h4 {
-  font-family: var(--font-display);
+  font-family: var(--font-body);
   color: var(--ink);
-  letter-spacing: var(--tracking-display);
+  letter-spacing: -0.011em;
   margin: 0;
 }
 
 h1 {
-  font-size: var(--text-display-lg-size);
-  line-height: var(--text-display-lg-line);
-  font-weight: var(--text-display-lg-weight);
+  font-size: 1.25rem;     /* 20px */
+  line-height: 1.3;
+  font-weight: 600;
 }
 
 h2 {
-  font-size: var(--text-display-md-size);
-  line-height: var(--text-display-md-line);
-  font-weight: var(--text-display-md-weight);
+  font-size: 1rem;        /* 16px */
+  line-height: 1.4;
+  font-weight: 600;
 }
 
 h3 {
-  font-size: var(--text-display-sm-size);
-  line-height: var(--text-display-sm-line);
-  font-weight: var(--text-display-sm-weight);
+  font-size: 0.9375rem;   /* 15px */
+  line-height: 1.4;
+  font-weight: 600;
 }
 
 code, pre, kbd {

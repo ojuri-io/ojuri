@@ -151,7 +151,7 @@ describe('App', () => {
     expect(screen.getByLabelText(/USERNAME/i)).toBeInTheDocument();
 
     fireEvent.change(screen.getByLabelText(/PASSWORD/i), {
-      target: { value: 'admin@fraudit' },
+      target: { value: 'test-password-from-migration-output' },
     });
     await act(async () => {
       fireEvent.click(screen.getByRole('button', { name: /Sign in/i }));
