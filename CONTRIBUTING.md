@@ -120,7 +120,7 @@ Each service has its own test framework:
 
 We do not enforce a coverage threshold. The expectation is that new code comes with tests for the behaviour you added or changed, that bug fixes come with a regression test, and that you do not delete or skip existing tests without justification in the PR description.
 
-Run the test suite for every service your PR touches before requesting review. There is no CI gate today for cross-service test runs — if your change spans services, run each suite yourself.
+Run the test suite for every service your PR touches before requesting review. GitHub Actions also runs every check the workshop publishes — see [`docs/CI.md`](docs/CI.md) for the full job list and how to reproduce the Docker smoke step locally.
 
 ## Commit messages
 

@@ -150,6 +150,27 @@ jobs:
           docker compose logs nginx rda-1 --tail 50
           exit 1
 
+      # Migrations must run BEFORE the predict smoke. Without them the
+      # `decisionAuditLog` table doesn't exist, the audit insert is
+      # swallowed (by design — audit failures must never break the
+      # decision path), and the response comes back without an
+      # `audit_id` — which then fails the assertion below. Caught
+      # exactly this way the first time this workflow ran.
+      - name: Install root deps (for npm run db:migrate)
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: package-lock.json
+      - name: npm ci
+        run: npm ci
+      - name: Run migrations + verify seed prints a one-time password
+        run: |
+          set -e
+          OUT=$(npm run db:migrate 2>&1)
+          echo "$OUT"
+          echo "$OUT" | grep -q "password:" || { echo "::error::seed banner missing"; exit 1; }
+
       - name: Smoke /v1/predict via NGINX (real ML inference, decision_source=ML)
         run: |
           set -e
@@ -170,19 +191,9 @@ jobs:
           assert d.get('decision') in {'ACCEPT','DECLINE','REVIEW'}, d
           assert d.get('decision_source') == 'ML', f\"expected ML, got {d.get('decision_source')}\"
           assert isinstance(d.get('fraud_probability'), (int, float))
-          assert isinstance(d.get('audit_id'), str)
+          assert isinstance(d.get('audit_id'), str), f\"audit_id missing — did migrations run before this step?\"
           print('predict OK:', d['decision'], d['audit_id'])
           "
-
-      - name: Run migrations + verify seed prints a one-time password
-        run: |
-          set -e
-          # In CI the postgres container's volume is fresh, so this should
-          # actually print the random seed banner.
-          npm ci
-          OUT=$(npm run db:migrate 2>&1)
-          echo "$OUT"
-          echo "$OUT" | grep -q "password:" || { echo "::error::seed banner missing"; exit 1; }
 
       - name: Smoke /v1/auth/login rejects the OLD baked password
         run: |
