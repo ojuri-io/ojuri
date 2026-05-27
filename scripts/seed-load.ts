@@ -16,12 +16,23 @@
  *     --api-key fdk_... \
  *     --tenant tenant-acme
  *
+ * Or, fire a curated dataset (e.g. the first-touch demo set) instead
+ * of synthetic ones — `transaction_id` and `timestamp` are rewritten
+ * per send so the same file can be replayed any number of times
+ * without idempotency collisions:
+ *
+ *   ts-node scripts/seed-load.ts \
+ *     --file data/demo/sample-transactions.json \
+ *     --concurrency 4
+ *
  * Everything is optional. With no args, generates 100 transactions
  * to localhost with default concurrency 8 and no auth header (so it
  * only works if `RDA_REQUIRE_API_KEY=false`).
  */
 
 import { randomUUID } from "crypto";
+import { readFileSync } from "fs";
+import { resolve } from "path";
 
 interface CliArgs {
   url: string;
@@ -30,6 +41,7 @@ interface CliArgs {
   fraudRatio: number;
   apiKey?: string;
   tenant?: string;
+  file?: string;
 }
 
 const TRANSACTION_TYPES = ["CASH_IN", "CASH_OUT", "PAYMENT", "TRANSFER", "DEBIT"] as const;
@@ -56,9 +68,35 @@ function parseArgs(argv: string[]): CliArgs {
       case "--fraud-ratio": out.fraudRatio = Number(v); i++; break;
       case "--api-key":     out.apiKey = v; i++; break;
       case "--tenant":      out.tenant = v; i++; break;
+      case "--file":        out.file = v; i++; break;
     }
   }
   return out;
+}
+
+function loadFromFile(path: string): Record<string, unknown>[] {
+  const raw = readFileSync(resolve(path), "utf8");
+  const parsed = JSON.parse(raw);
+  if (!Array.isArray(parsed)) {
+    throw new Error(`expected a JSON array of transactions in ${path}, got ${typeof parsed}`);
+  }
+  return parsed as Record<string, unknown>[];
+}
+
+/**
+ * Make a curated payload safe to replay: mint a fresh `transaction_id`
+ * and `timestamp` so the same demo file fired twice doesn't trip the
+ * idempotency-conflict / duplicate-audit paths. Anything else (the
+ * `_note` comment in particular) is stripped so the body is clean
+ * for the validator.
+ */
+function preparePayload(entry: Record<string, unknown>, nowSeconds: number): Record<string, unknown> {
+  const { _note: _drop, transaction_id: _ignoreId, timestamp: _ignoreTs, ...rest } = entry;
+  return {
+    ...rest,
+    transaction_id: randomUUID(),
+    timestamp: nowSeconds,
+  };
 }
 
 function generateTransaction(idx: number, fraudRatio: number): Record<string, unknown> {
@@ -109,9 +147,16 @@ async function fire(args: CliArgs, payload: Record<string, unknown>): Promise<{
 async function main() {
   const args = parseArgs(process.argv.slice(2));
 
-  console.log(`Firing ${args.count} requests at ${args.url} (concurrency=${args.concurrency})`);
+  // File mode: load the curated dataset and replay each entry exactly
+  // once. Ignores --count / --fraud-ratio since the curated set has its
+  // own labelled mix of decisions.
+  const curated = args.file ? loadFromFile(args.file) : null;
+  const total = curated ? curated.length : args.count;
+  const source = curated ? `file=${args.file}` : "synthetic";
 
-  const queue = Array.from({ length: args.count }, (_, i) => i);
+  console.log(`Firing ${total} requests at ${args.url} (concurrency=${args.concurrency}, source=${source})`);
+
+  const queue = Array.from({ length: total }, (_, i) => i);
   const results: { status: number; decision?: string; latency_ms: number }[] = [];
 
   async function worker() {
@@ -119,7 +164,10 @@ async function main() {
       const idx = queue.shift();
       if (idx === undefined) break;
       try {
-        const r = await fire(args, generateTransaction(idx, args.fraudRatio));
+        const payload = curated
+          ? preparePayload(curated[idx]!, Math.floor(Date.now() / 1000))
+          : generateTransaction(idx, args.fraudRatio);
+        const r = await fire(args, payload);
         results.push(r);
       } catch (err) {
         results.push({ status: 0, latency_ms: 0 });
