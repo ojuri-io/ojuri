@@ -177,6 +177,25 @@ has `mustChangePassword=true`; the first login forces a rotation. To require
 `X-Api-Key` on `/v1/predict`, set `RDA_REQUIRE_API_KEY=true` and issue a key
 from `POST /v1/admin/api-keys`.
 
+To populate the dashboard with realistic-shaped data on the first run, seed
+a small set of demo rules and fire the curated 20-row dataset at the running
+stack:
+
+````bash
+npm run db:seed     # idempotent — installs four demo rules under "demo: …"
+npm run demo:load   # fires data/demo/sample-transactions.json
+````
+
+The dataset is hand-built to exercise all three decision buckets — expect
+roughly **9 ACCEPT / 4 REVIEW / 7 DECLINE** out of 20 once the demo rules
+are seeded. Without the rules the model has no Redis-stored features yet
+(PAA is what populates them), so everything returns ACCEPT — the rules give
+the demo a visible split immediately. Replay `demo:load` as often as you
+like; `transaction_id` and `timestamp` are re-minted per send. See
+[`data/demo/README.md`](data/demo/README.md) for the dataset shape and
+[`scripts/seed-load.ts`](scripts/seed-load.ts) for synthetic load options
+(`npm run seed:load -- --count 1000`).
+
 ---
 
 ## Architecture
