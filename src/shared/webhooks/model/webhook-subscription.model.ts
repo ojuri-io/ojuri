@@ -2,7 +2,7 @@ import { DB_TABLES } from "@shared/enums/db-tables.enum";
 import { Model, ModelObject } from "objection";
 
 export class WebhookSubscription extends Model {
-  static tableName = DB_TABLES.WEBHOOK_SUBSCRIPTIONS;
+  static override tableName = DB_TABLES.WEBHOOK_SUBSCRIPTIONS;
 
   id: string;
   tenantId: string;

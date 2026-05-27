@@ -30,7 +30,7 @@ class RuleRepo extends BaseRepository<IRule, Rule> {
     return Rule.query().findById(id);
   }
 
-  async deleteById(id: string): Promise<number> {
+  override async deleteById(id: string): Promise<number> {
     return Rule.query().deleteById(id);
   }
 }

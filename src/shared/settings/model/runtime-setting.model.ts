@@ -2,7 +2,7 @@ import { DB_TABLES } from "@shared/enums/db-tables.enum";
 import { Model, ModelObject } from "objection";
 
 export class RuntimeSetting extends Model {
-  static tableName = DB_TABLES.RUNTIME_SETTINGS;
+  static override tableName = DB_TABLES.RUNTIME_SETTINGS;
 
   id: string;
   key: string;

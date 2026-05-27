@@ -2,7 +2,7 @@ import { DB_TABLES } from "@shared/enums/db-tables.enum";
 import { Model, ModelObject } from "objection";
 
 export class ApiKey extends Model {
-  static tableName = DB_TABLES.API_KEYS;
+  static override tableName = DB_TABLES.API_KEYS;
 
   id: string;
   tenantId: string;

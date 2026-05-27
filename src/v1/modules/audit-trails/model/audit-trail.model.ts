@@ -3,7 +3,7 @@ import { ObjectLiteral } from "@shared/types/object-literal.type";
 import { Model, ModelObject } from "objection";
 
 export class AuditTrail extends Model {
-  static tableName = DB_TABLES.AUDIT_TRAILS;
+  static override tableName = DB_TABLES.AUDIT_TRAILS;
 
   id: string;
 
@@ -27,7 +27,7 @@ export class AuditTrail extends Model {
 
   user: ObjectLiteral;
 
-  static relationMappings = {};
+  static override relationMappings = {};
 }
 
 export type IAuditTrail = ModelObject<AuditTrail>;
