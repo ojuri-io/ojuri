@@ -354,11 +354,17 @@ function ReviewQueue({ toast, nav, queue, setQueue, queueCount: _queueCount, ref
   };
 
   // Empty-state guard now reads the *server's authoritative* page
-  // total, not just the local slice. Three signals have to agree:
+  // total, not just the local slice. Four signals have to agree:
   //   1. local queue is empty,
   //   2. we're not in the middle of a refetch,
-  //   3. server total = 0.
-  if (queue.length === 0 && !refreshing && pageTotal === 0) {
+  //   3. server total = 0,
+  //   4. no active search — a search that returned zero rows is NOT the
+  //      same as a globally clear queue, and rendering the celebratory
+  //      EmptyQueue would hide the search input and strand the operator
+  //      with no way to clear their filter (they'd have to leave via the
+  //      sidebar). Search-returned-zero falls through to the normal
+  //      layout, which shows a "No matches for …" hint inside the list.
+  if (queue.length === 0 && !refreshing && pageTotal === 0 && !search) {
     return (
       <EmptyQueue
         handledToday={handledToday}
@@ -370,7 +376,7 @@ function ReviewQueue({ toast, nav, queue, setQueue, queueCount: _queueCount, ref
       />
     );
   }
-  if (queue.length === 0 && (refreshing || pageTotal > 0)) {
+  if (queue.length === 0 && !search && (refreshing || pageTotal > 0)) {
     return (
       <div className="panel" style={{ padding: 60, textAlign: 'center' }}>
         <p style={{ margin: 0, fontSize: 13, color: 'var(--color-text-secondary)' }}>
@@ -391,16 +397,41 @@ function ReviewQueue({ toast, nav, queue, setQueue, queueCount: _queueCount, ref
         crumbs={['Dashboard', 'Detection']}
         title="Review queue"
         sub={
-          <>
-            {pageTotal} pending
-            {pageTotal > queue.length ? (
-              <span style={{ color: 'var(--color-text-tertiary)' }}> · showing {queue.length} on this page</span>
-            ) : null}
-            {' · '}
-            <span style={{ color: slaCount > 0 ? 'var(--color-text-danger)' : 'inherit' }}>{slaCount} over 4h SLA</span>
-            {' · '}
-            {fmtNaira(totalExposure)} total exposure
-          </>
+          search ? (
+            <>
+              {pageTotal === 0 ? 'No matches' : `${pageTotal} match${pageTotal === 1 ? '' : 'es'}`}
+              {' for '}
+              <code className="mono" style={{ fontSize: 11 }}>“{search}”</code>
+              {' · '}
+              <button
+                type="button"
+                onClick={() => {
+                  setSearch('');
+                  setPage(1);
+                  setFocus(0);
+                }}
+                style={{
+                  padding: '2px 8px',
+                  fontSize: 11,
+                  background: 'transparent',
+                  borderColor: 'var(--color-border-tertiary)',
+                }}
+              >
+                Clear search
+              </button>
+            </>
+          ) : (
+            <>
+              {pageTotal} pending
+              {pageTotal > queue.length ? (
+                <span style={{ color: 'var(--color-text-tertiary)' }}> · showing {queue.length} on this page</span>
+              ) : null}
+              {' · '}
+              <span style={{ color: slaCount > 0 ? 'var(--color-text-danger)' : 'inherit' }}>{slaCount} over 4h SLA</span>
+              {' · '}
+              {fmtNaira(totalExposure)} total exposure
+            </>
+          )
         }
       >
         <div style={{display:'flex', alignItems:'center', gap:8, marginRight:4, whiteSpace:'nowrap'}}>
@@ -459,21 +490,69 @@ function ReviewQueue({ toast, nav, queue, setQueue, queueCount: _queueCount, ref
             />
           </div>
           <div ref={listRef} style={{flex:1, overflow:'auto', minHeight:0}}>
-            {filtered.map((row, i) => (
-              <QueueCard
-                key={row.auditId}
-                row={row}
-                focused={i === focus}
-                bulk={bulk}
-                checked={selected.has(row.auditId)}
-                onCheck={() => setSelected(s => {
-                  const n = new Set(s);
-                  n.has(row.auditId) ? n.delete(row.auditId) : n.add(row.auditId);
-                  return n;
-                })}
-                onClick={() => setFocus(i)}
-              />
-            ))}
+            {filtered.length === 0 ? (
+              <div style={{ padding: '40px 16px', textAlign: 'center' }}>
+                <div
+                  style={{
+                    width: 36,
+                    height: 36,
+                    margin: '0 auto 10px',
+                    borderRadius: '50%',
+                    background: 'var(--color-background-secondary)',
+                    color: 'var(--color-text-tertiary)',
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                  }}
+                >
+                  <Ti name={search ? 'search-off' : 'check'} size={16} />
+                </div>
+                <p style={{ margin: '0 0 4px', fontSize: 12, fontWeight: 500 }}>
+                  {search ? 'No matches' : 'Nothing in queue'}
+                </p>
+                <p style={{ margin: 0, fontSize: 11, color: 'var(--color-text-tertiary)', lineHeight: 1.4 }}>
+                  {search ? (
+                    <>
+                      Nothing matched <code className="mono">{search}</code>.
+                    </>
+                  ) : (
+                    'Refresh to pull the latest pending DECLINE rows.'
+                  )}
+                </p>
+                {search && (
+                  <button
+                    type="button"
+                    className="info-bg"
+                    style={{ marginTop: 12, padding: '5px 12px', fontSize: 11 }}
+                    onClick={() => {
+                      setSearch('');
+                      setPage(1);
+                      setFocus(0);
+                      searchRef.current?.focus();
+                    }}
+                  >
+                    <Ti name="x" size={11} />
+                    Clear search
+                  </button>
+                )}
+              </div>
+            ) : (
+              filtered.map((row, i) => (
+                <QueueCard
+                  key={row.auditId}
+                  row={row}
+                  focused={i === focus}
+                  bulk={bulk}
+                  checked={selected.has(row.auditId)}
+                  onCheck={() => setSelected(s => {
+                    const n = new Set(s);
+                    n.has(row.auditId) ? n.delete(row.auditId) : n.add(row.auditId);
+                    return n;
+                  })}
+                  onClick={() => setFocus(i)}
+                />
+              ))
+            )}
           </div>
           <div style={{ padding: '6px 10px', borderTop: '0.5px solid var(--color-border-tertiary)', background: 'var(--color-background-secondary)' }}>
             <Pagination
