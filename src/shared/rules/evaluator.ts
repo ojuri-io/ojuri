@@ -19,7 +19,7 @@ function evaluateAny(expr: RuleExpression, ctx: RuleContext): unknown {
   if (keys.length !== 1) {
     throw new Error(`Invalid rule expression: expected single operator, got ${keys.join(",")}`);
   }
-  const op = keys[0];
+  const op = keys[0]!;
   const args = (expr as any)[op];
 
   switch (op) {

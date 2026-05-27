@@ -108,7 +108,7 @@ class KafkaProducer {
   private diskBuffer: Level<string, string>;
   private bufferFlushInterval: NodeJS.Timeout | null = null;
   private readonly maxRetries = 3;
-  private readonly retryDelays = [100, 500, 2000]; // Exponential backoff
+  private readonly retryDelays: readonly [number, number, number] = [100, 500, 2000];
 
   constructor() {
     this.kafka = new Kafka({
@@ -274,7 +274,7 @@ class KafkaProducer {
       });
     } catch (err) {
       if (attempt < this.maxRetries) {
-        const delay = this.retryDelays[attempt];
+        const delay = this.retryDelays[attempt] ?? this.retryDelays[this.retryDelays.length - 1]!;
         log.warn("publishWithRetry", `Publish failed, retrying attempt ${attempt + 1}/${this.maxRetries}`, {
           traceId,
           transactionId: event.transaction_id,

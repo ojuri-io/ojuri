@@ -302,7 +302,8 @@ class OnnxService {
 
       // Extract probability from output
       const output = results.output || results.probabilities || Object.values(results)[0];
-      const probability = (output.data as Float32Array)[0];
+      if (!output) throw new Error("ONNX inference returned no output tensor");
+      const probability = (output.data as Float32Array)[0]!;
 
       const inferenceTime = Date.now() - startTime;
       metricsService.recordModelInferenceLatency(inferenceTime);
