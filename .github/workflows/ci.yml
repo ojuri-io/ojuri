@@ -245,6 +245,18 @@ jobs:
           echo "$OUT"
           echo "$OUT" | grep -q "Ran 1 seed files" || { echo "::error::db:seed did not run the expected single seed file"; exit 1; }
 
+      # RDA's RulesService refreshes its in-memory cache every
+      # RULES_RELOAD_INTERVAL_MS (default 30 s). The seed above writes
+      # four PRE rules to Postgres, but the running RDA replicas cached
+      # an empty rule set at startup — firing predict <1 s later
+      # bypasses them entirely and demo:load comes back 20/0/0. Wait
+      # one full reload tick plus a small margin so the rules are
+      # guaranteed live. (Future improvement: once an admin
+      # /v1/admin/rules/reload endpoint exists, drop this to ~100 ms
+      # by calling it directly.)
+      - name: Wait one rules-reload tick (~30 s)
+        run: sleep 32
+
       - name: Smoke npm run demo:load against the running stack
         run: |
           set -e
