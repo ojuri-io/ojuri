@@ -7,6 +7,44 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Curated demo dataset and one-shot loader.** A 20-row
+  `data/demo/sample-transactions.json` hand-built to exercise all three
+  decision buckets, plus `npm run demo:load` (extends `scripts/seed-load.ts`
+  with a `--file` flag that re-mints `transaction_id` / `timestamp` per
+  send so the dataset can be replayed without idempotency collisions).
+- **Demo rules seed** under `src/database/seeds/01_demo_rules.ts`,
+  installed by `npm run db:seed`. Four PRE-stage rules keyed on
+  `amount` / `transaction_type` / `segment` so the demo dataset produces
+  a visible ~9 ACCEPT / ~4 REVIEW / ~7 DECLINE split out of the box even
+  on a fresh deploy with no PAA cache.
+- **Regression guard** for the demo dataset shape: seven Jest assertions
+  (`test/demo/demo-dataset.spec.ts`) that fail CI if the JSON drifts
+  from the predict-API contract.
+- README quickstart now mentions `npm run reset:admin` for the
+  "I lost the seeded password" recovery path.
+- `.env.example` now documents 11 previously-undocumented env vars
+  (BRAND_NAME, FEATURE_CATALOG_BASE_PATH / ADOPTER_PATH /
+  FEATURE_LOOKUP_ROOT, the four `*_HEALTH_URL` knobs,
+  HEALTH_PROBE_TIMEOUT_MS, MODEL_VERSION_LABEL, MODEL_INPUT_DIMENSION).
+
+### Changed
+
+- Tighter TypeScript strict-family coverage. RDA gained
+  `noImplicitAny`, `strictPropertyInitialization`,
+  `noUncheckedIndexedAccess`, and `noImplicitOverride`. PAA (already on
+  `strict: true`) gained `noUncheckedIndexedAccess` and
+  `noImplicitOverride`. Net: one real bug fixed in
+  `velocity.service.ts` (un-guarded `sorted[0]` access), and the
+  compiler now refuses several whole classes of regression.
+
+### Removed
+
+- Unused `appConfig.onnx.modelRegistryUrl` field. The HTTP-polling
+  model registry it once fed was retired in favour of the in-process
+  `ModelRegistryService` subscription flow.
+
 ## [1.0.0] - 2026-06-07
 
 Initial public release. The platform is a multi-agent fraud-detection stack
