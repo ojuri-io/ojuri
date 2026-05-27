@@ -1,4 +1,4 @@
-import auditTrailRoute from "../../v1/modules/moduleName/routes/audit-trail.route";
+import auditTrailRoute from "../../v1/modules/audit-trails/routes/audit-trail.route";
 import appRoute from "../../v1/modules/app/app.route";
 import healthRoute from "../../v1/modules/health/health.route";
 import healthV1Route from "../../v1/modules/health/health-v1.route";

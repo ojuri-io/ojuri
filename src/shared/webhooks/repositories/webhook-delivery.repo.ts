@@ -1,5 +1,5 @@
 import { injectable } from "tsyringe";
-import { BaseRepository } from "../../../v1/modules/moduleName/repositories/base.repo";
+import { BaseRepository } from "../../repositories/base.repo";
 import { IWebhookDelivery, WebhookDelivery } from "../model/webhook-delivery.model";
 import { WebhookSubscription } from "../model/webhook-subscription.model";
 

@@ -1,9 +1,9 @@
 import events from "@shared/events";
 import { createServiceLogger } from "@shared/utils/logger/service-logger";
 import { EventSubscriber, On } from "event-dispatch";
-import AuditTrailService from "../../v1/modules/moduleName/services/audit-trail.service";
+import AuditTrailService from "../../v1/modules/audit-trails/services/audit-trail.service";
 import { container } from "tsyringe";
-import { CreateAuditTrail } from "../../v1/modules/moduleName/dtos/create-audit-trail.dto";
+import { CreateAuditTrail } from "../../v1/modules/audit-trails/dtos/create-audit-trail.dto";
 
 const log = createServiceLogger("AuditLogSubscriber");
 

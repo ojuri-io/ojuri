@@ -1,6 +1,6 @@
 import { injectable } from "tsyringe";
 import { transaction } from "objection";
-import { BaseRepository } from "../../../v1/modules/moduleName/repositories/base.repo";
+import { BaseRepository } from "../../repositories/base.repo";
 import { IModelVersion, ModelVersion } from "../model/model-version.model";
 
 @injectable()
