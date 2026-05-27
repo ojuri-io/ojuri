@@ -46,6 +46,7 @@ import {
   Loader2,
   Lock,
   LogOut,
+  Menu,
   MessageCircle,
   Dot,
   Pause,
@@ -125,6 +126,7 @@ const ICON_MAP = {
   'loader-2': Loader2,
   lock: Lock,
   logout: LogOut,
+  menu: Menu,
   'message-circle': MessageCircle,
   pencil: Pencil,
   pause: Pause,
@@ -322,7 +324,23 @@ export function useToasts() {
 // `user` is still required for permission gating on nav items (read-locked
 // pages are greyed out for users that lack the perm). The identity surface
 // and sign-out moved to the global Topbar — see <Topbar> below.
-export function Sidebar({ active, onNav, queueCount, user }) {
+//
+// `mobileOpen` / `onClose` are optional — when omitted the sidebar renders
+// in its desktop layout (visible by default). The parent wires those props
+// when running responsive: <Sidebar mobileOpen={drawerOpen} onClose={…} />
+// flips the `.sidebar--open` class and shows the click-to-dismiss backdrop.
+export function Sidebar({ active, onNav, queueCount, user, mobileOpen, onClose }) {
+  // Esc-to-close when the drawer is open. Skip the listener entirely on
+  // desktop (no drawer state) so the keydown handler doesn't fire for
+  // every operator who lives in this app.
+  useEffect(() => {
+    if (!mobileOpen) return;
+    const onKey = (e) => {
+      if (e.key === 'Escape' && onClose) onClose();
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [mobileOpen, onClose]);
   // Pages tagged with `perm` are read-gated. When the user lacks that
   // permission the nav item is shown but greyed out with a tooltip — that
   // way they discover the feature exists but can't enter the page and hit
@@ -396,8 +414,28 @@ export function Sidebar({ active, onNav, queueCount, user }) {
     }),
   }));
 
+  const sidebarClass = 'sidebar' + (mobileOpen ? ' sidebar--open' : '');
+  const handleNav = (id) => {
+    onNav(id);
+    if (onClose) onClose();
+  };
+
   return (
-    <aside className="sidebar" data-testid="sidebar">
+    <>
+      {onClose && (
+        <div
+          className={
+            'sidebar-backdrop' + (mobileOpen ? ' sidebar-backdrop--show' : '')
+          }
+          onClick={onClose}
+          aria-hidden="true"
+        />
+      )}
+    <aside
+      className={sidebarClass}
+      data-testid="sidebar"
+      aria-hidden={onClose ? !mobileOpen : undefined}
+    >
       <div className="brand">
         {/* Wordmark only — operators see this constantly; doubling
             the monogram next to the wordmark stacks three identifiers
@@ -431,7 +469,7 @@ export function Sidebar({ active, onNav, queueCount, user }) {
                     (active === it.id ? 'active' : '') +
                     (it.disabled ? ' disabled' : '')
                   }
-                  onClick={() => !it.disabled && onNav(it.id)}
+                  onClick={() => !it.disabled && handleNav(it.id)}
                   title={it.disabledTitle || ''}
                   data-nav-id={it.id}
                 >
@@ -459,6 +497,7 @@ export function Sidebar({ active, onNav, queueCount, user }) {
         ))}
       </div>
     </aside>
+    </>
   );
 }
 
@@ -476,7 +515,12 @@ function initials(user) {
 // Lives in every authenticated page; do not put page-scoped controls here.
 // Notifications are computed by the parent (so the bell count matches what
 // the dashboard surfaces) via `computeNotifications` below.
-export function Topbar({ dateLabel, notifications, user, onLogout }) {
+//
+// `onMenuClick` is optional — when passed, a hamburger button appears on
+// the leading edge of the topbar (CSS hides it on desktop, shows it on
+// tablet / phone). Hooking this up is how the parent opens the responsive
+// sidebar drawer.
+export function Topbar({ dateLabel, notifications, user, onLogout, onMenuClick }) {
   const [bellOpen, setBellOpen] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
   const bellRef = useRef(null);
@@ -514,6 +558,16 @@ export function Topbar({ dateLabel, notifications, user, onLogout }) {
   return (
     <header className="topbar" data-testid="topbar">
       <div className="topbar-left">
+        {onMenuClick && (
+          <button
+            type="button"
+            className="ghost icon-only topbar-menu"
+            aria-label="Open navigation menu"
+            onClick={onMenuClick}
+          >
+            <Ti name="menu" size={16} />
+          </button>
+        )}
         {dateLabel && <span className="topbar-date">{dateLabel}</span>}
       </div>
       <div className="topbar-actions">
