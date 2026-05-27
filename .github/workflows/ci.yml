@@ -271,6 +271,54 @@ jobs:
           [ "$DECLINE" -gt 0 ] || { echo "::error::demo:load produced 0 DECLINEs — did the rules seed not apply?"; exit 1; }
           [ "$REVIEW"  -gt 0 ] || { echo "::error::demo:load produced 0 REVIEWs — did the rules seed not apply?"; exit 1; }
 
+      # Idempotency-Key end-to-end smoke. This is the regression guard
+      # that would have caught the stale dist/idempotency-key.{model,repo}.js
+      # files (left over from the pre-Redis-cache era) crashing every
+      # predict request that carried an Idempotency-Key header. The
+      # existing predict smoke doesn't notice this because idempotency
+      # runs inside the request handler — without the header, the code
+      # path is bypassed entirely.
+      - name: Smoke /v1/predict with Idempotency-Key (replay + conflict)
+        run: |
+          set -e
+          # Mint a fresh v4 UUID — the request validator rejects non-v4 shapes.
+          TID=$(python3 -c 'import uuid; print(uuid.uuid4())')
+          BODY='{"transaction_id":"'$TID'","sender_id":"ci-idem","receiver_id":"r","amount":100,"transaction_type":"PAYMENT","timestamp":1717718400}'
+
+          # First call: must succeed with 200 and an audit_id.
+          R1=$(curl -sS -m 15 -X POST http://localhost/v1/predict \
+            -H 'Content-Type: application/json' \
+            -H 'Idempotency-Key: ci-idem-key-1' \
+            -d "$BODY")
+          echo "first: $R1"
+          echo "$R1" | python3 -c "
+          import json, sys
+          d = json.load(sys.stdin)
+          assert d.get('decision') in {'ACCEPT','DECLINE','REVIEW'}, d
+          assert isinstance(d.get('audit_id'), str), d
+          print('first ok:', d['decision'], d['audit_id'])
+          "
+
+          # Replay (same key + same body): must return 200 with the same
+          # audit_id (cached response).
+          R2=$(curl -sS -m 15 -X POST http://localhost/v1/predict \
+            -H 'Content-Type: application/json' \
+            -H 'Idempotency-Key: ci-idem-key-1' \
+            -d "$BODY")
+          ID1=$(echo "$R1" | python3 -c "import json,sys; print(json.load(sys.stdin)['audit_id'])")
+          ID2=$(echo "$R2" | python3 -c "import json,sys; print(json.load(sys.stdin)['audit_id'])")
+          [ "$ID1" = "$ID2" ] || { echo "::error::replay returned a different audit_id ($ID1 vs $ID2)"; exit 1; }
+          echo "replay ok: audit_id matches"
+
+          # Conflict (same key + different body): must return 422.
+          DIFF_BODY='{"transaction_id":"'$TID'","sender_id":"ci-idem","receiver_id":"r","amount":999,"transaction_type":"PAYMENT","timestamp":1717718400}'
+          CODE=$(curl -sS -m 15 -o /dev/null -w "%{http_code}" -X POST http://localhost/v1/predict \
+            -H 'Content-Type: application/json' \
+            -H 'Idempotency-Key: ci-idem-key-1' \
+            -d "$DIFF_BODY")
+          [ "$CODE" = "422" ] || { echo "::error::expected 422 for body divergence on reused key, got $CODE"; exit 1; }
+          echo "conflict ok: 422 on divergent body"
+
       - name: Dump logs on failure
         if: failure()
         run: |
