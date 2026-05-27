@@ -56,13 +56,23 @@ For wiring tests, CI, or laptops without spare disk, skip the heavy stack:
 ```bash
 pip install kafka-python==2.0.2 sqlalchemy==2.0.25 psycopg2-binary==2.9.9 \
             pydantic==2.6.4 python-dotenv==1.0.1
-FIA_FALLBACK_ON_LLM_FAILURE=true PYTHONPATH=. python -m src.main
+FIA_DISABLE_LLM=true PYTHONPATH=. python -m src.main
 ```
 
-`FIA_FALLBACK_ON_LLM_FAILURE=true` (the default) makes FIA degrade to a
-deterministic rule-based report when `torch` is missing, the model fails to
-load, or generated JSON fails schema validation — the pipeline still produces
-parseable rows.
+Two related knobs control how FIA degrades when the LLM is unavailable:
+
+- **`FIA_DISABLE_LLM=true`** — skips the torch / transformers import
+  **entirely**. Use this when you haven't installed the LLM dependencies, or
+  for CI runs that have no business loading 7.6 GB of weights. Combine with
+  the trimmed `pip install` above and FIA stays under a few hundred MB.
+- **`FIA_FALLBACK_ON_LLM_FAILURE=true`** (default) — keeps the import in
+  place but degrades to a deterministic rule-based report when the model
+  fails to load, OOMs at generation time, or returns JSON that fails schema
+  validation. Use this in environments where you'd normally expect the LLM
+  to work but want the pipeline to stay parseable on the bad day.
+
+Either path produces real `investigationReports` rows; the difference is
+whether the LLM import is attempted at all.
 
 ## Configuration
 
@@ -78,7 +88,8 @@ parseable rows.
 | `LLM_DTYPE` | `auto` | `float16`, `bfloat16`, `float32` |
 | `LLM_MAX_NEW_TOKENS` | `384` | Cap on report length |
 | `LLM_TEMPERATURE` | `0.2` | Lower = more deterministic |
-| `FIA_FALLBACK_ON_LLM_FAILURE` | `true` | Degrade to rule-based on LLM error |
+| `FIA_DISABLE_LLM` | `false` | Skip the `torch`/`transformers` import + 7.6 GB Phi-3 load entirely. Forces every report through the rule-based fallback. Use for CI, lightweight dev setups, and laptops without disk for the weights. |
+| `FIA_FALLBACK_ON_LLM_FAILURE` | `true` | Degrade to rule-based on LLM error (load failure, OOM, schema-invalid output). Honoured only when `FIA_DISABLE_LLM=false`. |
 | `METRICS_PORT` | `9094` | `/livez`, `/readyz`, `/stats` |
 
 ## Idempotency
