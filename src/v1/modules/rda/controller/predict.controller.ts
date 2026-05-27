@@ -4,7 +4,7 @@ import httpStatus from "http-status";
 import { randomUUID } from "crypto";
 import PredictService from "../services/predict.service";
 import { PredictRequestDto } from "../dtos/predict-request.dto";
-import IdempotencyService, { IDEMPOTENCY_KEY_MAX_LENGTH } from "@shared/idempotency/idempotency.service";
+import { IDEMPOTENCY_KEY_MAX_LENGTH } from "@shared/idempotency/idempotency.service";
 import DecisionAuditService from "@shared/audit/decision-audit.service";
 import WebhookService from "@shared/webhooks/webhook.service";
 import { ErrorResponse, SuccessResponse } from "@shared/utils/response.util";
@@ -13,13 +13,10 @@ import { createServiceLogger, TraceContext } from "@shared/utils/logger/service-
 
 const log = createServiceLogger("PredictController");
 
-const IDEMPOTENCY_TTL_MS = Number(process.env.IDEMPOTENCY_TTL_MS) || 24 * 60 * 60 * 1000;
-
 @injectable()
 class PredictController {
   constructor(
     private predictService: PredictService,
-    private idempotencyService: IdempotencyService,
     private decisionAudit: DecisionAuditService,
     private webhookService: WebhookService
   ) {}
@@ -28,193 +25,54 @@ class PredictController {
     req: FastifyRequest<{ Body: PredictRequestDto }>,
     res: FastifyReply
   ): Promise<void> => {
-    const startTime = Date.now();
     const traceId = `req-${(req.headers["x-correlation-id"] as string) || randomUUID()}`;
-    const request = req.body;
-    const apiKey = req.apiKey;
-    // tenantId is taken from the verified API key first, then from a JWT
-    // subject if present, then defaults to "default". X-Tenant-ID is
-    // *only* honored as a hint when a verified credential is present —
-    // otherwise an unauthenticated caller could scope into another
-    // tenant's namespace by setting the header.
-    const headerTenant = req.headers["x-tenant-id"] as string | undefined;
-    const tenantId =
-      apiKey?.tenantId ??
-      req.auth?.tenantId ??
-      ((apiKey || req.auth) && headerTenant) ??
-      "default";
-    const rawIdempotency = (req.headers["idempotency-key"] as string | undefined) || null;
-    // Cap key length so an attacker can't bloat the idempotencyKeys
-    // table (or trigger an outsized hash) by spamming multi-MB headers.
-    if (rawIdempotency && rawIdempotency.length > IDEMPOTENCY_KEY_MAX_LENGTH) {
+    const tenantId = resolveTenantId(req);
+    const idempotencyKey = (req.headers["idempotency-key"] as string | undefined) || null;
+
+    if (idempotencyKey && idempotencyKey.length > IDEMPOTENCY_KEY_MAX_LENGTH) {
       return res
         .code(httpStatus.BAD_REQUEST)
-        .send(ErrorResponse(`Idempotency-Key must be ${IDEMPOTENCY_KEY_MAX_LENGTH} characters or fewer`));
+        .header("X-Correlation-ID", traceId)
+        .send(
+          ErrorResponse(`Idempotency-Key must be ${IDEMPOTENCY_KEY_MAX_LENGTH} characters or fewer`)
+        );
     }
-    const idempotencyKey = rawIdempotency;
 
-    return TraceContext.runAsync(
-      { traceId, transactionId: request.transaction_id, senderId: request.sender_id },
+    await TraceContext.runAsync(
+      { traceId, transactionId: req.body.transaction_id, senderId: req.body.sender_id },
       async () => {
-        log.entry("predict", "Processing fraud prediction request", {
-          transactionId: request.transaction_id,
-          senderId: request.sender_id,
-          receiverId: request.receiver_id,
-          amount: request.amount,
-          transactionType: request.transaction_type,
-          tenantId,
-          apiKeyId: apiKey?.id,
-        });
-
-        // Idempotency replay path. Scoped by (tenantId, key) so adopters
-        // who do partition by tenant still get isolation; single-tenant
-        // deployments share the "default" namespace, which is fine.
-        let acquiredLock: { release: () => Promise<void> } | null = null;
-        if (idempotencyKey) {
-          const requestHash = IdempotencyService.hashRequest(request);
-          const idemInput = {
-            tenantId,
-            apiKeyId: apiKey?.id ?? null,
-            key: idempotencyKey,
-          };
-          const outcome = await this.idempotencyService.lookup({ ...idemInput, requestHash });
-          if (outcome.kind === "replay") {
-            log.info("predict", "Idempotent replay served from cache", {
-              transactionId: request.transaction_id,
-              tenantId,
-            });
-            return res
-              .code(httpStatus.OK)
-              .header("X-Correlation-ID", traceId)
-              .header("Idempotency-Replay", "true")
-              .send(outcome.response);
-          }
-          if (outcome.kind === "conflict") {
-            return res
-              .code(httpStatus.UNPROCESSABLE_ENTITY)
-              .header("X-Correlation-ID", traceId)
-              .send(ErrorResponse("Idempotency-Key reused with a different request body"));
-          }
-
-          // miss → try to win the lock so we are the only request
-          // running ML for this idempotency key. Losers wait for the
-          // leader's stored response (poll the DB ~3s) and replay it.
-          acquiredLock = await this.idempotencyService.acquireLock(idemInput);
-          if (!acquiredLock) {
-            const waited = await this.idempotencyService.waitForReplay({
-              ...idemInput,
-              requestHash,
-            });
-            if (waited.kind === "replay") {
-              return res
-                .code(httpStatus.OK)
-                .header("X-Correlation-ID", traceId)
-                .header("Idempotency-Replay", "true")
-                .send(waited.response);
-            }
-            if (waited.kind === "conflict") {
-              return res
-                .code(httpStatus.UNPROCESSABLE_ENTITY)
-                .header("X-Correlation-ID", traceId)
-                .send(ErrorResponse("Idempotency-Key reused with a different request body"));
-            }
-            // Still in flight after the poll window — bail with 409 so
-            // the client retries (and the next attempt almost certainly
-            // hits the cache instead of duplicating work).
-            return res
-              .code(httpStatus.CONFLICT)
-              .header("X-Correlation-ID", traceId)
-              .header("Retry-After", "1")
-              .send(
-                ErrorResponse(
-                  "Another request with this Idempotency-Key is still in flight"
-                )
-              );
-          }
-        }
-
         try {
-          const response = await this.predictService.predict({
-            request,
+          const outcome = await this.predictService.executePrediction({
+            request: req.body,
             traceId,
             tenantId,
-            apiKeyId: apiKey?.id ?? null,
+            apiKeyId: req.apiKey?.id ?? null,
             idempotencyKey,
           });
-
-          const latencyMs = Date.now() - startTime;
-          metricsService.recordRequest("POST", "/predict", httpStatus.OK);
-          metricsService.recordLatency("POST", "/predict", latencyMs);
-
-          if (idempotencyKey) {
-            await this.idempotencyService.store({
-              tenantId,
-              apiKeyId: apiKey?.id ?? null,
-              key: idempotencyKey,
-              requestHash: IdempotencyService.hashRequest(request),
-              response: response as unknown as Record<string, unknown>,
-              ttlMs: IDEMPOTENCY_TTL_MS,
-            });
-          }
-
-          log.success("predict", "Fraud prediction completed", {
-            transactionId: response.transaction_id,
-            fraud: response.fraud,
-            fraudProbability: response.fraud_probability,
-            decision: response.decision,
-            decisionSource: response.decision_source,
-            latencyMs,
-          });
-
-          res
-            .code(httpStatus.OK)
-            .header("X-Correlation-ID", traceId)
-            .header("X-Response-Time", `${latencyMs}ms`)
-            .send(response);
+          sendOutcome(res, outcome, traceId);
         } catch (err) {
-          const latencyMs = Date.now() - startTime;
-
           log.error("predict", "Failed to process prediction request", {
-            transactionId: request.transaction_id,
-            latencyMs,
+            transactionId: req.body.transaction_id,
             error: err instanceof Error ? err.message : String(err),
           });
-
-          metricsService.recordRequest("POST", "/predict", httpStatus.INTERNAL_SERVER_ERROR);
-          metricsService.recordError("request_error");
-
           res
             .code(httpStatus.INTERNAL_SERVER_ERROR)
             .header("X-Correlation-ID", traceId)
             .send(ErrorResponse("Failed to process prediction request"));
-        } finally {
-          if (acquiredLock) {
-            await acquiredLock.release();
-          }
         }
       }
     );
   };
 
-  /**
-   * Read a single audit row by transaction id. Useful for client
-   * polling or for case-management UIs that pivot off the original
-   * transaction id rather than the audit row's own id.
-   */
-  getDecision = async (req: FastifyRequest<{ Params: { transactionId: string } }>, res: FastifyReply) => {
+  getDecision = async (
+    req: FastifyRequest<{ Params: { transactionId: string } }>,
+    res: FastifyReply
+  ) => {
     const row = await this.decisionAudit.getByTransactionId(req.params.transactionId);
-    if (!row) {
-      return res.code(httpStatus.NOT_FOUND).send(ErrorResponse("Decision not found"));
-    }
+    if (!row) return res.code(httpStatus.NOT_FOUND).send(ErrorResponse("Decision not found"));
     return res.send(SuccessResponse("Decision retrieved", row));
   };
 
-  /**
-   * Apply a human reviewer override. Persists the override on the
-   * audit row and fires `decision.overridden` to subscribers.
-   * The reviewer identity comes from the authenticated subject — the
-   * body cannot forge it (audit-log integrity guarantee in SECURITY.md).
-   */
   overrideDecision = async (
     req: FastifyRequest<{
       Params: { auditId: string };
@@ -231,7 +89,7 @@ class PredictController {
         .send(ErrorResponse("decision must be ACCEPT or DECLINE"));
     }
 
-    const reviewer = req.auth?.username ?? null;
+    const reviewer = req.auth?.username;
     if (!reviewer) {
       return res
         .code(httpStatus.UNAUTHORIZED)
@@ -239,9 +97,7 @@ class PredictController {
     }
 
     const row = await this.decisionAudit.override({ auditId, decision, reviewer, reason });
-    if (!row) {
-      return res.code(httpStatus.NOT_FOUND).send(ErrorResponse("Audit row not found"));
-    }
+    if (!row) return res.code(httpStatus.NOT_FOUND).send(ErrorResponse("Audit row not found"));
 
     this.webhookService
       .publish(
@@ -267,8 +123,8 @@ class PredictController {
     }>,
     res: FastifyReply
   ) => {
-    const limit = Number.parseInt(req.query.limit || "25", 10) || 25;
-    const offset = Number.parseInt(req.query.offset || "0", 10) || 0;
+    const limit = clampInt(req.query.limit, 25, 1, 200);
+    const offset = clampInt(req.query.offset, 0, 0, Number.MAX_SAFE_INTEGER);
     const order = req.query.order === "oldest" ? "oldest" : "newest";
     const search = req.query.search?.trim() || undefined;
     const { rows, total } = await this.decisionAudit.listReviewQueuePaginated({
@@ -277,35 +133,24 @@ class PredictController {
       order,
       search,
     });
-    return res.send(
-      SuccessResponse("Review queue", { rows, total, limit, offset })
-    );
+    return res.send(SuccessResponse("Review queue", { rows, total, limit, offset }));
   };
 
-  /**
-   * Recent decisions, newest-first, optionally bounded by `since`.
-   * Powers the Live decisions page's polling feed. We cap `limit` at
-   * 200 so a misconfigured client can't pull the whole table.
-   */
   recentDecisions = async (
     req: FastifyRequest<{ Querystring: { since?: string; limit?: string } }>,
     res: FastifyReply
   ) => {
-    const limit = Math.min(Math.max(Number.parseInt(req.query.limit || "50", 10) || 50, 1), 200);
+    const limit = clampInt(req.query.limit, 50, 1, 200);
     const since = req.query.since ? new Date(req.query.since) : null;
     const rows = await this.decisionAudit.listRecentSince(since, limit);
     return res.send(SuccessResponse("Recent decisions", rows));
   };
 
-  /**
-   * Audit rows that share sender or receiver with the supplied audit
-   * row. Powers the "Similar cases" panel on the Review queue.
-   */
   similarDecisions = async (
     req: FastifyRequest<{ Params: { auditId: string }; Querystring: { limit?: string } }>,
     res: FastifyReply
   ) => {
-    const limit = Math.min(Math.max(Number.parseInt(req.query.limit || "5", 10) || 5, 1), 20);
+    const limit = clampInt(req.query.limit, 5, 1, 20);
     const rows = await this.decisionAudit.listSimilar(req.params.auditId, limit);
     return res.send(SuccessResponse("Similar decisions", rows));
   };
@@ -321,6 +166,56 @@ class PredictController {
       res.code(httpStatus.INTERNAL_SERVER_ERROR).send(ErrorResponse("Failed to get metrics"));
     }
   };
+}
+
+// X-Tenant-ID is only honored when a verified credential is present.
+// Without this guard an unauthenticated caller could scope into another
+// tenant's namespace by setting the header.
+function resolveTenantId(req: FastifyRequest): string {
+  const headerTenant = req.headers["x-tenant-id"] as string | undefined;
+  const hasCredential = !!(req.apiKey || req.auth);
+  return (
+    req.apiKey?.tenantId ??
+    req.auth?.tenantId ??
+    (hasCredential && headerTenant ? headerTenant : undefined) ??
+    "default"
+  );
+}
+
+function clampInt(raw: string | undefined, fallback: number, min: number, max: number): number {
+  const n = Number.parseInt(raw ?? "", 10);
+  if (!Number.isFinite(n)) return fallback;
+  return Math.min(Math.max(n, min), max);
+}
+
+function sendOutcome(
+  res: FastifyReply,
+  outcome: Awaited<ReturnType<PredictService["executePrediction"]>>,
+  traceId: string
+): void {
+  res.header("X-Correlation-ID", traceId);
+  switch (outcome.kind) {
+    case "ok":
+      res
+        .code(httpStatus.OK)
+        .header("X-Response-Time", `${outcome.latencyMs}ms`)
+        .send(outcome.response);
+      return;
+    case "replay":
+      res.code(httpStatus.OK).header("Idempotency-Replay", "true").send(outcome.response);
+      return;
+    case "conflict":
+      res
+        .code(httpStatus.UNPROCESSABLE_ENTITY)
+        .send(ErrorResponse("Idempotency-Key reused with a different request body"));
+      return;
+    case "in_flight":
+      res
+        .code(httpStatus.CONFLICT)
+        .header("Retry-After", "1")
+        .send(ErrorResponse("Another request with this Idempotency-Key is still in flight"));
+      return;
+  }
 }
 
 export default PredictController;
