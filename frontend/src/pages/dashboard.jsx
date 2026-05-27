@@ -1,6 +1,6 @@
 // Page 1 — Operator dashboard
 
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { Ti, fmtNaira, fmtAge } from '../components/shell.jsx';
 import {
   getStatsToday,
@@ -8,18 +8,7 @@ import {
   listReviewQueue,
 } from '../api/client.js';
 
-// Operator orientation header — date stamp in mono. No greeting,
-// no marketing copy. Memoised on `Date.now()` so the format is
-// stable for the page lifetime (don't re-render on every state tick).
-function todayLabel() {
-  const now = new Date();
-  const weekday = now.toLocaleDateString('en-US', { weekday: 'short' });
-  const monthDay = now.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
-  return `Today · ${weekday}, ${monthDay}`;
-}
-
 function Dashboard({ toast, user, queue, models, reports, webhooks, nav }) {
-  const dateLabel = useMemo(todayLabel, []);
   const champion = models.find(m => m.status === 'ACTIVE');
   const shadow = models.find(m => m.status === 'SHADOW');
   const newReports = reports.slice(0, 4);
@@ -150,26 +139,9 @@ function Dashboard({ toast, user, queue, models, reports, webhooks, nav }) {
 
   return (
     <>
-      {/* Mono date stamp — operators use this every day; the page is
-          self-evident from the sidebar's active item, so the header
-          orients on time, not on a serif welcome. Search + bell were
-          removed because they were unwired placeholders that read
-          as page-scoped controls when they're really global; if
-          revived they belong in a topbar, not here. */}
-      <header style={{ marginBottom: 20 }}>
-        <p
-          style={{
-            margin: 0,
-            fontFamily: 'var(--font-code)',
-            fontSize: 13,
-            letterSpacing: '0.02em',
-            color: 'var(--ink-muted)',
-            lineHeight: 1.2,
-          }}
-        >
-          {dateLabel}
-        </p>
-      </header>
+      {/* Date stamp + bell + user identity live in the global Topbar
+          (see <Topbar> in shell.jsx). Dashboard starts directly with
+          the actionable surface so the operator's eye lands on work. */}
 
       {/* Things to do */}
       <section className="panel" style={{marginBottom:14, padding:'16px 18px'}}>

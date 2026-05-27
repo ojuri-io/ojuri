@@ -184,9 +184,10 @@ function Login({ onSuccess }) {
             textAlign: 'center',
           }}
         >
-          First-run seed: <code className="mono">admin / admin@fraudit</code>. Change it via
+          First-run password is printed once by{' '}
+          <code className="mono">npm run db:migrate</code>. Lost it?
           <br />
-          <code className="mono">PATCH /v1/admin/users/:id</code> after sign-in.
+          Run <code className="mono">npm run reset:admin</code> from the repo root.
         </p>
       </form>
     </div>

@@ -2,7 +2,7 @@
 
 import React, { useEffect, useState } from 'react';
 
-import { Sidebar, useToasts } from './components/shell.jsx';
+import { Sidebar, Topbar, computeNotifications, useToasts } from './components/shell.jsx';
 import { ErrorBoundary } from './components/error-boundary.jsx';
 
 import {
@@ -154,9 +154,23 @@ function App() {
   return <AuthenticatedApp user={authUser} onLogout={doLogout} />;
 }
 
+// Date stamp shown on the left side of the global topbar. Memoised on
+// mount so the label doesn't flicker on every state tick — re-rendering
+// daily is enough for an operator workstation.
+function todayLabel() {
+  const now = new Date();
+  const weekday = now.toLocaleDateString('en-US', { weekday: 'short' });
+  const monthDay = now.toLocaleDateString('en-US', {
+    month: 'short',
+    day: 'numeric',
+  });
+  return `Today · ${weekday}, ${monthDay}`;
+}
+
 function AuthenticatedApp({ user, onLogout }) {
   const [route, setRoute] = useState(loadRoute());
   const [toastNode, toast] = useToasts();
+  const dateLabel = React.useMemo(todayLabel, []);
 
   // Shared state — all start empty and are hydrated from the API. No
   // mock seeding; an unreachable backend renders the empty state for
@@ -314,6 +328,18 @@ function AuthenticatedApp({ user, onLogout }) {
     screenLabel = '13 Roles';
   }
 
+  // Bell notifications are sourced from the same state the dashboard
+  // surfaces — so the badge count and the dashboard's "Things to do"
+  // never disagree.
+  const notifications = computeNotifications({
+    queueCount,
+    queue,
+    reports,
+    models,
+    webhooks,
+    nav,
+  });
+
   return (
     <div className="app">
       <Sidebar
@@ -321,9 +347,14 @@ function AuthenticatedApp({ user, onLogout }) {
         onNav={nav}
         queueCount={typeof queueCount === 'number' ? queueCount : queue.length}
         user={user}
-        onLogout={onLogout}
       />
       <div className="main">
+        <Topbar
+          dateLabel={dateLabel}
+          notifications={notifications}
+          user={user}
+          onLogout={onLogout}
+        />
         <div className="main-scroll">
           <div className="page-shell" data-screen-label={screenLabel}>
             {/* `resetKey` lets the boundary auto-recover when the user

@@ -1,6 +1,6 @@
-// Shared shell — Lucide icon wrapper, helpers, sidebar, page chrome, modal, toasts.
+// Shared shell — Lucide icon wrapper, helpers, sidebar, topbar, page chrome, modal, toasts.
 
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import {
   Activity,
   ArrowDownNarrowWide,
@@ -319,7 +319,10 @@ export function useToasts() {
 }
 
 // ──────── Sidebar ────────
-export function Sidebar({ active, onNav, queueCount, user, onLogout }) {
+// `user` is still required for permission gating on nav items (read-locked
+// pages are greyed out for users that lack the perm). The identity surface
+// and sign-out moved to the global Topbar — see <Topbar> below.
+export function Sidebar({ active, onNav, queueCount, user }) {
   // Pages tagged with `perm` are read-gated. When the user lacks that
   // permission the nav item is shown but greyed out with a tooltip — that
   // way they discover the feature exists but can't enter the page and hit
@@ -455,38 +458,6 @@ export function Sidebar({ active, onNav, queueCount, user, onLogout }) {
           </div>
         ))}
       </div>
-      <div className="sidebar-foot">
-        <div className="avatar">{initials(user)}</div>
-        <div style={{ display: 'flex', flexDirection: 'column', minWidth: 0, flex: 1 }}>
-          <span
-            style={{
-              fontSize: 12,
-              fontWeight: 500,
-              color: 'var(--color-text-primary)',
-            }}
-            className="truncate"
-          >
-            {user?.fullName || user?.username || 'anonymous'}
-          </span>
-          <span
-            className="truncate"
-            style={{ fontSize: 10, color: 'var(--color-text-tertiary)' }}
-            title={(user?.roles || []).map((r) => r.name).join(', ')}
-          >
-            {(user?.roles || []).map((r) => r.name).join(', ') || 'no role'}
-          </span>
-        </div>
-        {onLogout && (
-          <button
-            className="ghost icon-only"
-            onClick={onLogout}
-            title="Sign out"
-            aria-label="Sign out"
-          >
-            <Ti name="logout" size={14} />
-          </button>
-        )}
-      </div>
     </aside>
   );
 }
@@ -498,6 +469,263 @@ function initials(user) {
   if (parts.length === 0) return '··';
   if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase();
   return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
+}
+
+// ──────── Topbar ────────
+// Global app chrome — date stamp on the left, bell + user menu on the right.
+// Lives in every authenticated page; do not put page-scoped controls here.
+// Notifications are computed by the parent (so the bell count matches what
+// the dashboard surfaces) via `computeNotifications` below.
+export function Topbar({ dateLabel, notifications, user, onLogout }) {
+  const [bellOpen, setBellOpen] = useState(false);
+  const [menuOpen, setMenuOpen] = useState(false);
+  const bellRef = useRef(null);
+  const menuRef = useRef(null);
+
+  // Close on outside click or Escape.
+  useEffect(() => {
+    if (!bellOpen && !menuOpen) return;
+    const onDown = (e) => {
+      if (bellOpen && bellRef.current && !bellRef.current.contains(e.target)) {
+        setBellOpen(false);
+      }
+      if (menuOpen && menuRef.current && !menuRef.current.contains(e.target)) {
+        setMenuOpen(false);
+      }
+    };
+    const onKey = (e) => {
+      if (e.key === 'Escape') {
+        setBellOpen(false);
+        setMenuOpen(false);
+      }
+    };
+    window.addEventListener('mousedown', onDown);
+    window.addEventListener('keydown', onKey);
+    return () => {
+      window.removeEventListener('mousedown', onDown);
+      window.removeEventListener('keydown', onKey);
+    };
+  }, [bellOpen, menuOpen]);
+
+  const items = notifications || [];
+  const unread = items.length;
+  const roles = (user?.roles || []).map((r) => r.name).join(', ') || 'no role';
+
+  return (
+    <header className="topbar" data-testid="topbar">
+      <div className="topbar-left">
+        {dateLabel && <span className="topbar-date">{dateLabel}</span>}
+      </div>
+      <div className="topbar-actions">
+        <div className="topbar-pop-anchor" ref={bellRef}>
+          <button
+            type="button"
+            className="ghost icon-only topbar-bell"
+            aria-label={
+              unread ? `Notifications (${unread} unread)` : 'Notifications'
+            }
+            aria-haspopup="true"
+            aria-expanded={bellOpen}
+            onClick={() => {
+              setBellOpen((o) => !o);
+              setMenuOpen(false);
+            }}
+          >
+            <Ti name="bell" size={15} />
+            {unread > 0 && (
+              <span className="topbar-badge" aria-hidden="true">
+                {unread > 9 ? '9+' : unread}
+              </span>
+            )}
+          </button>
+          {bellOpen && (
+            <div
+              className="popover popover--right"
+              role="dialog"
+              aria-label="Notifications"
+            >
+              <div className="popover-head">
+                <span style={{ fontSize: 12, fontWeight: 600 }}>
+                  Notifications
+                </span>
+                <span style={{ fontSize: 11, color: 'var(--ink-muted)' }}>
+                  {unread} {unread === 1 ? 'item' : 'items'}
+                </span>
+              </div>
+              {unread === 0 ? (
+                <div className="popover-empty">You're all caught up.</div>
+              ) : (
+                <div className="notif-list">
+                  {items.map((n, i) => (
+                    <button
+                      key={i}
+                      type="button"
+                      className="notif-item"
+                      onClick={() => {
+                        setBellOpen(false);
+                        n.onClick && n.onClick();
+                      }}
+                    >
+                      <Ti
+                        name={n.icon}
+                        size={14}
+                        style={{
+                          color: 'var(--ink-muted)',
+                          marginTop: 2,
+                        }}
+                      />
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <span className="notif-title">{n.title}</span>
+                        <span className="notif-sub truncate">{n.sub}</span>
+                      </div>
+                      <span className="notif-when">{n.when}</span>
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+
+        <div className="topbar-pop-anchor" ref={menuRef}>
+          <button
+            type="button"
+            className="ghost topbar-user"
+            aria-label="User menu"
+            aria-haspopup="true"
+            aria-expanded={menuOpen}
+            onClick={() => {
+              setMenuOpen((o) => !o);
+              setBellOpen(false);
+            }}
+          >
+            <span className="avatar avatar--sm" aria-hidden="true">
+              {initials(user)}
+            </span>
+            <span className="topbar-user-name truncate">
+              {user?.fullName || user?.username || 'anonymous'}
+            </span>
+            <Ti
+              name="chevron-down"
+              size={12}
+              style={{ color: 'var(--ink-muted)' }}
+            />
+          </button>
+          {menuOpen && (
+            <div
+              className="popover popover--right popover--narrow"
+              role="menu"
+              aria-label="User menu"
+            >
+              <div className="user-menu-head">
+                <span className="avatar" aria-hidden="true">
+                  {initials(user)}
+                </span>
+                <div style={{ minWidth: 0, flex: 1 }}>
+                  <span
+                    className="truncate"
+                    style={{
+                      display: 'block',
+                      fontSize: 12,
+                      fontWeight: 600,
+                      color: 'var(--ink)',
+                    }}
+                  >
+                    {user?.fullName || user?.username || 'anonymous'}
+                  </span>
+                  <span
+                    className="truncate"
+                    style={{
+                      display: 'block',
+                      fontSize: 11,
+                      color: 'var(--ink-muted)',
+                    }}
+                    title={roles}
+                  >
+                    {roles}
+                  </span>
+                </div>
+              </div>
+              {onLogout && (
+                <div className="user-menu-actions">
+                  <button
+                    type="button"
+                    className="user-menu-item"
+                    onClick={() => {
+                      setMenuOpen(false);
+                      onLogout();
+                    }}
+                    aria-label="Sign out"
+                  >
+                    <Ti name="logout" size={14} />
+                    <span>Sign out</span>
+                  </button>
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+      </div>
+    </header>
+  );
+}
+
+// Build the notification list shown by the bell popover. Mirrors the
+// dashboard's "Things to do" so the bell count never disagrees with the
+// page below it. Pure function — no hooks, no network — so it can be
+// recomputed cheaply on every render of the parent.
+export function computeNotifications({
+  queueCount,
+  queue,
+  reports,
+  models,
+  webhooks,
+  nav,
+}) {
+  const items = [];
+  const qCount =
+    typeof queueCount === 'number' ? queueCount : Array.isArray(queue) ? queue.length : 0;
+  if (qCount > 0) {
+    items.push({
+      icon: 'flag',
+      title: `${qCount} declined transaction${qCount === 1 ? '' : 's'} pending review`,
+      sub: 'Operator action needed in the review queue.',
+      when: 'Now',
+      onClick: () => nav && nav('queue'),
+    });
+  }
+  const recentReports = Array.isArray(reports) ? reports.slice(0, 4) : [];
+  if (recentReports.length > 0) {
+    const fraud = recentReports.filter((r) => r.verdict === 'FRAUD_CONFIRMED').length;
+    items.push({
+      icon: 'file-search',
+      title: `${recentReports.length} new investigation report${recentReports.length === 1 ? '' : 's'}`,
+      sub: `${fraud} fraud confirmed · phi-3-mini`,
+      when: 'Today',
+      onClick: () => nav && nav('invest'),
+    });
+  }
+  const shadow = Array.isArray(models) ? models.find((m) => m.status === 'SHADOW') : null;
+  if (shadow) {
+    items.push({
+      icon: 'cpu',
+      title: `Model ${shadow.version} ready to activate`,
+      sub: 'Promote shadow → active in the Models page.',
+      when: 'Today',
+      onClick: () => nav && nav('models'),
+    });
+  }
+  const failing = Array.isArray(webhooks) ? webhooks.filter((w) => w.status === 'failing') : [];
+  if (failing.length > 0) {
+    items.push({
+      icon: 'webhook',
+      title: `${failing.length} webhook deliver${failing.length === 1 ? 'y' : 'ies'} failing`,
+      sub: 'Check Integrations.',
+      when: 'Recent',
+      onClick: () => nav && nav('integ'),
+    });
+  }
+  return items;
 }
 
 // ──────── Page chrome ────────
