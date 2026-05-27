@@ -41,7 +41,7 @@ const DEFAULT_REDIS_SNAPSHOT: RedisFeatureSnapshot = {
 @injectable()
 class FeatureService {
   private redisClient: Redis;
-  private featureCircuitBreaker: CircuitBreaker<any[], any>;
+  private featureCircuitBreaker!: CircuitBreaker<any[], any>;
   private readonly featureTimeout: number;
 
   constructor(redisClient: RedisClient) {

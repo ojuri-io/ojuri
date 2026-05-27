@@ -6,16 +6,16 @@ export class SavedReport extends Model {
 
   static jsonAttributes = ["filters", "columns"];
 
-  id: string;
-  name: string;
-  description: string | null;
-  dataSource: string;
-  filters: Record<string, unknown>;
-  columns: string[];
-  createdBy: string | null;
-  tenantId: string | null;
-  createdAt: Date;
-  updatedAt: Date;
+  id!: string;
+  name!: string;
+  description!: string | null;
+  dataSource!: string;
+  filters!: Record<string, unknown>;
+  columns!: string[];
+  createdBy!: string | null;
+  tenantId!: string | null;
+  createdAt!: Date;
+  updatedAt!: Date;
 }
 
 export type ISavedReport = ModelObject<SavedReport>;

@@ -4,9 +4,9 @@ export default class AppError extends Error {
   public statusCode: number;
   public isOperational: boolean;
   public cause: Error | undefined;
-  public errorCode: ErrorCode;
+  public errorCode!: ErrorCode;
 
-  constructor(statusCode: number, message, cause?: any, isOperational = true) {
+  constructor(statusCode: number, message: string, cause?: unknown, isOperational = true) {
     super(message);
 
     this.statusCode = statusCode;

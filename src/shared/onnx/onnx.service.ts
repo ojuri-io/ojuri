@@ -27,7 +27,7 @@ const onnxLogger = createServiceLogger("OnnxService");
 class OnnxService {
   private session: ort.InferenceSession | null = null;
   private modelPath: string;
-  private inferenceCircuitBreaker: CircuitBreaker<any[], any>;
+  private inferenceCircuitBreaker!: CircuitBreaker<any[], any>;
   private isModelLoaded: boolean = false;
   private unsubscribeActiveChange: (() => void) | null = null;
 

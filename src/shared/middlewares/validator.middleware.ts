@@ -24,13 +24,13 @@ const validate = (rules: ObjectLiteral, validationMessages?: ObjectLiteral) => {
   };
 };
 
-export const createValidationError = (validationError: []) => {
+export const createValidationError = (validationError: Record<string, string[]>) => {
   const errors: Error[] = [];
 
   for (const [key, value] of Object.entries(validationError)) {
     errors.push({
       field: key,
-      message: value[0],
+      message: value[0]!,
     });
   }
 

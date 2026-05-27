@@ -5,27 +5,27 @@ import { Model, ModelObject } from "objection";
 export class AuditTrail extends Model {
   static tableName = DB_TABLES.AUDIT_TRAILS;
 
-  id: string;
+  id!: string;
 
-  userId: string;
+  userId!: string;
 
-  ipAddress: string;
+  ipAddress!: string;
 
-  device: string;
+  device!: string;
 
-  actionType: string;
+  actionType!: string;
 
-  activity: string;
+  activity!: string;
 
-  metaData: ObjectLiteral;
+  metaData!: ObjectLiteral;
 
-  os: string;
+  os!: string;
 
-  description: string;
+  description!: string;
 
-  location: string;
+  location!: string;
 
-  user: ObjectLiteral;
+  user!: ObjectLiteral;
 
   static relationMappings = {};
 }
