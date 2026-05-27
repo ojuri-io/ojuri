@@ -1,5 +1,5 @@
 import { injectable } from "tsyringe";
-import { BaseRepository } from "../../../v1/modules/moduleName/repositories/base.repo";
+import { BaseRepository } from "../../repositories/base.repo";
 import { ISavedReport, SavedReport } from "../model/saved-report.model";
 
 @injectable()

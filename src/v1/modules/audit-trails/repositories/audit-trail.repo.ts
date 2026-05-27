@@ -1,5 +1,5 @@
 import { injectable } from "tsyringe";
-import { BaseRepository } from "./base.repo";
+import { BaseRepository } from "@shared/repositories/base.repo";
 import { AuditTrail, IAuditTrail } from "../model/audit-trail.model";
 
 @injectable()
