@@ -58,7 +58,7 @@ class VelocityService {
     const { avg: avgAmount30d, std: stdAmount30d } =
       this.calculateAmountStats(thirtyDayTransactions);
 
-    const timeSinceLastTxn = sorted.length > 0 ? currentTimestamp - sorted[0].timestamp : 0;
+    const timeSinceLastTxn = sorted.length > 0 ? currentTimestamp - sorted[0]!.timestamp : 0;
 
     return {
       velocity_1h: velocity1h,
