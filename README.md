@@ -177,6 +177,19 @@ has `mustChangePassword=true`; the first login forces a rotation. To require
 `X-Api-Key` on `/v1/predict`, set `RDA_REQUIRE_API_KEY=true` and issue a key
 from `POST /v1/admin/api-keys`.
 
+To populate the dashboard with realistic-shaped data on the first run, fire
+the curated 20-row demo dataset (`~11` accept, `~3` review, `~6` decline) at
+the running stack:
+
+````bash
+npm run demo:load
+````
+
+Replay it as often as you like — `transaction_id` and `timestamp` are re-minted
+per send, so the idempotency cache won't bite. See [`data/demo/README.md`](data/demo/README.md)
+for the dataset shape, or `npm run seed:load -- --count 1000` if you want
+synthetic load instead.
+
 ---
 
 ## Architecture
