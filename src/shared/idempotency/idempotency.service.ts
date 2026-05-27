@@ -1,7 +1,6 @@
 import { createHash, randomUUID } from "crypto";
 import { singleton } from "tsyringe";
 import { createServiceLogger } from "@shared/utils/logger/service-logger";
-import IdempotencyKeyRepo from "./repositories/idempotency-key.repo";
 import RedisClient from "@shared/redis-client/redis-client";
 
 const log = createServiceLogger("IdempotencyService");
@@ -16,9 +15,6 @@ export type IdempotencyOutcome =
   | { kind: "miss" }
   | { kind: "replay"; response: Record<string, unknown> }
   | { kind: "conflict" }
-  // Concurrent in-flight request for the same key — caller should
-  // return 409 (or retry the lookup after a short delay; predict
-  // controller currently polls inline before giving up).
   | { kind: "in_flight" };
 
 interface IdempotencyInput {
@@ -27,42 +23,43 @@ interface IdempotencyInput {
   key: string;
 }
 
+interface StoredEntry {
+  requestHash: string;
+  response: Record<string, unknown>;
+}
+
 interface AcquiredLock {
   release(): Promise<void>;
 }
 
+/**
+ * Redis-backed idempotency cache for `POST /v1/predict`. Replaces an
+ * earlier Postgres table — every operation here is sub-millisecond
+ * against a healthy local Redis vs. ~1–10 ms round-trips against
+ * Postgres for a cache that's never the system of record.
+ *
+ * Composite key includes the API key ID so two unrelated callers of
+ * the same tenant who happen to share an Idempotency-Key value get
+ * isolation — without it, callerA's response would leak to callerB
+ * on the first replay.
+ */
 @singleton()
 class IdempotencyService {
-  constructor(
-    private readonly repo: IdempotencyKeyRepo,
-    private readonly redis: RedisClient
-  ) {}
+  constructor(private readonly redis: RedisClient) {}
 
-  /**
-   * Look up an existing idempotent response, or return `miss`. A
-   * `conflict` outcome means the same key was reused with a
-   * different request body — clients should treat this as 422.
-   *
-   * The storage key is composed of `apiKeyId|key` so two unrelated
-   * clients of the same tenant who happen to share an Idempotency-Key
-   * value get isolation — without this, client A's response (with
-   * sensitive `fraud_probability` and `reason_codes`) leaks to
-   * client B on the first replay.
-   */
   async lookup(input: IdempotencyInput & { requestHash: string }): Promise<IdempotencyOutcome> {
-    const storageKey = composeKey(input);
-    const row = await this.repo.findByCompositeKey(input.tenantId, storageKey);
-    if (!row) return { kind: "miss" };
-    if (new Date(row.expiresAt).getTime() < Date.now()) return { kind: "miss" };
-    if (row.requestHash !== input.requestHash) return { kind: "conflict" };
+    const raw = await this.redis.get().get(respKey(input));
+    if (!raw) return { kind: "miss" };
 
-    return {
-      kind: "replay",
-      response:
-        typeof row.response === "string"
-          ? JSON.parse(row.response as unknown as string)
-          : row.response,
-    };
+    let entry: StoredEntry;
+    try {
+      entry = JSON.parse(raw);
+    } catch {
+      log.warn("lookup", "Stored entry is not valid JSON; treating as miss");
+      return { kind: "miss" };
+    }
+    if (entry.requestHash !== input.requestHash) return { kind: "conflict" };
+    return { kind: "replay", response: entry.response };
   }
 
   async store(input: IdempotencyInput & {
@@ -70,44 +67,33 @@ class IdempotencyService {
     response: Record<string, unknown>;
     ttlMs?: number;
   }): Promise<void> {
-    const expiresAt = new Date(Date.now() + (input.ttlMs ?? IDEMPOTENCY_TTL_MS));
-
+    const ttlSec = Math.max(1, Math.floor((input.ttlMs ?? IDEMPOTENCY_TTL_MS) / 1000));
+    const entry: StoredEntry = { requestHash: input.requestHash, response: input.response };
     try {
-      await this.repo.insertIgnoringConflict({
-        tenantId: input.tenantId,
-        key: composeKey(input),
-        requestHash: input.requestHash,
-        response: input.response,
-        expiresAt,
-      });
+      await this.redis.get().set(respKey(input), JSON.stringify(entry), "EX", ttlSec);
     } catch (err) {
+      // Audit-grade durability isn't the goal here — losing a replay
+      // record only means a retry recomputes. Log and move on.
       log.error("store", "Failed to persist idempotency record", { err: String(err) });
     }
   }
 
   /**
-   * Acquire a Redis-backed lock so only one concurrent request for a
-   * given (tenant, apiKey, key) tuple runs the expensive ML path. The
-   * losers see `in_flight` and the predict controller polls for the
-   * leader's stored response before giving up.
-   *
-   * Returns null when the lock is held by another in-flight request.
-   * The TTL guards against a leader crash leaving the lock dangling.
+   * SETNX lock so only one concurrent request for a given key tuple
+   * runs the expensive ML path. The TTL guards against a leader crash
+   * leaving the lock dangling.
    */
   async acquireLock(input: IdempotencyInput): Promise<AcquiredLock | null> {
     const client = this.redis.get();
-    const lockKey = `ojuri:idem:${input.tenantId}:${composeKey(input)}`;
-    const lockValue = randomUUID();
-    // ioredis: SET key value NX EX seconds. Returns "OK" on success,
-    // null when the key already exists.
-    const acquired = await client.set(lockKey, lockValue, "EX", LOCK_TTL_SECONDS, "NX");
+    const key = lockKey(input);
+    const value = randomUUID();
+    const acquired = await client.set(key, value, "EX", LOCK_TTL_SECONDS, "NX");
     if (acquired !== "OK") return null;
 
     return {
       release: async () => {
-        // CAS release — only delete the lock if we still own it. Avoids
-        // releasing a TTL-extended lock that another request now owns.
-        const releaseScript = `
+        // CAS release — only delete the lock if we still own it.
+        const script = `
           if redis.call("get", KEYS[1]) == ARGV[1] then
             return redis.call("del", KEYS[1])
           else
@@ -115,7 +101,7 @@ class IdempotencyService {
           end
         `;
         try {
-          await client.eval(releaseScript, 1, lockKey, lockValue);
+          await client.eval(script, 1, key, value);
         } catch (err) {
           log.warn("acquireLock", "release script failed (lock will expire on TTL)", {
             err: String(err),
@@ -127,18 +113,15 @@ class IdempotencyService {
 
   /**
    * Wait briefly for another in-flight request to land its response.
-   * Returns the same shape as `lookup`; the caller uses this to turn
-   * `in_flight` into either `replay` (the leader finished) or a 409
-   * (still in flight after the poll window).
+   * Returns `replay` when the leader writes, `conflict` if it wrote a
+   * different request body, `in_flight` if the poll window expires.
    */
   async waitForReplay(input: IdempotencyInput & { requestHash: string }): Promise<IdempotencyOutcome> {
     const deadline = Date.now() + LOCK_POLL_TIMEOUT_MS;
     while (Date.now() < deadline) {
       await sleep(LOCK_POLL_INTERVAL_MS);
       const outcome = await this.lookup(input);
-      if (outcome.kind === "replay" || outcome.kind === "conflict") {
-        return outcome;
-      }
+      if (outcome.kind === "replay" || outcome.kind === "conflict") return outcome;
     }
     return { kind: "in_flight" };
   }
@@ -150,6 +133,14 @@ class IdempotencyService {
 
 function composeKey(input: IdempotencyInput): string {
   return `${input.apiKeyId ?? "anon"}|${input.key}`;
+}
+
+function respKey(input: IdempotencyInput): string {
+  return `ojuri:idem:resp:${input.tenantId}:${composeKey(input)}`;
+}
+
+function lockKey(input: IdempotencyInput): string {
+  return `ojuri:idem:lock:${input.tenantId}:${composeKey(input)}`;
 }
 
 function sleep(ms: number): Promise<void> {
