@@ -97,7 +97,7 @@ function isPrivateIPv4(addr: string): boolean {
   if (parts.length !== 4 || parts.some((n) => Number.isNaN(n) || n < 0 || n > 255)) {
     return true;
   }
-  const [a, b] = parts;
+  const [a, b] = parts as [number, number, number, number];
   // RFC1918, loopback, link-local, broadcast, multicast, reserved
   if (a === 10) return true;
   if (a === 127) return true;
@@ -120,6 +120,6 @@ function isPrivateIPv6(addr: string): boolean {
   if (lower.startsWith("ff")) return true; // multicast
   // IPv4-mapped: ::ffff:a.b.c.d — apply v4 rules to the embedded address.
   const mapped = lower.match(/^::ffff:([0-9.]+)$/);
-  if (mapped) return isPrivateIPv4(mapped[1]);
+  if (mapped) return isPrivateIPv4(mapped[1]!);
   return false;
 }

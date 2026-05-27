@@ -5,7 +5,7 @@ import logger from "@shared/utils/logger";
 
 @singleton()
 class RedisClient {
-  private client: Redis;
+  private client!: Redis;
 
   get() {
     this.client = this.client || this.createClient();
@@ -14,12 +14,12 @@ class RedisClient {
   }
 
   private createClient() {
-    const retryStrategy = (attempts) => {
+    const retryStrategy = (attempts: number) => {
       const delay = Math.min(attempts * 1000, 15000);
       return delay;
     };
 
-    const reconnectOnError = (err) => {
+    const reconnectOnError = (err: Error) => {
       const targetError = "READONLY";
       if (err.message.slice(0, targetError.length) === targetError) {
         // Only reconnect when the error starts with 'READONLY'

@@ -27,7 +27,8 @@ export const convertKeysToCamelCase = (obj: unknown): unknown => {
   const camelCasedObj: Record<string, unknown> = {};
   for (const key in obj) {
     if (Object.prototype.hasOwnProperty.call(obj, key)) {
-      const camelKey = key[0].toLowerCase() + key.slice(1);
+      if (key.length === 0) continue;
+      const camelKey = key[0]!.toLowerCase() + key.slice(1);
       camelCasedObj[camelKey] = convertKeysToCamelCase((obj as Record<string, unknown>)[key]);
     }
   }

@@ -7,18 +7,18 @@ export class Rule extends Model {
 
   static override jsonAttributes = ["expression"];
 
-  id: string;
-  name: string;
-  description: string | null;
-  stage: string;
-  priority: number;
-  action: string;
-  expression: RuleExpression;
-  isActive: boolean;
-  createdBy: string | null;
-  tenantId: string | null;
-  createdAt: Date;
-  updatedAt: Date;
+  id!: string;
+  name!: string;
+  description!: string | null;
+  stage!: string;
+  priority!: number;
+  action!: string;
+  expression!: RuleExpression;
+  isActive!: boolean;
+  createdBy!: string | null;
+  tenantId!: string | null;
+  createdAt!: Date;
+  updatedAt!: Date;
 }
 
 export type IRule = ModelObject<Rule>;
