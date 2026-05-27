@@ -54,7 +54,7 @@
     //                                    overrides a base needs an `override`
     //                                    keyword.
     "noImplicitAny": false,
-    "strictPropertyInitialization": false
+    "strictPropertyInitialization": true
   },
   "include": ["src/**/*.ts", "src/**/*.json"],
   "exclude": ["node_modules", "**/*.spec.ts", "**/*.test.ts"]

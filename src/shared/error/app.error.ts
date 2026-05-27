@@ -4,7 +4,7 @@ export default class AppError extends Error {
   public statusCode: number;
   public isOperational: boolean;
   public cause: Error | undefined;
-  public errorCode: ErrorCode;
+  public errorCode!: ErrorCode;
 
   constructor(statusCode: number, message, cause?: any, isOperational = true) {
     super(message);
