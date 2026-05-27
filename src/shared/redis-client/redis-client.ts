@@ -5,7 +5,7 @@ import logger from "@shared/utils/logger";
 
 @singleton()
 class RedisClient {
-  private client: Redis;
+  private client!: Redis;
 
   get() {
     this.client = this.client || this.createClient();

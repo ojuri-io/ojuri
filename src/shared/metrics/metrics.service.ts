@@ -11,42 +11,42 @@ class MetricsService {
   private registry: Registry;
 
   // Request metrics
-  private requestCounter: Counter<string>;
-  private requestLatencyHistogram: Histogram<string>;
-  private errorCounter: Counter<string>;
+  private requestCounter!: Counter<string>;
+  private requestLatencyHistogram!: Histogram<string>;
+  private errorCounter!: Counter<string>;
 
   // Decision metrics
-  private decisionCounter: Counter<string>;
+  private decisionCounter!: Counter<string>;
 
   // Cache metrics
-  private cacheHitCounter: Counter<string>;
-  private cacheMissCounter: Counter<string>;
+  private cacheHitCounter!: Counter<string>;
+  private cacheMissCounter!: Counter<string>;
 
   // Circuit breaker metrics
-  private circuitBreakerState: Gauge<string>;
-  private circuitBreakerEvents: Counter<string>;
+  private circuitBreakerState!: Gauge<string>;
+  private circuitBreakerEvents!: Counter<string>;
 
   // Model metrics
-  private modelInferenceLatency: Histogram<string>;
-  private modelLoadTime: Gauge<string>;
+  private modelInferenceLatency!: Histogram<string>;
+  private modelLoadTime!: Gauge<string>;
 
   // Kafka metrics
-  private kafkaPublishCounter: Counter<string>;
-  private kafkaPublishErrors: Counter<string>;
+  private kafkaPublishCounter!: Counter<string>;
+  private kafkaPublishErrors!: Counter<string>;
 
   // PAA specific metrics
-  private messagesProcessed: Counter<string>;
-  private graphSize: Gauge<string>;
-  private pagerankComputeTime: Histogram<string>;
-  private consumerLag: Gauge<string>;
+  private messagesProcessed!: Counter<string>;
+  private graphSize!: Gauge<string>;
+  private pagerankComputeTime!: Histogram<string>;
+  private consumerLag!: Gauge<string>;
 
   // Audit log
-  private auditWriteFailures: Counter<string>;
+  private auditWriteFailures!: Counter<string>;
 
   // Idempotency cache
-  private idempotencyLookups: Counter<string>;
-  private idempotencyStores: Counter<string>;
-  private idempotencyEvictions: Counter<string>;
+  private idempotencyLookups!: Counter<string>;
+  private idempotencyStores!: Counter<string>;
+  private idempotencyEvictions!: Counter<string>;
 
   constructor() {
     this.registry = new Registry();
