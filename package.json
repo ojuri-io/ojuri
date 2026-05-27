@@ -26,6 +26,7 @@
   "scripts": {
     "start:dev": "nodemon",
     "start": "node dist/server.js",
+    "prebuild": "rm -rf dist",
     "build": "tsc",
     "postbuild": "copyfiles -u 1 \"src/**/*.yaml\" dist",
     "prepare": "husky install",
