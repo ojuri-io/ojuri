@@ -7,6 +7,7 @@ to wire one capability up. For architecture-level notes, see
 
 | Document                                  | Covers                                                                 |
 |-------------------------------------------|------------------------------------------------------------------------|
+| [`PREDICT-API.md`](PREDICT-API.md)        | `POST /v1/predict` — full request shape, headers, response, all errors. |
 | [`AUTH.md`](AUTH.md)                      | API-key issuance, verification, rate limit, rotation.                 |
 | [`AUTHZ.md`](AUTHZ.md)                    | User login, JWT sessions, roles, permission catalogue, admin guards.   |
 | [`AUDIT.md`](AUDIT.md)                    | `decisionAuditLog` schema, SQL recipes, reviewer overrides, retention. |

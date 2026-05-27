@@ -129,8 +129,12 @@ For host-side dev (`npm run start:dev` from the repo root for RDA), the
 default targets in `.env.example` already point at `127.0.0.1:3000` —
 `cp .env.example .env` is optional.
 
-Send a test prediction (request fields are snake_case, see
-`src/v1/modules/rda/dtos/predict-request.dto.ts`):
+Send a test prediction. The example below uses only the six
+required fields; the API also accepts ~40 optional context fields
+(device, geography, identity, agent, recipient, …) that improve
+prediction quality when supplied — see
+[`docs/PREDICT-API.md`](docs/PREDICT-API.md) for the full field
+reference.
 
 ````bash
 curl -X POST http://localhost:3000/v1/predict \
