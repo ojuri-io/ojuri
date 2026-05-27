@@ -47,6 +47,11 @@ class RulesService {
     log.debug("reload", "Rules reloaded", { pre: pre.length, post: post.length });
   }
 
+  /** Snapshot of the in-memory cache. Used by the admin reload endpoint. */
+  counts(): { pre: number; post: number } {
+    return { pre: this.preRules.length, post: this.postRules.length };
+  }
+
   evaluate(stage: RuleStage, ctx: RuleContext): RuleHit | null {
     const rules = stage === "PRE" ? this.preRules : this.postRules;
     for (const rule of rules) {

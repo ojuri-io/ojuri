@@ -63,6 +63,26 @@ class RulesController {
     if (!ok) return res.code(httpStatus.NOT_FOUND).send(ErrorResponse("Rule not found"));
     return res.send(SuccessResponse("Rule deleted"));
   };
+
+  // Force-reload the in-memory rules cache. The background reloader
+  // runs every RULES_RELOAD_INTERVAL_MS (default 30 s); this endpoint
+  // exists for the cases where waiting for the tick isn't acceptable —
+  // CI smoke that just ran `db:seed`, operators applying an emergency
+  // killswitch, or post-incident verification that a disable took
+  // effect immediately.
+  reload = async (_req: FastifyRequest, res: FastifyReply) => {
+    try {
+      await this.rulesService.reload();
+      const counts = this.rulesService.counts();
+      return res.send(SuccessResponse("Rules cache reloaded", counts));
+    } catch (err) {
+      const e = err as Error & { code?: string };
+      log.error("reload", "Failed to reload rules cache", { message: e?.message, code: e?.code });
+      return res
+        .code(httpStatus.INTERNAL_SERVER_ERROR)
+        .send(ErrorResponse(`Failed to reload rules: ${(e?.message || "unknown").slice(0, 300)}`));
+    }
+  };
 }
 
 export default RulesController;
