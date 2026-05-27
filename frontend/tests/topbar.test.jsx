@@ -1,6 +1,6 @@
 import { describe, it, expect, vi } from 'vitest';
 import { render, screen, fireEvent } from '@testing-library/react';
-import { Topbar, computeNotifications } from '../src/components/shell.jsx';
+import { Topbar, computeNotifications, unreadCount } from '../src/components/shell.jsx';
 
 const user = {
   username: 'admin',
@@ -124,5 +124,58 @@ describe('computeNotifications', () => {
     });
     items[0].onClick();
     expect(nav).toHaveBeenCalledWith('queue');
+  });
+
+  it('attaches an anchor timestamp derived from the freshest source row', () => {
+    const t1 = '2026-05-20T09:00:00Z';
+    const t2 = '2026-05-21T11:30:00Z';
+    const items = computeNotifications({
+      queueCount: 2,
+      queue: [{ createdAt: t1 }, { createdAt: t2 }],
+      reports: [{ createdAt: t1, verdict: 'FRAUD_CONFIRMED' }],
+      models: [{ version: 'v3', status: 'SHADOW', createdAt: t2 }],
+      webhooks: [],
+      nav: () => {},
+    });
+    const queueItem = items.find((i) => i.icon === 'flag');
+    const shadowItem = items.find((i) => i.icon === 'cpu');
+    expect(queueItem.anchor).toBe(new Date(t2).toISOString()); // picks the max
+    expect(shadowItem.anchor).toBe(new Date(t2).toISOString());
+  });
+});
+
+describe('unreadCount', () => {
+  it('returns 0 for an empty list regardless of lastSeenAt', () => {
+    expect(unreadCount([], null)).toBe(0);
+    expect(unreadCount([], '2026-05-20T00:00:00Z')).toBe(0);
+  });
+
+  it('treats null lastSeenAt as "everything unread"', () => {
+    const items = [{ anchor: '2026-05-01T00:00:00Z' }, { anchor: '2026-05-02T00:00:00Z' }];
+    expect(unreadCount(items, null)).toBe(2);
+  });
+
+  it('counts items whose anchor is strictly newer than lastSeenAt', () => {
+    const seen = '2026-05-15T00:00:00Z';
+    const items = [
+      { anchor: '2026-05-14T00:00:00Z' }, // older — read
+      { anchor: '2026-05-15T00:00:00Z' }, // same — read
+      { anchor: '2026-05-16T00:00:00Z' }, // newer — unread
+    ];
+    expect(unreadCount(items, seen)).toBe(1);
+  });
+
+  it('treats items with a missing anchor as unread (defensive)', () => {
+    const items = [
+      { anchor: null },
+      { anchor: undefined },
+      { /* no anchor key */ },
+    ];
+    expect(unreadCount(items, '2026-05-15T00:00:00Z')).toBe(3);
+  });
+
+  it('treats malformed lastSeenAt as "everything unread"', () => {
+    const items = [{ anchor: '2026-05-15T00:00:00Z' }];
+    expect(unreadCount(items, 'not-a-date')).toBe(1);
   });
 });

@@ -97,6 +97,17 @@ export const changePassword = ({ currentPassword, newPassword }) =>
     body: JSON.stringify({ currentPassword, newPassword }),
   }).then(unwrap);
 
+// Stamp the authenticated user's `lastNotificationSeenAt` to now.
+// Called when the bell popover opens. Server returns the new ISO
+// timestamp; the caller swaps it into local state so the badge count
+// recomputes on the next render. Failures are non-fatal — the badge
+// will just stay set until the next successful open.
+export const markNotificationsSeen = () =>
+  fetch('/v1/notifications/seen', {
+    method: 'POST',
+    headers: adminHeaders({ body: false }),
+  }).then(unwrap);
+
 // ──────── Users (admin) ────────
 // Always paginated: returns `{ rows, total }`. Server-side search
 // across username / fullName / email. The backing table can grow, so

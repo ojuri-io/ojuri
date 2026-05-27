@@ -14,6 +14,7 @@ import {
   me as apiMe,
   logout as apiLogout,
   getReviewQueueCount,
+  markNotificationsSeen,
 } from './api/client.js';
 
 import Login from './pages/login.jsx';
@@ -184,6 +185,29 @@ function AuthenticatedApp({ user, onLogout }) {
     };
     mq.addEventListener?.('change', onChange);
     return () => mq.removeEventListener?.('change', onChange);
+  }, []);
+
+  // Per-user notification-seen timestamp. Initialised from /auth/me's
+  // `lastNotificationSeenAt`; bumped to the server's authoritative now()
+  // on every bell open. The Topbar derives the unread-badge count by
+  // filtering items whose `anchor` is newer than this. Server failures
+  // are non-fatal — the badge will stay set until the next successful
+  // open. A pending in-flight mark is debounced so a fast triple-click
+  // on the bell only fires one POST.
+  const [lastSeenAt, setLastSeenAt] = useState(user.lastNotificationSeenAt || null);
+  const markingSeenRef = React.useRef(false);
+  const handleMarkSeen = React.useCallback(async () => {
+    if (markingSeenRef.current) return;
+    markingSeenRef.current = true;
+    try {
+      const res = await markNotificationsSeen();
+      const ts = res?.lastNotificationSeenAt;
+      if (ts) setLastSeenAt(ts);
+    } catch {
+      /* keep prior lastSeenAt; the badge re-fires next open */
+    } finally {
+      markingSeenRef.current = false;
+    }
   }, []);
 
   // Shared state — all start empty and are hydrated from the API. No
@@ -371,6 +395,8 @@ function AuthenticatedApp({ user, onLogout }) {
           user={user}
           onLogout={onLogout}
           onMenuClick={() => setDrawerOpen((o) => !o)}
+          lastSeenAt={lastSeenAt}
+          onMarkSeen={handleMarkSeen}
         />
         <div className="main-scroll">
           <div className="page-shell" data-screen-label={screenLabel}>
