@@ -1,5 +1,8 @@
 import "reflect-metadata";
-import IdempotencyService from "../../src/shared/idempotency/idempotency.service";
+import IdempotencyService, {
+  encodeEntry,
+  decodeEntry,
+} from "../../src/shared/idempotency/idempotency.service";
 
 describe("IdempotencyService.hashRequest", () => {
   it("is deterministic for the same body", () => {
@@ -22,19 +25,51 @@ describe("IdempotencyService.hashRequest", () => {
 });
 
 describe("idempotency composite key (regression)", () => {
-  // Direct test of the internal composition rule documented in the
-  // service header: storage keys are `${apiKeyId|"anon"}|${rawKey}`.
-  // The previous implementation used the raw key only, so two clients
-  // of the same tenant who happened to share an Idempotency-Key value
-  // got each other's responses on replay.
   it("anonymous and authenticated callers compose to distinct storage keys", () => {
-    // Implementation is internal — instead of poking at the private
-    // composeKey, we assert via the public hash semantic: the key
-    // namespace separator '|' is reserved and would change the
-    // outcome if absent. This is a smoke check that future refactors
-    // of composeKey keep that invariant.
     const sentinel = "test-key";
     expect(sentinel.includes("|")).toBe(false);
     expect(`anon|${sentinel}`).not.toEqual(`api-key-id|${sentinel}`);
+  });
+});
+
+describe("idempotency encodeEntry / decodeEntry", () => {
+  const entry = {
+    requestHash: "a".repeat(64),
+    response: {
+      transaction_id: "550e8400-e29b-41d4-a716-446655440000",
+      fraud: false,
+      fraud_probability: 0.1842,
+      decision: "ACCEPT",
+      reason_codes: [
+        { code: "AMOUNT_HIGH", description: "Long description with padding", contribution: 0.27, value: 1500 },
+        { code: "VELOCITY_24H", description: "Long description with padding", contribution: -0.05, value: 4 },
+      ],
+    },
+  };
+
+  it("plaintext round-trips", () => {
+    const encoded = encodeEntry(entry, false);
+    expect(encoded.startsWith("gz:")).toBe(false);
+    expect(decodeEntry(encoded)).toEqual(entry);
+  });
+
+  it("gzipped round-trips", () => {
+    const encoded = encodeEntry(entry, true);
+    expect(encoded.startsWith("gz:")).toBe(true);
+    expect(decodeEntry(encoded)).toEqual(entry);
+  });
+
+  it("gzipped payload is materially smaller than plaintext for typical responses", () => {
+    const plain = encodeEntry(entry, false);
+    const gz = encodeEntry(entry, true);
+    // For typical reason-code-heavy payloads gzip cuts ~40 %+ even
+    // after base64 inflation. Use a conservative threshold (>10 %)
+    // so this test doesn't flap on small payload-shape changes.
+    expect(gz.length).toBeLessThan(plain.length * 0.9);
+  });
+
+  it("decoder returns null on garbled input", () => {
+    expect(decodeEntry("not json")).toBeNull();
+    expect(decodeEntry("gz:not-base64!!!")).toBeNull();
   });
 });

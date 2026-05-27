@@ -15,7 +15,6 @@ export enum DB_TABLES {
   MODEL_VERSIONS = "modelVersions",
   SEGMENT_THRESHOLDS = "segmentThresholds",
   RULES = "rules",
-  IDEMPOTENCY_KEYS = "idempotencyKeys",
   INVESTIGATION_CONVERSATIONS = "investigationConversations",
   USERS = "users",
   ROLES = "roles",
