@@ -943,11 +943,25 @@ kbd {
 }
 .row-grid.hoverable {
   cursor: pointer;
-  transition: background 0.06s;
+  transition: background 0.12s, box-shadow 0.12s;
   padding: var(--row-pad-y, 9px) 6px;
   border-radius: var(--radius-sm);
+  /* Reserve space for the hover accent stripe so the row doesn't
+     shift left on hover. The transparent border is 2px on both
+     sides; hover swaps the left one to an info-toned colour. */
+  border-left: 2px solid transparent;
+  padding-left: 4px;
 }
-.row-grid.hoverable:hover { background: var(--surface-alt); }
+/* Hover background uses a tinted overlay rather than `--surface-alt`
+   because the Similar cases container (the most common host of
+   `.row-grid.hoverable`) is already `--surface-alt`, so the old rule
+   produced no visible change. The info tint pops against both the
+   secondary background and the primary one, and the left accent
+   stripe gives a clear "click here" cue. */
+.row-grid.hoverable:hover {
+  background: color-mix(in srgb, var(--color-background-info) 55%, transparent);
+  border-left-color: var(--color-text-info);
+}
 
 .label-up {
   font-size: 10px;
