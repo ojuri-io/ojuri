@@ -39,17 +39,19 @@ export function PasswordInput({
   return (
     <span
       style={{
-        // Wrapper height tracks the input exactly. We use `display:
-        // block` (not inline-block) to avoid baseline-descender space
-        // below the input; and the toggle inside uses top:0/bottom:0
-        // to stretch to the full input height, which centers the
-        // icon deterministically via flex regardless of input padding
-        // or computed line-height. The older top:50% + translateY
-        // approach drifted on subpixel-rounded heights — particularly
-        // visible at the login screen's 13px font + 6px vertical
-        // padding (input height ends at an odd pixel count).
+        // `display: flex` is critical. With `display: block` the
+        // wrapper hosts an inline line-box around the input, which
+        // adds line-height leading above and below the input's
+        // actual border-box. The absolutely-positioned button then
+        // stretches to that taller line-box, and flex-centering puts
+        // the icon at the input's visual bottom-right instead of the
+        // middle. Flex containers don't apply line-height to their
+        // children, so the wrapper's height equals the input's
+        // border-box exactly and top:0/bottom:0 resolves to the
+        // intended rectangle.
         position: 'relative',
-        display: 'block',
+        display: 'flex',
+        alignItems: 'stretch',
         width: '100%',
       }}
     >
@@ -66,7 +68,11 @@ export function PasswordInput({
         className={className}
         style={{
           ...style,
-          width: '100%',
+          // Flex item — fills the wrapper width. We don't set
+          // `width: 100%` because the wrapper is `display: flex` now
+          // and `flex: 1` is the equivalent for flex children.
+          flex: 1,
+          minWidth: 0,
           // Reserve space for the toggle so the password text doesn't
           // run under the eye icon. 36px = 28 (button) + 8 (right
           // inset of the button from the input border).
