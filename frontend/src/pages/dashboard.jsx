@@ -293,7 +293,14 @@ function Dashboard({ toast: _toast, user: _user, queue, models, reports, webhook
           grid template so values stay column-aligned. */}
       <section className="panel">
         <div className="panel-head">
-          <h2>Recent declines</h2>
+          <div style={{display:'flex', alignItems:'baseline', gap:10, minWidth:0}}>
+            <h2 style={{margin:0}}>Recent declines</h2>
+            {queueTotal > 0 && (
+              <span style={{fontSize:11, color:'var(--color-text-tertiary)', fontVariantNumeric:'tabular-nums'}}>
+                showing {recent.length} of {queueTotal.toLocaleString()}
+              </span>
+            )}
+          </div>
           <a href="#" onClick={e=>{e.preventDefault(); nav('queue');}}>Open review queue<Ti name="chevron-right" size={11} style={{marginLeft:2, verticalAlign:-1}}/></a>
         </div>
         {recent.length === 0 ? (
