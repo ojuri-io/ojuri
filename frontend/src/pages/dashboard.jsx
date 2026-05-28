@@ -43,7 +43,7 @@ function Dashboard({ toast: _toast, user: _user, queue, models, reports, webhook
     // silently failed the Array.isArray guard, leaving Recent declines empty
     // until the Review Queue page was visited and populated the shared
     // `queue` state.
-    listReviewQueue({ limit: 4 })
+    listReviewQueue({ limit: 8 })
       .then((res) => {
         if (cancelled) return;
         const rows = Array.isArray(res?.rows) ? res.rows : [];
@@ -84,7 +84,7 @@ function Dashboard({ toast: _toast, user: _user, queue, models, reports, webhook
   // FRAUD_TEST_SENDER). `ruleDescr` is the long human-readable name —
   // surfaced on hover via the chip's `title` attribute so the row's chip
   // text doesn't dominate the line.
-  const recent = sourceQueue.slice(0, 4).map((q) => {
+  const recent = sourceQueue.slice(0, 8).map((q) => {
     const reasonCodes = (q.reasonCodes || []).map((c) =>
       typeof c === 'string' ? c : c?.code || '',
     ).filter(Boolean);
