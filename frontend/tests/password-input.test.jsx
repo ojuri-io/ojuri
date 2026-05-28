@@ -84,7 +84,7 @@ describe('PasswordInput', () => {
     // centers the glyph. No translateY trickery.
     expect(btn.style.position).toBe('absolute');
     expect(btn.style.top).toBe('0px');
-    expect(btn.style.bottom).toBe('0px');
+    expect(btn.style.bottom).toBe('10px');
     expect(btn.style.right).toBe('6px');
     expect(btn.style.alignItems).toBe('center');
     expect(btn.style.justifyContent).toBe('center');
