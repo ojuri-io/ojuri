@@ -101,7 +101,7 @@ function Dashboard({ toast: _toast, user: _user, queue, models, reports, webhook
         : null;
     const senderRaw = q.senderId || q.sender || '';
     return {
-      id: (q.transactionId || '').slice(0, 8) + '…',
+      id: q.transactionId || '',
       sender: senderRaw ? (senderRaw.length > 14 ? senderRaw.slice(0, 14) + '…' : senderRaw) : '—',
       senderFull: senderRaw,
       amount: Number(q.amount ?? 0),
@@ -263,7 +263,7 @@ function Dashboard({ toast: _toast, user: _user, queue, models, reports, webhook
               style={{
                 display: 'grid',
                 gridTemplateColumns:
-                  'minmax(90px, 0.9fr) minmax(120px, 1.3fr) minmax(90px, 1fr) auto minmax(110px, 1.4fr) minmax(70px, 0.7fr)',
+                  'minmax(260px, 1.6fr) minmax(110px, 1fr) minmax(90px, 0.9fr) auto minmax(100px, 1fr) minmax(64px, 0.55fr)',
                 gap: 12,
                 alignItems: 'center',
                 padding: '4px 0 8px',
@@ -297,7 +297,7 @@ function Dashboard({ toast: _toast, user: _user, queue, models, reports, webhook
                   borderTop: i === 0 ? 'none' : '0.5px solid var(--color-border-tertiary)',
                 }}
               >
-                <code className="mono truncate" style={{fontSize:11, color:'var(--color-text-secondary)'}}>{r.id}</code>
+                <code className="mono" style={{fontSize:10, color:'var(--color-text-secondary)', overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap'}}>{r.id}</code>
                 <code className="mono truncate" style={{fontSize:11, color:'var(--color-text-secondary)'}} title={r.senderFull || undefined}>{r.sender}</code>
                 <span style={{fontSize:12, fontWeight:500, fontVariantNumeric:'tabular-nums', textAlign:'right'}}>{fmtNaira(r.amount)}</span>
                 {/* Chip = short rule code in mono (e.g. AMOUNT_HIGH).
