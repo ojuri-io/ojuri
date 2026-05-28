@@ -640,26 +640,87 @@ function MenuItem({ icon, children, onClick, disabled }) {
 }
 
 function RegisterModelModal({ onClose, onSave }) {
-  const [v, setV] = useState({ version:'v1.4.0-rc1', sourceUri:'s3://fraud-models/v1.4.0-rc1.onnx', sha256:'', threshold:0.65 });
+  // Defaults match the filesystem-only registry contract: versions
+  // live at `models/versions/<version>/model.onnx` and `<version>` is
+  // a sortable semver-ish label. The sourceUri auto-updates as the
+  // operator types the version so the two stay in sync without manual
+  // editing — they can still override it for an externally-staged file.
+  const [v, setV] = useState({
+    version: '',
+    sourceUri: '',
+    sha256: '',
+    threshold: 0.65,
+    sourceUriEdited: false,
+  });
+  const setVersion = (next) =>
+    setV((s) => ({
+      ...s,
+      version: next,
+      // Keep sourceUri in lockstep with version unless the operator
+      // has touched the field directly.
+      sourceUri: s.sourceUriEdited ? s.sourceUri : next ? `models/versions/${next}/model.onnx` : '',
+    }));
   return (
     <Modal
       title="Register model version"
-      sub="Registration is metadata-only. Self-host deploys are still cp models/<file>.onnx ../models/fraud_model.onnx."
+      sub={
+        <>
+          For manual imports only — MLA auto-registers its own retrains via the RDA bridge.
+          Use this when bringing in an externally-trained model or re-registering a
+          previously-deleted version. The artefact must already exist at the
+          <code className="mono"> sourceUri</code> path before activation; the registry
+          tracks metadata + drives <code className="mono">OnnxService</code> hot-reload.
+        </>
+      }
       onClose={onClose}
       width={520}
-      footer={<><button onClick={onClose}>Cancel</button><button className="primary" onClick={()=>onSave(v)}>Register as CANDIDATE</button></>}
+      footer={
+        <>
+          <button onClick={onClose}>Cancel</button>
+          <button
+            className="primary"
+            disabled={!v.version.trim() || !v.sourceUri.trim()}
+            onClick={() => onSave({ version: v.version.trim(), sourceUri: v.sourceUri.trim(), sha256: v.sha256.trim(), threshold: v.threshold })}
+          >
+            Register as CANDIDATE
+          </button>
+        </>
+      }
     >
-      <Field label="Version (semver)">
-        <input className="mono" value={v.version} onChange={e=>setV({...v, version:e.target.value})}/>
+      <Field label="Version">
+        <input
+          className="mono"
+          value={v.version}
+          onChange={(e) => setVersion(e.target.value)}
+          placeholder="v1.2.0"
+          autoFocus
+        />
       </Field>
       <Field label="Source URI">
-        <input className="mono" value={v.sourceUri} onChange={e=>setV({...v, sourceUri:e.target.value})}/>
+        <input
+          className="mono"
+          value={v.sourceUri}
+          onChange={(e) => setV({ ...v, sourceUri: e.target.value, sourceUriEdited: true })}
+          placeholder="models/versions/<version>/model.onnx"
+        />
       </Field>
       <Field label="SHA-256 (optional)">
-        <input className="mono" value={v.sha256} onChange={e=>setV({...v, sha256:e.target.value})} placeholder="recommended"/>
+        <input
+          className="mono"
+          value={v.sha256}
+          onChange={(e) => setV({ ...v, sha256: e.target.value })}
+          placeholder="recommended — shasum -a 256 models/versions/<version>/model.onnx"
+        />
       </Field>
       <Field label="Default threshold">
-        <input type="number" step="0.01" min="0" max="1" value={v.threshold} onChange={e=>setV({...v, threshold:e.target.value})}/>
+        <input
+          type="number"
+          step="0.01"
+          min="0"
+          max="1"
+          value={v.threshold}
+          onChange={(e) => setV({ ...v, threshold: e.target.value })}
+        />
       </Field>
     </Modal>
   );
