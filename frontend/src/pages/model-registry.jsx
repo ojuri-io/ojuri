@@ -2,7 +2,14 @@
 
 import React, { useState, useEffect, useMemo } from 'react';
 import { Ti, PageHead, Modal, statusPill, permLock } from '../components/shell.jsx';
-import { listSegmentThresholds, getModelComparison, deleteModel } from '../api/client.js';
+import {
+  listSegmentThresholds,
+  getModelComparison,
+  deleteModel,
+  setModelStatus,
+  registerModel,
+  setSegmentThreshold,
+} from '../api/client.js';
 
 function ModelRegistry({ toast, models, setModels, segmentThresholds, setSegmentThresholds, user }) {
   // Hydrate the per-segment thresholds table from /v1/admin/segment-thresholds
@@ -34,7 +41,7 @@ function ModelRegistry({ toast, models, setModels, segmentThresholds, setSegment
   const [registerOpen, setRegisterOpen] = useState(false);
   const [metaModel, setMetaModel] = useState(null); // version-string or null
   const [thresholdEditor, setThresholdEditor] = useState(null);
-  const [shadowMissing, setShadowMissing] = useState(false); // banner toggle for the OnnxService caveat
+  const [thresholdAddOpen, setThresholdAddOpen] = useState(false);
   const [openMenu, setOpenMenu] = useState(null);
   // `pendingDelete` holds the model row awaiting confirmation in the delete
   // modal; `deleting` tracks the in-flight API call so the confirm button
@@ -105,20 +112,63 @@ function ModelRegistry({ toast, models, setModels, segmentThresholds, setSegment
     ? 'F1Δ < 0.01'
     : null;
 
-  const doPromote = () => {
-    if (!promoteAllowed) return;
-    setModels(ms => ms.map(m => {
-      if (m.version === shadow.version) return { ...m, status: 'ACTIVE', traffic:'100%' };
-      if (m.version === champion.version) return { ...m, status: 'RETIRED', traffic:'—' };
-      return m;
-    }));
-    toast(`Promoted ${shadow.version} · ${champion.version} retired in same transaction`, 'success');
+  // Local mutator used by both single-row status changes and the
+  // promote flow — keeps the optimistic-update logic in one place.
+  const applyStatusLocally = (version, status) =>
+    setModels((ms) =>
+      ms.map((m) =>
+        m.version === version
+          ? { ...m, status, traffic: status === 'ACTIVE' ? '100%' : status === 'SHADOW' ? 'shadow' : '—' }
+          : m,
+      ),
+    );
+
+  // Two-step promotion: activate the shadow, then retire the previous
+  // champion. We sequence rather than fire-and-forget so a failure on
+  // step 1 doesn't leave the registry without an ACTIVE row. If step 2
+  // fails we surface the failure but leave the new ACTIVE in place —
+  // the operator can manually retire the old champion via its row menu.
+  const [promoting, setPromoting] = useState(false);
+  const doPromote = async () => {
+    if (!promoteAllowed || promoting) return;
+    setPromoting(true);
+    const shadowVersion = shadow.version;
+    const championVersion = champion.version;
+    try {
+      await setModelStatus(shadowVersion, 'ACTIVE');
+      applyStatusLocally(shadowVersion, 'ACTIVE');
+      try {
+        await setModelStatus(championVersion, 'RETIRED');
+        applyStatusLocally(championVersion, 'RETIRED');
+        toast(
+          `Promoted ${shadowVersion} · ${championVersion} retired in same transaction`,
+          'success',
+        );
+      } catch (err) {
+        const msg = err && err.message ? err.message : String(err);
+        toast(
+          `${shadowVersion} is now ACTIVE but retiring ${championVersion} failed · ${msg}`,
+          'warn',
+        );
+      }
+    } catch (err) {
+      const msg = err && err.message ? err.message : String(err);
+      toast(`Promote failed · ${msg}`, 'danger');
+    } finally {
+      setPromoting(false);
+    }
   };
 
-  const setStatus = (version, status) => {
-    setModels(ms => ms.map(m => m.version === version ? {...m, status, traffic: status === 'ACTIVE' ? '100%' : (status === 'SHADOW' ? 'shadow' : '—')} : m));
+  const setStatus = async (version, status) => {
     setOpenMenu(null);
-    toast(`${version} → ${status}`);
+    try {
+      await setModelStatus(version, status);
+      applyStatusLocally(version, status);
+      toast(`${version} → ${status}`, 'success');
+    } catch (err) {
+      const msg = err && err.message ? err.message : String(err);
+      toast(`Status change failed · ${msg}`, 'danger');
+    }
   };
 
   // Hard-delete a RETIRED model version. RDA's DELETE returns 409 if the
@@ -147,8 +197,6 @@ function ModelRegistry({ toast, models, setModels, segmentThresholds, setSegment
   return (
     <>
       <PageHead crumbs={['Dashboard','Insights']} title="Models" sub={<>Registry refreshes every 30s · last sync <span className="mono">{60 - bgRefresh}s ago</span></>}>
-        <button onClick={()=>setShadowMissing(s => !s)} title="Toggle shadow-missing banner"><Ti name="alert-triangle" size={14}/></button>
-        <button><Ti name="player-play" size={14}/>Backtest</button>
         <button className="info-bg" onClick={()=>setRegisterOpen(true)} {...permLock(user, 'models:register')}><Ti name="plus" size={14}/>Register version</button>
       </PageHead>
 
@@ -160,20 +208,6 @@ function ModelRegistry({ toast, models, setModels, segmentThresholds, setSegment
         <LifecycleTile label="RETIRED" count={counts.RETIRED} tone="tertiary" sub="last 90d"/>
       </div>
 
-      {/* Shadow-missing caveat banner */}
-      {shadowMissing && (
-        <div className="banner warn" style={{marginBottom:12}}>
-          <Ti name="alert-triangle" size={14} className="b-icon"/>
-          <div>
-            <b>Shadow registered but not scoring.</b> No shadowScore values written in the last hour. OnnxService loads one session at a time — extend it to load a second session, or run offline replay only.
-            <div style={{marginTop:6, display:'flex', gap:6}}>
-              <button style={{padding:'3px 8px', fontSize:11}}>View deploy doc</button>
-              <button style={{padding:'3px 8px', fontSize:11}}>Replay offline</button>
-            </div>
-          </div>
-        </div>
-      )}
-
       {/* Champion vs Shadow */}
       <section className="panel" style={{marginBottom:12}}>
         <div style={{display:'flex', alignItems:'center', justifyContent:'space-between', gap:12, marginBottom:14, flexWrap:'wrap'}}>
@@ -184,8 +218,15 @@ function ModelRegistry({ toast, models, setModels, segmentThresholds, setSegment
             </span>
           </div>
           <div style={{display:'flex', alignItems:'center', gap:6}}>
-            <button title={promoteAllowed ? '' : (promoteBlocker || '')} className={promoteAllowed ? 'success-bg' : ''} disabled={!promoteAllowed} onClick={doPromote} style={{padding:'6px 12px'}}>
-              <Ti name="arrow-up" size={14}/>Promote shadow
+            <button
+              title={promoteAllowed ? '' : (promoteBlocker || '')}
+              className={promoteAllowed ? 'success-bg' : ''}
+              disabled={!promoteAllowed || promoting}
+              onClick={doPromote}
+              style={{padding:'6px 12px'}}
+            >
+              <Ti name={promoting ? 'loader-2' : 'arrow-up'} size={14}/>
+              {promoting ? 'Promoting…' : 'Promote shadow'}
             </button>
           </div>
         </div>
@@ -240,7 +281,15 @@ function ModelRegistry({ toast, models, setModels, segmentThresholds, setSegment
             <h2>Per-segment thresholds</h2>
             <p style={{margin:'2px 0 0', fontSize:11, color:'var(--color-text-secondary)'}}>Resolution: segment override → model default → <code className="mono">FRAUD_THRESHOLD</code> env</p>
           </div>
-          <button style={{fontSize:11, padding:'4px 9px'}}><Ti name="plus" size={12}/>Add</button>
+          <button
+            style={{fontSize:11, padding:'4px 9px'}}
+            onClick={() => setThresholdAddOpen(true)}
+            disabled={!champion}
+            title={champion ? '' : 'Register and activate a model first'}
+            {...permLock(user, 'models:set_threshold')}
+          >
+            <Ti name="plus" size={12}/>Add
+          </button>
         </div>
 
         <div className="row-grid header" style={{gridTemplateColumns:'1.4fr 1fr 90px 90px 24px'}}>
@@ -316,9 +365,88 @@ function ModelRegistry({ toast, models, setModels, segmentThresholds, setSegment
         ))}
       </section>
 
-      {registerOpen && <RegisterModelModal onClose={()=>setRegisterOpen(false)} onSave={(v) => { setModels(ms => [{version:v.version, status:'CANDIDATE', sha256:v.sha256||'—', sourceUri:v.sourceUri, defaultThreshold:+v.threshold, F1:null, AUC:null, precision:null, recall:null, deployedAt:'2026-05-13', traffic:'—'}, ...ms]); setRegisterOpen(false); toast(`Registered ${v.version} as CANDIDATE`, 'success'); }}/>}
+      {registerOpen && (
+        <RegisterModelModal
+          onClose={() => setRegisterOpen(false)}
+          onSave={async (v) => {
+            try {
+              const row = await registerModel({
+                version: v.version,
+                sourceUri: v.sourceUri,
+                sha256: v.sha256 || undefined,
+                defaultThreshold: +v.threshold,
+              });
+              const today = new Date().toISOString().slice(0, 10);
+              setModels((ms) => [
+                {
+                  version: row?.version || v.version,
+                  status: row?.status || 'CANDIDATE',
+                  sha256: row?.sha256 || v.sha256 || '—',
+                  sourceUri: row?.sourceUri || v.sourceUri,
+                  defaultThreshold: row?.defaultThreshold ?? +v.threshold,
+                  F1: null, AUC: null, precision: null, recall: null,
+                  deployedAt: today, traffic: '—',
+                },
+                ...ms,
+              ]);
+              setRegisterOpen(false);
+              toast(`Registered ${v.version} as CANDIDATE`, 'success');
+            } catch (err) {
+              const msg = err && err.message ? err.message : String(err);
+              toast(`Register failed · ${msg}`, 'danger');
+            }
+          }}
+        />
+      )}
       {metaModel && <ModelMetaDrawer model={models.find(m => m.version === metaModel)} onClose={()=>setMetaModel(null)}/>}
-      {thresholdEditor && <ThresholdEditorModal seg={thresholdEditor} onClose={()=>setThresholdEditor(null)} onSave={(t) => { setSegmentThresholds(arr => arr.map(s => s.segment === thresholdEditor.segment ? {...s, threshold:t, source:'override'} : s)); setThresholdEditor(null); toast(`Threshold updated for ${thresholdEditor.segment}`); }}/>}
+      {thresholdAddOpen && (
+        <AddThresholdModal
+          models={models}
+          defaultModel={champion?.version || ''}
+          onClose={() => setThresholdAddOpen(false)}
+          onSave={async ({ segment, modelVersion, threshold }) => {
+            try {
+              await setSegmentThreshold({ segment, modelVersion, threshold });
+              setSegmentThresholds((arr) => {
+                const i = arr.findIndex((s) => s.segment === segment);
+                const row = { segment, model: modelVersion, threshold, source: 'override' };
+                return i === -1 ? [...arr, row] : arr.map((s, j) => (j === i ? row : s));
+              });
+              setThresholdAddOpen(false);
+              toast(`Threshold added for ${segment}`, 'success');
+            } catch (err) {
+              const msg = err && err.message ? err.message : String(err);
+              toast(`Threshold save failed · ${msg}`, 'danger');
+            }
+          }}
+        />
+      )}
+      {thresholdEditor && (
+        <ThresholdEditorModal
+          seg={thresholdEditor}
+          onClose={() => setThresholdEditor(null)}
+          onSave={async (t) => {
+            const target = thresholdEditor;
+            try {
+              await setSegmentThreshold({
+                segment: target.segment,
+                modelVersion: target.model,
+                threshold: t,
+              });
+              setSegmentThresholds((arr) =>
+                arr.map((s) =>
+                  s.segment === target.segment ? { ...s, threshold: t, source: 'override' } : s,
+                ),
+              );
+              setThresholdEditor(null);
+              toast(`Threshold updated for ${target.segment}`, 'success');
+            } catch (err) {
+              const msg = err && err.message ? err.message : String(err);
+              toast(`Threshold save failed · ${msg}`, 'danger');
+            }
+          }}
+        />
+      )}
       {pendingDelete && (
         <Modal
           title={`Delete model ${pendingDelete.version}?`}
@@ -559,6 +687,74 @@ function ThresholdEditorModal({ seg, onClose, onSave }) {
         <input type="number" step="0.01" min="0" max="1" value={t} onChange={e=>setT(e.target.value)}/>
       </Field>
       <p style={{margin:0, fontSize:11, color:'var(--color-text-secondary)'}}>Resolution: segment-specific → model default → <code className="mono">FRAUD_THRESHOLD</code> env.</p>
+    </Modal>
+  );
+}
+
+function AddThresholdModal({ models, defaultModel, onClose, onSave }) {
+  const [segment, setSegment] = useState('');
+  const [modelVersion, setModelVersion] = useState(defaultModel || '');
+  const [threshold, setThreshold] = useState('0.65');
+  const segmentValid = segment.trim().length > 0;
+  const thresholdNum = Number(threshold);
+  const thresholdValid = Number.isFinite(thresholdNum) && thresholdNum >= 0 && thresholdNum <= 1;
+  const canSave = segmentValid && modelVersion && thresholdValid;
+  return (
+    <Modal
+      title="Add segment threshold"
+      sub={
+        <>
+          Per-segment override of the model default. Resolution:
+          segment → model default → <code className="mono">FRAUD_THRESHOLD</code> env.
+        </>
+      }
+      onClose={onClose}
+      footer={
+        <>
+          <button onClick={onClose}>Cancel</button>
+          <button
+            className="primary"
+            disabled={!canSave}
+            onClick={() =>
+              onSave({ segment: segment.trim(), modelVersion, threshold: thresholdNum })
+            }
+          >
+            Save override
+          </button>
+        </>
+      }
+    >
+      <Field label="Segment">
+        <input
+          className="mono"
+          value={segment}
+          onChange={(e) => setSegment(e.target.value)}
+          placeholder="high_value, agent_cashout, …"
+          autoFocus
+        />
+      </Field>
+      <Field label="Model version">
+        <select value={modelVersion} onChange={(e) => setModelVersion(e.target.value)}>
+          <option value="" disabled>
+            Select a model
+          </option>
+          {models.map((m) => (
+            <option key={m.version} value={m.version}>
+              {m.version} ({m.status})
+            </option>
+          ))}
+        </select>
+      </Field>
+      <Field label="Threshold (0–1)">
+        <input
+          type="number"
+          step="0.01"
+          min="0"
+          max="1"
+          value={threshold}
+          onChange={(e) => setThreshold(e.target.value)}
+        />
+      </Field>
     </Modal>
   );
 }

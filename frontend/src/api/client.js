@@ -348,11 +348,22 @@ export const registerModel = (model) =>
     body: JSON.stringify(model),
   }).then(unwrap);
 
+// Status transition is a POST per the admin route definition
+// (`models.route.ts`). Older revisions of this helper used PATCH which
+// returned a silent 404 — operators saw the optimistic UI flip while
+// the backend never moved.
 export const setModelStatus = (version, status) =>
   fetch(`/v1/admin/models/${encodeURIComponent(version)}/status`, {
-    method: 'PATCH',
+    method: 'POST',
     headers: adminHeaders(),
     body: JSON.stringify({ status }),
+  }).then(unwrap);
+
+export const setSegmentThreshold = ({ segment, modelVersion, threshold }) =>
+  fetch('/v1/admin/segment-thresholds', {
+    method: 'POST',
+    headers: adminHeaders(),
+    body: JSON.stringify({ segment, modelVersion, threshold }),
   }).then(unwrap);
 
 // Hard-delete a RETIRED model version. RDA refuses ACTIVE / SHADOW
