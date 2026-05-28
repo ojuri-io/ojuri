@@ -8,6 +8,18 @@ import {
   listReviewQueue,
 } from '../api/client.js';
 
+// Shared between the Recent declines header and body rows. Extracted
+// because keeping two literal copies in sync drifts every time the
+// columns change — this is the third regression caused by them
+// evolving independently.
+//
+// Minimums are tuned so the row's total min (~720px + gaps) fits a
+// typical dashboard panel at ≥1024px viewport. Narrower viewports
+// trigger horizontal scroll via `overflow-x: auto` on the wrapper —
+// both rows scroll together since they share the same parent.
+const DECLINE_ROW_GRID =
+  'minmax(180px, 1.4fr) minmax(100px, 0.9fr) minmax(100px, 0.85fr) minmax(150px, 1.2fr) minmax(90px, 0.65fr) minmax(60px, 0.5fr)';
+
 function Dashboard({ toast: _toast, user: _user, queue, models, reports, webhooks, nav }) {
   const champion = models.find(m => m.status === 'ACTIVE');
   const shadow = models.find(m => m.status === 'SHADOW');
@@ -287,19 +299,19 @@ function Dashboard({ toast: _toast, user: _user, queue, models, reports, webhook
         {recent.length === 0 ? (
           <p style={{margin:'6px 0 0', fontSize:12, color:'var(--color-text-tertiary)'}}>No recent declines — queue is clear.</p>
         ) : (
-          <>
+          <div style={{ overflowX: 'auto' }}>
             {/* Column template — six columns spread proportionally so the
                 row spans the panel rather than collapsing with Age stranded
                 on the right. Numeric cells (Amount, Age) are right-aligned
-                so digits stack down the column. Sender was added because
-                the previous five-column layout left ~500px of empty space
-                inside the Stage cell when rows were short PRE_RULE strings. */}
+                so digits stack down the column. The whole thing is in an
+                overflow-x:auto wrapper so narrow viewports get a
+                horizontal scroll instead of clipping the leftmost column. */}
             <div
               role="row"
               style={{
                 display: 'grid',
-                gridTemplateColumns:
-                  'minmax(260px, 1.6fr) minmax(110px, 0.9fr) minmax(110px, 0.9fr) minmax(180px, 1.3fr) minmax(95px, 0.7fr) minmax(64px, 0.55fr)',
+                gridTemplateColumns: DECLINE_ROW_GRID,
+                minWidth: 720,
                 gap: 12,
                 alignItems: 'center',
                 padding: '4px 0 8px',
@@ -325,8 +337,8 @@ function Dashboard({ toast: _toast, user: _user, queue, models, reports, webhook
                 role="row"
                 style={{
                   display: 'grid',
-                  gridTemplateColumns:
-                    'minmax(260px, 1.6fr) minmax(110px, 1fr) minmax(90px, 0.9fr) auto minmax(100px, 1fr) minmax(64px, 0.55fr)',
+                  gridTemplateColumns: DECLINE_ROW_GRID,
+                  minWidth: 720,
                   gap: 12,
                   alignItems: 'center',
                   padding: '9px 0',
@@ -355,7 +367,7 @@ function Dashboard({ toast: _toast, user: _user, queue, models, reports, webhook
                 <span style={{fontSize:11, color:'var(--color-text-tertiary)', whiteSpace:'nowrap', fontVariantNumeric:'tabular-nums', textAlign:'right'}}>{r.age || '—'}</span>
               </div>
             ))}
-          </>
+          </div>
         )}
       </section>
     </>
