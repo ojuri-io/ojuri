@@ -165,13 +165,28 @@ describe('unreadCount', () => {
     expect(unreadCount(items, seen)).toBe(1);
   });
 
-  it('treats items with a missing anchor as unread (defensive)', () => {
+  it('counts null-anchor items as unread when the bell has never been opened', () => {
     const items = [
       { anchor: null },
       { anchor: undefined },
       { /* no anchor key */ },
     ];
-    expect(unreadCount(items, '2026-05-15T00:00:00Z')).toBe(3);
+    // No lastSeenAt → the early-return path; everything is unread.
+    expect(unreadCount(items, null)).toBe(3);
+  });
+
+  it('treats null-anchor items as seen once lastSeenAt is set', () => {
+    // The badge has to be able to drop to zero even when some
+    // notification items lack a concrete anchor — common when the
+    // dashboard `queue` / `reports` props are empty because the
+    // operator hasn't visited those pages yet. Without this,
+    // anchorless items would keep the badge stuck forever.
+    const items = [
+      { anchor: null },
+      { anchor: undefined },
+      { /* no anchor key */ },
+    ];
+    expect(unreadCount(items, '2026-05-15T00:00:00Z')).toBe(0);
   });
 
   it('treats malformed lastSeenAt as "everything unread"', () => {
