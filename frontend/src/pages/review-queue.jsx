@@ -669,7 +669,19 @@ function CaseFile({ current, similar, onConfirm, onRelease, onNeedInfo, onSkip, 
       {/* Header */}
       <div style={{display:'flex', alignItems:'flex-start', justifyContent:'space-between', gap:10, marginBottom:12}}>
         <div style={{minWidth:0, flex:1}}>
-          <p className="truncate" style={{margin:0, fontFamily:'var(--font-mono)', fontSize:11, color:'var(--color-text-secondary)'}}>{current.transactionId}</p>
+          {/* Transaction id doubles as a navigation link to the full
+              detail page. Operators routinely need the wider context
+              (context block, FIA report, decision pill, audit row
+              metadata) that the case-file pane doesn't surface. */}
+          <a
+            href="#"
+            onClick={(e) => { e.preventDefault(); if (nav && current.transactionId) nav('txn:' + current.transactionId); }}
+            className="truncate mono"
+            style={{display:'block', margin:0, fontSize:11, color:'var(--color-text-secondary)', textDecoration:'none'}}
+            title="Open transaction detail"
+          >
+            {current.transactionId}
+          </a>
           <p style={{margin:'4px 0 0', fontSize:20, fontWeight:500}}>{fmtNaira(current.amount)}</p>
           <p className="truncate" style={{margin:'2px 0 0', fontSize:11, color:'var(--color-text-secondary)'}}>
             {current.sender} → {current.receiver} · {current.txnType} · {fmtAge(current.ageMin)} ago
@@ -680,6 +692,14 @@ function CaseFile({ current, similar, onConfirm, onRelease, onNeedInfo, onSkip, 
         </div>
         <div style={{display:'flex', flexDirection:'column', alignItems:'flex-end', gap:4, flexShrink:0}}>
           <span className="pill verdict danger">DECLINE · {isPreRule ? 'RULE' : 'ML'}</span>
+          <button
+            type="button"
+            onClick={() => { if (nav && current.transactionId) nav('txn:' + current.transactionId); }}
+            style={{padding:'3px 8px', fontSize:11}}
+            title="Open the full transaction detail page"
+          >
+            <Ti name="external-link" size={11} style={{marginRight:4, verticalAlign:-1}}/>Open detail
+          </button>
           <span className="mono" style={{fontSize:10, color:'var(--color-text-tertiary)'}}>{current.auditId}</span>
         </div>
       </div>
