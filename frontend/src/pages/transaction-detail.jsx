@@ -637,15 +637,45 @@ function TransactionContext({ context }) {
           color:'inherit',
         }}
       >
-        <div style={{display:'flex', alignItems:'center', gap:8, minWidth:0}}>
-          <Ti name={open ? 'chevron-down' : 'chevron-right'} size={14} style={{color:'var(--color-text-tertiary)', flexShrink:0}}/>
-          <h2 style={{margin:0, fontSize:14, fontWeight:500}}>Transaction context</h2>
+        {/* Header gets the same icon-disc treatment as the FIA panel
+            and a leading colored disc — the previous flat row blended
+            into the page chrome and operators were missing the panel
+            entirely. Chevron moves to the right edge so it reads as a
+            "show more" affordance instead of a list bullet. */}
+        <div style={{display:'flex', alignItems:'center', gap:8, minWidth:0, flex:1}}>
+          <div
+            style={{
+              width:24, height:24, borderRadius:6,
+              background:'var(--color-background-info)',
+              color:'var(--color-text-info)',
+              display:'flex', alignItems:'center', justifyContent:'center',
+              flexShrink:0,
+            }}
+          >
+            <Ti name="list-details" size={14}/>
+          </div>
+          <h2 style={{margin:0, fontSize:14, fontWeight:500, flexShrink:0}}>Transaction context</h2>
+          {!open && narration && (
+            <span
+              className="truncate"
+              style={{fontSize:12, color:'var(--color-text-secondary)', fontStyle:'italic', minWidth:0}}
+              title={narration}
+            >
+              · "{narration}"
+            </span>
+          )}
         </div>
-        {summaryParts.length > 0 && (
-          <span className="truncate" style={{fontSize:11, color:'var(--color-text-tertiary)'}}>
-            {summaryParts.join(' · ')}
+        <div style={{display:'flex', alignItems:'center', gap:8, flexShrink:0}}>
+          {!open && summaryParts.length > 0 && (
+            <span className="truncate" style={{fontSize:11, color:'var(--color-text-tertiary)', maxWidth:260}}>
+              {summaryParts.join(' · ')}
+            </span>
+          )}
+          <span style={{fontSize:11, color:'var(--color-text-info)', fontWeight:500, whiteSpace:'nowrap'}}>
+            {open ? 'Hide' : 'Show details'}
           </span>
-        )}
+          <Ti name={open ? 'chevron-up' : 'chevron-down'} size={14} style={{color:'var(--color-text-info)', flexShrink:0}}/>
+        </div>
       </button>
       {open && (
         <div id="txn-context-body" style={{marginTop:14}}>

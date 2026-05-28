@@ -39,11 +39,15 @@ export function PasswordInput({
   return (
     <span
       style={{
-        // display: block (not inline-block) so the wrapper's height
-        // is exactly the input's height. Inline-block leaves a few
-        // px of baseline descender space below the input, which made
-        // the absolutely-positioned toggle sit below the visual
-        // mid-line even with top:50% + translateY(-50%).
+        // Wrapper height tracks the input exactly. We use `display:
+        // block` (not inline-block) to avoid baseline-descender space
+        // below the input; and the toggle inside uses top:0/bottom:0
+        // to stretch to the full input height, which centers the
+        // icon deterministically via flex regardless of input padding
+        // or computed line-height. The older top:50% + translateY
+        // approach drifted on subpixel-rounded heights — particularly
+        // visible at the login screen's 13px font + 6px vertical
+        // padding (input height ends at an odd pixel count).
         position: 'relative',
         display: 'block',
         width: '100%',
@@ -64,8 +68,9 @@ export function PasswordInput({
           ...style,
           width: '100%',
           // Reserve space for the toggle so the password text doesn't
-          // run under the eye icon.
-          paddingRight: 32,
+          // run under the eye icon. 36px = 28 (button) + 8 (right
+          // inset of the button from the input border).
+          paddingRight: 36,
         }}
       />
       <button
@@ -76,19 +81,18 @@ export function PasswordInput({
         onClick={() => setVisible((v) => !v)}
         disabled={disabled}
         style={{
-          // Flex centering so the SVG sits on the button's own box
-          // axis — the global Ti wrapper sets
-          // `vertical-align: text-bottom` for inline contexts, which
-          // would otherwise push the icon below the input's mid-line.
+          // Button stretches to the input's full height via top:0 /
+          // bottom:0, then centers the SVG with flex. This is the
+          // canonical "icon-inside-input" pattern — robust against
+          // input padding, border, line-height, and zoom changes.
           position: 'absolute',
-          right: 4,
-          top: '50%',
-          transform: 'translateY(-50%)',
+          right: 6,
+          top: 0,
+          bottom: 0,
           display: 'inline-flex',
           alignItems: 'center',
           justifyContent: 'center',
           width: 28,
-          height: 28,
           background: 'transparent',
           border: 'none',
           padding: 0,
@@ -102,7 +106,11 @@ export function PasswordInput({
         <Ti
           name={visible ? 'eye-off' : 'eye'}
           size={16}
-          style={{ verticalAlign: 'middle' }}
+          // `display: block` on the SVG prevents the icon's
+          // inline-baseline from picking up the page line-height,
+          // which previously pushed the glyph a fractional pixel
+          // below the flex centerline.
+          style={{ display: 'block' }}
         />
       </button>
     </span>

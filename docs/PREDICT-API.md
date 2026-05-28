@@ -40,7 +40,59 @@ first-touch users where the Redis snapshot is sparse.
 
 | Field    | Type   | Notes |
 |---|---|---|
-| `segment`| string, ≤100 chars | Routes the request through the model registry's per-segment threshold map. Defaults to the global threshold when absent. |
+| `segment`| string, ≤100 chars | Caller-supplied label that routes the request through the model registry's per-segment threshold map. Pure threshold routing — does **not** change which features are computed, which model runs, or the ML probability. Only the decision cutoff differs. See below for the full resolution order. |
+
+**What `segment` is for.** Different transaction populations have
+different fraud base rates, so they need different probability
+cutoffs to maintain comparable false-positive rates across the
+portfolio. A 0.55 score on a high-value transfer is genuinely
+concerning; the same 0.55 on a recurring utility bill is noise.
+`segment` lets you keep one model running but tune the cutoff per
+population without retraining or redeploying.
+
+Pick labels that mean something to your fraud ops team —
+`high_value`, `low_value`, `agent_cashout`, `merchant_payments`,
+`first_time_sender`, your own scheme. The values are free-form
+strings; RDA just looks them up in a key-value map.
+
+**Threshold resolution order** (see
+[`src/shared/models/model-registry.service.ts`](../src/shared/models/model-registry.service.ts)
+`resolve()`):
+
+1. **Per-segment override** — `segmentThresholds` table row matching
+   `(segment, modelVersion)`. Set via Sentinel → Models → "Add" in the
+   Per-segment thresholds panel, or `POST /v1/admin/segment-thresholds`.
+2. **Active model `defaultThreshold`** — set on the model row when it
+   was registered.
+3. **Runtime `fraud_threshold`** — operator-editable in the Settings
+   page; survives restart, applies globally.
+4. **`FRAUD_THRESHOLD` env var** — boot-time fallback.
+
+When `segment` is omitted the resolution skips step 1 directly to
+step 2; nothing else changes about the request.
+
+**Worked example.** Champion `v1.0` is registered with
+`defaultThreshold: 0.65`. You observe `agent_cashout` flowing through
+at acceptance rates higher than your risk appetite. Add one row:
+
+```bash
+curl -X POST http://localhost/v1/admin/segment-thresholds \
+  -H "Authorization: Bearer <jwt>" \
+  -H "Content-Type: application/json" \
+  -d '{"segment":"agent_cashout","modelVersion":"v1.0","threshold":0.45}'
+```
+
+From the next request onward, any predict call with
+`"segment": "agent_cashout"` decides at `0.45` while every other
+segment still uses `0.65`. No model retrain, no service redeploy,
+no rule write — just a threshold row.
+
+**What `segment` does not do.** It doesn't change the model that
+scores the request (use the model registry's CANDIDATE → SHADOW →
+ACTIVE lifecycle for that), it doesn't enter the rules engine
+(rules are global), and it doesn't change which features the
+catalogue computes. Same features, same model, same probability
+— only the cutoff differs.
 
 ### Display names
 
