@@ -64,16 +64,27 @@ describe('PasswordInput', () => {
   // catching on the login screen. If a future edit reverts to the
   // translateY trick or drops the right-padding allowance, this test
   // catches it before the next screenshot does.
-  it('keeps the toggle centered with the stretch+flex layout', () => {
+  it('keeps the toggle centered with the flex-wrapper + stretch layout', () => {
     const { container } = render(<PasswordInput value="" onChange={() => {}} />);
+    const wrapper = container.querySelector('span');
     const input = container.querySelector('input');
     const btn = container.querySelector('button');
-    // Input reserves enough right-padding for the 28px button + 8px
-    // inset so the typed value can't run under the eye glyph.
+    // Wrapper is a flex row so its height equals the input's
+    // border-box (no line-height leading sneaking in). Block-display
+    // wrappers regressed the icon to the input's bottom-right.
+    expect(wrapper.style.display).toBe('flex');
+    expect(wrapper.style.alignItems).toBe('stretch');
+    expect(wrapper.style.position).toBe('relative');
+    // Input fills the wrapper as a flex child. React / jsdom
+    // normalises the shorthand `flex: 1` to the longhand
+    // `flex: 1 1 0%`, so we accept either form.
+    expect(['1', '1 1 0%']).toContain(input.style.flex);
     expect(input.style.paddingRight).toBe('36px');
-    // Button stretches to the input height (no transform tricks).
+    // Button stretches top-to-bottom of the wrapper, then flex-
+    // centers the glyph. No translateY trickery.
+    expect(btn.style.position).toBe('absolute');
     expect(btn.style.top).toBe('0px');
-    expect(btn.style.bottom).toBe('0px');
+    expect(btn.style.bottom).toBe('10px');
     expect(btn.style.right).toBe('6px');
     expect(btn.style.alignItems).toBe('center');
     expect(btn.style.justifyContent).toBe('center');

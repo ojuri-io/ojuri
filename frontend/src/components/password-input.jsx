@@ -39,17 +39,9 @@ export function PasswordInput({
   return (
     <span
       style={{
-        // Wrapper height tracks the input exactly. We use `display:
-        // block` (not inline-block) to avoid baseline-descender space
-        // below the input; and the toggle inside uses top:0/bottom:0
-        // to stretch to the full input height, which centers the
-        // icon deterministically via flex regardless of input padding
-        // or computed line-height. The older top:50% + translateY
-        // approach drifted on subpixel-rounded heights — particularly
-        // visible at the login screen's 13px font + 6px vertical
-        // padding (input height ends at an odd pixel count).
         position: 'relative',
-        display: 'block',
+        display: 'flex',
+        alignItems: 'stretch',
         width: '100%',
       }}
     >
@@ -66,10 +58,8 @@ export function PasswordInput({
         className={className}
         style={{
           ...style,
-          width: '100%',
-          // Reserve space for the toggle so the password text doesn't
-          // run under the eye icon. 36px = 28 (button) + 8 (right
-          // inset of the button from the input border).
+          flex: 1,
+          minWidth: 0,
           paddingRight: 36,
         }}
       />
@@ -81,14 +71,10 @@ export function PasswordInput({
         onClick={() => setVisible((v) => !v)}
         disabled={disabled}
         style={{
-          // Button stretches to the input's full height via top:0 /
-          // bottom:0, then centers the SVG with flex. This is the
-          // canonical "icon-inside-input" pattern — robust against
-          // input padding, border, line-height, and zoom changes.
           position: 'absolute',
           right: 6,
           top: 0,
-          bottom: 0,
+          bottom: 10,
           display: 'inline-flex',
           alignItems: 'center',
           justifyContent: 'center',
@@ -106,10 +92,6 @@ export function PasswordInput({
         <Ti
           name={visible ? 'eye-off' : 'eye'}
           size={16}
-          // `display: block` on the SVG prevents the icon's
-          // inline-baseline from picking up the page line-height,
-          // which previously pushed the glyph a fractional pixel
-          // below the flex centerline.
           style={{ display: 'block' }}
         />
       </button>
