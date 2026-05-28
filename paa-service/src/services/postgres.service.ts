@@ -58,7 +58,16 @@ class PostgresService {
         // treat NULL as "ML" for backward compatibility.
         decisionSource: event.decision_source ?? null,
         ruleName: event.rule_name ?? null,
-        deviceFingerprint: JSON.stringify(event.device_fingerprint || {}),
+        // Persist NULL when no fingerprint was sent — `{}` would
+        // mask the difference between "operator omitted" and "no
+        // data available" and breaks the rest of the optional-context
+        // column convention. Empty `{}` from a misbehaving caller is
+        // also treated as absence; the next call with real data
+        // overwrites it.
+        deviceFingerprint:
+          event.device_fingerprint && Object.keys(event.device_fingerprint).length > 0
+            ? JSON.stringify(event.device_fingerprint)
+            : null,
 
         // ── Identity ──────────────────────────────────────────
         customerDob: event.customer_dob ?? null,
@@ -103,6 +112,10 @@ class PostgresService {
 
         // ── Adopter overflow ──────────────────────────────────
         requestContext: event.request_context ? JSON.stringify(event.request_context) : null,
+
+        // ── Display names ─────────────────────────────────────
+        customerAccountName: event.customer_account_name ?? null,
+        beneficiaryAccountName: event.beneficiary_account_name ?? null,
       }));
 
       await knex("transactions").insert(records).onConflict("transactionId").ignore();

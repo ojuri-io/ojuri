@@ -2,7 +2,13 @@
  * Validation rules for predict request
  */
 export const predictValidationRules = {
-  transaction_id: "required|uuid",
+  // Caller-controlled identifier. Free-form string so adopters can plug
+  // in their own format (PSP txn ref, order id, opaque ULID, …). 10-char
+  // floor keeps the audit log searchable — anything shorter collides too
+  // easily across tenants and breaks the substring `ilike` filters. The
+  // 255-char cap matches the `varchar(255)` column on `transactions` /
+  // `decisionAuditLog`.
+  transaction_id: "required|string|min:10|max:255",
   sender_id: "required|string|min:1|max:255",
   receiver_id: "required|string|min:1|max:255",
   // Upper bound is ~10B base units — covers every realistic payment
@@ -14,6 +20,9 @@ export const predictValidationRules = {
   // poison the temporal feature calculators downstream.
   timestamp: "required|numeric|min:0|max:9999999999999",
   segment: "string|max:100",
+
+  customer_account_name: "string|max:255",
+  beneficiary_account_name: "string|max:255",
 
   // Optional context consumed by the feature catalogue. All are
   // lightweight format checks — the catalogue's defaults cover any
@@ -62,7 +71,8 @@ export const predictValidationRules = {
  */
 export const predictValidationMessages = {
   "transaction_id.required": "Transaction ID is required",
-  "transaction_id.uuid": "Transaction ID must be a valid UUID",
+  "transaction_id.min": "Transaction ID must be at least 10 characters",
+  "transaction_id.max": "Transaction ID must be 255 characters or fewer",
   "sender_id.required": "Sender ID is required",
   "receiver_id.required": "Receiver ID is required",
   "amount.required": "Amount is required",

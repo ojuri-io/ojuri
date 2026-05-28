@@ -13,6 +13,7 @@ import {
 import {
   requestReport as apiRequestReport,
   listReports,
+  postReportMessage,
 } from '../api/client.js';
 import { SearchInput } from '../components/search-input.jsx';
 import { Pagination } from '../components/pagination.jsx';
@@ -258,8 +259,47 @@ function ReportCard({ r, expanded, onToggle, toast, nav }) {
   const llmVersion = r.llmModelVersion || '';
   const isFallback = llmVersion.endsWith('-fallback');
   const keyIndicators = Array.isArray(r.keyIndicators) ? r.keyIndicators : [];
-  const conversation = Array.isArray(r.conversation) ? r.conversation : [];
-  const turns = typeof r.turns === 'number' ? r.turns : conversation.length;
+  // Local conversation state — starts from whatever the API returned and
+  // appends after each successful Send. FIA generation can take ~30-90s,
+  // so we optimistically render the user's turn immediately and the
+  // assistant's reply when it returns.
+  const [convo, setConvo] = useState(Array.isArray(r.conversation) ? r.conversation : []);
+  const [draft, setDraft] = useState('');
+  const [sending, setSending] = useState(false);
+  useEffect(() => {
+    if (Array.isArray(r.conversation)) setConvo(r.conversation);
+  }, [r.conversation]);
+  const conversation = convo;
+  const turns = typeof r.turns === 'number' ? Math.max(r.turns, conversation.length) : conversation.length;
+
+  const sendFollowup = async () => {
+    const text = draft.trim();
+    if (!text || sending) return;
+    if (!r.id) {
+      toast && toast('Report id missing — cannot send follow-up', 'warn');
+      return;
+    }
+    setSending(true);
+    setConvo((c) => [...c, { role: 'user', body: text }]);
+    setDraft('');
+    try {
+      const res = await postReportMessage(r.id, text);
+      setConvo((c) => [
+        ...c,
+        {
+          role: 'assistant',
+          body: res?.body || res?.response || '(FIA returned no body)',
+          llmModelVersion: res?.llmModelVersion,
+          latencyMs: res?.latencyMs,
+        },
+      ]);
+    } catch (err) {
+      setConvo((c) => [...c, { role: 'assistant', body: `Follow-up failed · ${String(err.message || err)}` }]);
+      toast && toast(`Follow-up failed · ${String(err.message || err)}`, 'danger');
+    } finally {
+      setSending(false);
+    }
+  };
   return (
     <article className="panel" style={{
       padding: 0,
@@ -301,9 +341,13 @@ function ReportCard({ r, expanded, onToggle, toast, nav }) {
           <div style={{display:'flex', alignItems:'center', gap:12, flexWrap:'wrap'}}>
             <span style={{display:'inline-flex', alignItems:'center', gap:4, whiteSpace:'nowrap'}}><Ti name="target" size={12}/>Confidence {typeof r.agentConfidence === 'number' ? r.agentConfidence.toFixed(2) : '—'}</span>
             <span style={{display:'inline-flex', alignItems:'center', gap:4, fontFamily:'var(--font-mono)', fontSize:10, whiteSpace:'nowrap'}}><Ti name="robot" size={12}/>{llmVersion || '—'}</span>
-            <span style={{display:'inline-flex', alignItems:'center', gap:4, cursor: turns > 0 ? 'pointer' : 'default', whiteSpace:'nowrap'}} onClick={turns > 0 ? onToggle : undefined}>
+            <span
+              style={{display:'inline-flex', alignItems:'center', gap:4, cursor:'pointer', whiteSpace:'nowrap'}}
+              onClick={onToggle}
+              title={turns > 0 ? 'Toggle conversation' : 'Start a follow-up thread'}
+            >
               <Ti name="message-circle" size={12}/>{`${turns} turn${turns === 1 ? '' : 's'}`}
-              {turns > 0 && <Ti name={expanded ? 'chevron-up' : 'chevron-down'} size={10} style={{marginLeft:2}}/>}
+              <Ti name={expanded ? 'chevron-up' : 'chevron-down'} size={10} style={{marginLeft:2}}/>
             </span>
           </div>
           <div style={{display:'flex', alignItems:'center', gap:8, whiteSpace:'nowrap'}}>
@@ -326,15 +370,36 @@ function ReportCard({ r, expanded, onToggle, toast, nav }) {
         </div>
       </div>
 
-      {expanded && conversation.length > 0 && (
+      {expanded && (
         <div style={{padding:'12px 16px 14px', borderTop:'0.5px solid var(--color-border-tertiary)', background:'var(--color-background-secondary)'}}>
           <p className="label-up" style={{margin:'0 0 8px'}}>CONVERSATION · {turns} turn{turns===1?'':'s'}</p>
+          {conversation.length === 0 && (
+            <p style={{margin:'0 0 8px', fontSize:11, color:'var(--color-text-tertiary)'}}>No follow-ups yet — ask FIA below to start a thread.</p>
+          )}
           <div style={{display:'flex', flexDirection:'column', gap:10}}>
             {conversation.map((m, i) => <ConvTurn key={i} m={m}/>)}
+            {sending && (
+              <div style={{display:'flex', gap:8, alignItems:'center', fontSize:11, color:'var(--color-text-tertiary)'}}>
+                <Ti name="loader-2" size={12}/>FIA is thinking…
+              </div>
+            )}
           </div>
           <div style={{marginTop:10, padding:'8px 10px', background:'var(--color-background-primary)', borderRadius:'var(--border-radius-md)', border:'0.5px solid var(--color-border-tertiary)', display:'flex', gap:6}}>
-            <input placeholder="Ask FIA a follow-up question…" style={{flex:1, fontSize:12, padding:'5px 9px', border:'none', background:'transparent'}}/>
-            <button style={{fontSize:11, padding:'5px 10px'}}><Ti name="send" size={12}/>Send</button>
+            <input
+              value={draft}
+              onChange={(e) => setDraft(e.target.value)}
+              onKeyDown={(e) => e.key === 'Enter' && sendFollowup()}
+              placeholder="Ask FIA a follow-up question…"
+              disabled={sending}
+              style={{flex:1, fontSize:12, padding:'5px 9px', border:'none', background:'transparent'}}
+            />
+            <button
+              style={{fontSize:11, padding:'5px 10px'}}
+              onClick={sendFollowup}
+              disabled={sending || !draft.trim()}
+            >
+              <Ti name={sending ? 'loader-2' : 'send'} size={12}/>Send
+            </button>
           </div>
         </div>
       )}

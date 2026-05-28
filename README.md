@@ -176,6 +176,16 @@ prediction quality when supplied — see
 [`docs/PREDICT-API.md`](docs/PREDICT-API.md) for the full field
 reference.
 
+> `transaction_id` is the single identifier Ojuri tracks. It's
+> caller-controlled — any 10–255 char string is accepted, so plug in
+> whatever your upstream system already issues (UUID, ULID, PSP txn
+> ref, order id, your own format). The same string is what the audit
+> row carries, what `transactions.completed` /
+> `transactions.blocked` are partitioned by (for blocked events), and
+> what Sentinel searches against. Make it unique per transaction
+> within your tenant (the `transactions` table enforces uniqueness),
+> and pass it as `Idempotency-Key` if you want replay-safe POSTs.
+
 ````bash
 curl -X POST http://localhost/v1/predict \
   -H "Content-Type: application/json" \

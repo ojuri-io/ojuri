@@ -529,6 +529,33 @@ export const exportTransactions = async (filters = {}, { maxRows = 5000, pageSiz
   return { rows: collected, total, truncated: total > collected.length };
 };
 
+/**
+ * Audit-log export. Same paging pattern as `exportTransactions` but
+ * against `/v1/admin/audit`, which carries extra fields the transactions
+ * endpoint doesn't (override metadata, model versions, rule context).
+ * Caps and progress callback match the sibling function for consistency.
+ */
+export const exportAuditRows = async (filters = {}, { maxRows = 5000, pageSize = 500, onProgress } = {}) => {
+  const collected = [];
+  let total = 0;
+  let offset = 0;
+  while (collected.length < maxRows) {
+    const limit = Math.min(pageSize, maxRows - collected.length);
+    const res = await fetch(
+      `/v1/admin/audit${buildAuditQuery({ ...filters, limit, offset })}`,
+      { headers: adminHeaders() },
+    ).then(unwrap);
+    const rows = res?.rows || [];
+    total = res?.total ?? total;
+    if (rows.length === 0) break;
+    collected.push(...rows);
+    if (typeof onProgress === 'function') onProgress(collected.length, total);
+    if (rows.length < limit) break;
+    offset += rows.length;
+  }
+  return { rows: collected, total, truncated: total > collected.length };
+};
+
 // ──────── Saved reports (admin) ────────
 // Operator-defined views over an existing data source (currently the
 // decision audit log). The page persists `{ name, dataSource, filters,

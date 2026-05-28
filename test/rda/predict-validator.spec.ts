@@ -53,10 +53,15 @@ describe("predict.validator — required-field rejections", () => {
     expect(errors).toHaveProperty("transaction_id");
   });
 
-  it("rejects malformed UUID", () => {
-    const { valid, errors } = check({ ...baseValid, transaction_id: "not-a-uuid" });
+  it("rejects transaction_id shorter than the 10-char floor", () => {
+    const { valid, errors } = check({ ...baseValid, transaction_id: "short" });
     expect(valid).toBe(false);
     expect(errors).toHaveProperty("transaction_id");
+  });
+
+  it("accepts any 10+ char string (no UUID requirement)", () => {
+    const { valid } = check({ ...baseValid, transaction_id: "PSP-2026-001-ABCDEF" });
+    expect(valid).toBe(true);
   });
 
   it("rejects missing required scalars", () => {

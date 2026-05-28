@@ -2,18 +2,141 @@ import { injectable } from "tsyringe";
 import { BaseRepository } from "../../repositories/base.repo";
 import { DecisionAudit, IDecisionAudit } from "../model/decision-audit.model";
 
+/**
+ * The slice of `transactions` we surface to the operator on the
+ * detail page. Keep this list to fields a reviewer reads at a glance —
+ * scoring-relevant numerics live in `featuresSnapshot` on the audit
+ * row itself.
+ */
+export interface TransactionContext {
+  customerAccountName: string | null;
+  beneficiaryAccountName: string | null;
+  customerDob: string | null;
+  customerNationality: string | null;
+  customerType: string | null;
+  customerIdType: string | null;
+  accountAgeDays: number | null;
+  isAuthenticated: boolean | null;
+  channel: string | null;
+  currency: string | null;
+  isInflow: boolean | null;
+  isRecurring: boolean | null;
+  walletBalance: number | null;
+  customerLatitude: number | null;
+  customerLongitude: number | null;
+  transactionCountry: string | null;
+  destinationCountry: string | null;
+  ipCountry: string | null;
+  transactionLat: number | null;
+  transactionLng: number | null;
+  ipIsVpn: boolean | null;
+  deviceIsTrusted: boolean | null;
+  deviceType: string | null;
+  sessionToTxnSeconds: number | null;
+  deviceFingerprint: Record<string, unknown> | null;
+  agentId: string | null;
+  recipientNationality: string | null;
+  recipientIdType: string | null;
+  customerFi: string | null;
+  recipientFi: string | null;
+  requestContext: Record<string, unknown> | null;
+}
+
+function pickNum(v: unknown): number | null {
+  if (v == null) return null;
+  const n = Number(v);
+  return Number.isFinite(n) ? n : null;
+}
+function pickStr(v: unknown): string | null {
+  return typeof v === "string" ? v : v == null ? null : String(v);
+}
+function pickBool(v: unknown): boolean | null {
+  return typeof v === "boolean" ? v : v == null ? null : Boolean(v);
+}
+function pickObj(v: unknown): Record<string, unknown> | null {
+  if (v && typeof v === "object" && !Array.isArray(v)) return v as Record<string, unknown>;
+  if (typeof v === "string") {
+    try {
+      const parsed = JSON.parse(v);
+      return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed : null;
+    } catch {
+      return null;
+    }
+  }
+  return null;
+}
+
+function toContext(t: Record<string, unknown>): TransactionContext {
+  return {
+    customerAccountName: pickStr(t.customerAccountName),
+    beneficiaryAccountName: pickStr(t.beneficiaryAccountName),
+    customerDob: pickStr(t.customerDob),
+    customerNationality: pickStr(t.customerNationality),
+    customerType: pickStr(t.customerType),
+    customerIdType: pickStr(t.customerIdType),
+    accountAgeDays: pickNum(t.accountAgeDays),
+    isAuthenticated: pickBool(t.isAuthenticated),
+    channel: pickStr(t.channel),
+    currency: pickStr(t.currency),
+    isInflow: pickBool(t.isInflow),
+    isRecurring: pickBool(t.isRecurring),
+    walletBalance: pickNum(t.walletBalance),
+    customerLatitude: pickNum(t.customerLatitude),
+    customerLongitude: pickNum(t.customerLongitude),
+    transactionCountry: pickStr(t.transactionCountry),
+    destinationCountry: pickStr(t.destinationCountry),
+    ipCountry: pickStr(t.ipCountry),
+    transactionLat: pickNum(t.transactionLat),
+    transactionLng: pickNum(t.transactionLng),
+    ipIsVpn: pickBool(t.ipIsVpn),
+    deviceIsTrusted: pickBool(t.deviceIsTrusted),
+    deviceType: pickStr(t.deviceType),
+    sessionToTxnSeconds: pickNum(t.sessionToTxnSeconds),
+    deviceFingerprint: pickObj(t.deviceFingerprint),
+    agentId: pickStr(t.agentId),
+    recipientNationality: pickStr(t.recipientNationality),
+    recipientIdType: pickStr(t.recipientIdType),
+    customerFi: pickStr(t.customerFi),
+    recipientFi: pickStr(t.recipientFi),
+    requestContext: pickObj(t.requestContext),
+  };
+}
+
 @injectable()
 class DecisionAuditRepo extends BaseRepository<IDecisionAudit, DecisionAudit> {
   constructor() {
     super(DecisionAudit);
   }
 
-  async findLatestByTransactionId(transactionId: string): Promise<DecisionAudit | undefined> {
-    return DecisionAudit.query()
-      .where({ transactionId })
-      .orderBy("createdAt", "desc")
-      .first();
+  /**
+   * Look up the latest audit row for a transaction AND fold in the
+   * contextual payload that PAA persists into `transactions`
+   * (customer / recipient identity, channel, currency, geography,
+   * device, agent, FI route, `requestContext`, display account names).
+   *
+   * LEFT JOIN — the audit row exists the moment RDA scores the
+   * request; PAA flushes the `transactions` row asynchronously
+   * (~ms–seconds later), so for very fresh transactions the join
+   * column will be NULL. Callers detect that as `row.context == null`
+   * and the UI shows the empty-context skeleton until the next reload.
+   */
+  async findLatestByTransactionId(transactionId: string): Promise<(DecisionAudit & { context?: TransactionContext | null }) | undefined> {
+    const knex = DecisionAudit.knex();
+    const row = (await knex
+      .from({ a: DecisionAudit.tableName })
+      .leftJoin({ t: "transactions" }, "t.transactionId", "a.transactionId")
+      .where("a.transactionId", transactionId)
+      .orderBy("a.createdAt", "desc")
+      .first(
+        knex.raw('row_to_json(a) as audit'),
+        knex.raw('row_to_json(t) as txn')
+      )) as { audit: DecisionAudit; txn: Record<string, unknown> | null } | undefined;
+    if (!row || !row.audit) return undefined;
+    return { ...row.audit, context: row.txn ? toContext(row.txn) : null } as DecisionAudit & {
+      context?: TransactionContext | null;
+    };
   }
+
 
   async applyOverride(input: {
     auditId: string;
