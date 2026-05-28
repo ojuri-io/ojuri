@@ -75,8 +75,10 @@ describe('PasswordInput', () => {
     expect(wrapper.style.display).toBe('flex');
     expect(wrapper.style.alignItems).toBe('stretch');
     expect(wrapper.style.position).toBe('relative');
-    // Input fills the wrapper as a flex child.
-    expect(input.style.flex).toBe('1');
+    // Input fills the wrapper as a flex child. React / jsdom
+    // normalises the shorthand `flex: 1` to the longhand
+    // `flex: 1 1 0%`, so we accept either form.
+    expect(['1', '1 1 0%']).toContain(input.style.flex);
     expect(input.style.paddingRight).toBe('36px');
     // Button stretches top-to-bottom of the wrapper, then flex-
     // centers the glyph. No translateY trickery.
