@@ -127,13 +127,23 @@ class PredictController {
     const offset = clampInt(req.query.offset, 0, 0, Number.MAX_SAFE_INTEGER);
     const order = req.query.order === "oldest" ? "oldest" : "newest";
     const search = req.query.search?.trim() || undefined;
-    const { rows, total } = await this.decisionAudit.listReviewQueuePaginated({
-      limit,
-      offset,
-      order,
-      search,
-    });
-    return res.send(SuccessResponse("Review queue", { rows, total, limit, offset }));
+    const { rows, total, oldestPendingAt, totalPendingAmount } =
+      await this.decisionAudit.listReviewQueuePaginated({
+        limit,
+        offset,
+        order,
+        search,
+      });
+    return res.send(
+      SuccessResponse("Review queue", {
+        rows,
+        total,
+        limit,
+        offset,
+        oldestPendingAt,
+        totalPendingAmount,
+      }),
+    );
   };
 
   recentDecisions = async (

@@ -252,7 +252,7 @@ function TransactionDetail({ toast, user, nav, txn, queue, reports: _reports, re
           <div style={{display:'grid', gridTemplateColumns:'repeat(3, 1fr)', gap:10, marginBottom:14}}>
             <Tile label="PROBABILITY" value={t.championScore.toFixed(2)} tone="danger"/>
             <Tile label="THRESHOLD" value={t.threshold.toFixed(2)}/>
-            <Tile label="LATENCY" value="3 ms"/>
+            <Tile label="LATENCY" value={t.latencyMs == null ? '—' : `${t.latencyMs} ms`}/>
           </div>
           <p style={{margin:'0 0 8px', fontSize:11, color:'var(--color-text-secondary)'}}>Top reason codes</p>
           <div style={{display:'flex', flexDirection:'column', gap:8}}>

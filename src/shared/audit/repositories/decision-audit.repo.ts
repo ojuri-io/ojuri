@@ -203,7 +203,12 @@ class DecisionAuditRepo extends BaseRepository<IDecisionAudit, DecisionAudit> {
     offset: number;
     order?: "newest" | "oldest";
     search?: string;
-  }): Promise<{ rows: DecisionAudit[]; total: number }> {
+  }): Promise<{
+    rows: DecisionAudit[];
+    total: number;
+    oldestPendingAt: Date | null;
+    totalPendingAmount: number;
+  }> {
     const baseQuery = DecisionAudit.query()
       .where({ finalDecision: "DECLINE" })
       .whereNull("reviewedAt");
@@ -222,13 +227,33 @@ class DecisionAuditRepo extends BaseRepository<IDecisionAudit, DecisionAudit> {
 
     const total = (await baseQuery.clone().resultSize()) as unknown as number;
 
+    // Aggregate fields the dashboard's "Things to do" tile reads —
+    // computing them here keeps the call to a single round-trip per
+    // poll rather than firing a sibling /stats endpoint. Both are NULL
+    // when the queue is empty; the formatter handles that case.
+    const aggRow = total > 0
+      ? ((await baseQuery
+          .clone()
+          .clearOrder()
+          .select(
+            DecisionAudit.raw('MIN("createdAt") as "oldestPendingAt"'),
+            DecisionAudit.raw('SUM(amount) as "totalPendingAmount"'),
+          )
+          .first()) as unknown as { oldestPendingAt: Date | null; totalPendingAmount: string | null } | undefined)
+      : undefined;
+
     const rows = await baseQuery
       .clone()
       .orderBy("createdAt", opts.order === "oldest" ? "asc" : "desc")
       .limit(Math.min(Math.max(opts.limit, 1), 200))
       .offset(Math.max(opts.offset, 0));
 
-    return { rows, total: Number(total) || 0 };
+    return {
+      rows,
+      total: Number(total) || 0,
+      oldestPendingAt: aggRow?.oldestPendingAt ? new Date(aggRow.oldestPendingAt) : null,
+      totalPendingAmount: aggRow?.totalPendingAmount != null ? Number(aggRow.totalPendingAmount) : 0,
+    };
   }
 
   /**

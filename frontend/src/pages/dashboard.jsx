@@ -11,7 +11,6 @@ import {
 function Dashboard({ toast: _toast, user: _user, queue, models, reports, webhooks, nav }) {
   const champion = models.find(m => m.status === 'ACTIVE');
   const shadow = models.find(m => m.status === 'SHADOW');
-  const newReports = reports.slice(0, 4);
   const failingWebhooks = webhooks.filter(w => w.status === 'failing');
 
   // Today's stats — sourced from /v1/stats/today. Empty state surfaces
@@ -21,6 +20,10 @@ function Dashboard({ toast: _toast, user: _user, queue, models, reports, webhook
   const [windowStats, setWindowStats] = useState(null);
   // Live review-queue rows for the "Recent declines" panel.
   const [liveQueue, setLiveQueue] = useState(null);
+  // Server-side aggregates for the "Things to do" tile. Capturing them
+  // alongside the rows keeps the panel honest when the visible slice
+  // is smaller than the real queue (which it almost always is).
+  const [queueAgg, setQueueAgg] = useState({ total: 0, oldestPendingAt: null, totalPendingAmount: 0 });
 
   useEffect(() => {
     let cancelled = false;
@@ -48,6 +51,11 @@ function Dashboard({ toast: _toast, user: _user, queue, models, reports, webhook
         if (cancelled) return;
         const rows = Array.isArray(res?.rows) ? res.rows : [];
         setLiveQueue(rows);
+        setQueueAgg({
+          total: typeof res?.total === 'number' ? res.total : rows.length,
+          oldestPendingAt: res?.oldestPendingAt ?? null,
+          totalPendingAmount: typeof res?.totalPendingAmount === 'number' ? res.totalPendingAmount : 0,
+        });
       })
       .catch(() => {
         /* fall back to props.queue */
@@ -58,11 +66,21 @@ function Dashboard({ toast: _toast, user: _user, queue, models, reports, webhook
   }, []);
 
   const sourceQueue = Array.isArray(liveQueue) ? liveQueue : queue;
-  const _slaCount = sourceQueue.filter(q => (q.ageMin ?? 0) >= 240).length;
-  const oldestAge = sourceQueue.length ? Math.max(...sourceQueue.map(q => q.ageMin ?? 0), 0) : 0;
-  // `amount` is a string-numeric from /v1/review-queue (pg numeric) —
-  // coerce so the running sum stays numeric rather than concatenating.
-  const totalExposure = sourceQueue.reduce((a, b) => a + Number(b.amount ?? 0), 0);
+  // Aggregates are server-side via /v1/review-queue's `total`,
+  // `oldestPendingAt`, and `totalPendingAmount` — the visible slice
+  // would lie when the queue is larger than the rendered page. When
+  // we're falling back to `props.queue` (live request failed) we
+  // compute from the local slice as a last resort.
+  const usingLive = Array.isArray(liveQueue);
+  const queueTotal = usingLive ? queueAgg.total : sourceQueue.length;
+  const oldestAgeMin = usingLive
+    ? (queueAgg.oldestPendingAt
+        ? Math.max(0, Math.round((Date.now() - new Date(queueAgg.oldestPendingAt).getTime()) / 60000))
+        : 0)
+    : (sourceQueue.length ? Math.max(...sourceQueue.map((q) => q.ageMin ?? 0), 0) : 0);
+  const totalExposure = usingLive
+    ? queueAgg.totalPendingAmount
+    : sourceQueue.reduce((a, b) => a + Number(b.amount ?? 0), 0);
 
   const accept = stats?.counts?.ACCEPT ?? 0;
   const decline = stats?.counts?.DECLINE ?? 0;
@@ -114,18 +132,26 @@ function Dashboard({ toast: _toast, user: _user, queue, models, reports, webhook
     };
   });
 
+  const fiaConfirmed = reports.filter((r) => r.verdict === 'FRAUD_CONFIRMED').length;
+  const fiaUncertain = reports.filter((r) => r.verdict === 'UNCERTAIN').length;
+  const fiaModelVersion =
+    reports.find((r) => r.llmModelVersion)?.llmModelVersion || null;
+
   const todos = [
-    sourceQueue.length > 0 && {
+    queueTotal > 0 && {
       icon: 'flag', tone: 'danger',
-      title: `Review ${sourceQueue.length} declined transactions`,
-      sub: `Oldest waiting since ${fmtAge(oldestAge)} ago · ${fmtNaira(totalExposure)} total exposure`,
+      title: `Review ${queueTotal.toLocaleString()} declined transaction${queueTotal === 1 ? '' : 's'}`,
+      sub: `Oldest waiting since ${fmtAge(oldestAgeMin)} ago · ${fmtNaira(totalExposure)} total exposure`,
       when: 'Today',
       onClick: () => nav('queue')
     },
-    {
+    reports.length > 0 && {
       icon: 'file-search', tone: 'info',
-      title: `${newReports.length} new FIA investigation reports ready`,
-      sub: `Verdict: ${newReports.filter(r => r.verdict === 'FRAUD_CONFIRMED').length} fraud confirmed, ${newReports.filter(r => r.verdict === 'UNCERTAIN').length} uncertain · phi-3-mini-v1`,
+      title: `${reports.length.toLocaleString()} FIA investigation report${reports.length === 1 ? '' : 's'} ready`,
+      // FIA model version is read from the most recent report that
+      // carries one — older reports may have been written by a
+      // different LLM build, so we report what's currently in flight.
+      sub: `Verdict: ${fiaConfirmed} fraud confirmed, ${fiaUncertain} uncertain${fiaModelVersion ? ` · ${fiaModelVersion}` : ''}`,
       when: 'Today',
       onClick: () => nav('invest')
     },
@@ -134,7 +160,7 @@ function Dashboard({ toast: _toast, user: _user, queue, models, reports, webhook
       title: `Model ${shadow.version} ready to activate`,
       // F1 can be null on a freshly-registered candidate that hasn't been
       // scored yet — fall back to "—" instead of throwing on `.toFixed`.
-      sub: `Shadow F1 = ${shadow.F1 == null ? '—' : shadow.F1.toFixed(3)} vs champion ${champion?.F1 == null ? '—' : champion.F1.toFixed(3)} · McNemar p < 0.01`,
+      sub: `Shadow F1 = ${shadow.F1 == null ? '—' : shadow.F1.toFixed(3)} vs champion ${champion?.F1 == null ? '—' : champion.F1.toFixed(3)}`,
       when: 'Today',
       onClick: () => nav('models')
     },

@@ -158,7 +158,12 @@ class DecisionAuditService {
     offset: number;
     order?: "newest" | "oldest";
     search?: string;
-  }): Promise<{ rows: DecisionAudit[]; total: number }> {
+  }): Promise<{
+    rows: DecisionAudit[];
+    total: number;
+    oldestPendingAt: Date | null;
+    totalPendingAmount: number;
+  }> {
     return this.repo.listReviewQueuePaginated(opts);
   }
 
