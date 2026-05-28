@@ -299,7 +299,7 @@ function Dashboard({ toast: _toast, user: _user, queue, models, reports, webhook
               style={{
                 display: 'grid',
                 gridTemplateColumns:
-                  'minmax(260px, 1.6fr) minmax(110px, 1fr) minmax(90px, 0.9fr) auto minmax(100px, 1fr) minmax(64px, 0.55fr)',
+                  'minmax(260px, 1.6fr) minmax(110px, 0.9fr) minmax(110px, 0.9fr) minmax(180px, 1.3fr) minmax(95px, 0.7fr) minmax(64px, 0.55fr)',
                 gap: 12,
                 alignItems: 'center',
                 padding: '4px 0 8px',
