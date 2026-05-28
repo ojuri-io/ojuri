@@ -1,4 +1,5 @@
 import bcrypt from "bcrypt";
+import crypto from "crypto";
 import jwt from "jsonwebtoken";
 import { singleton } from "tsyringe";
 import UserRepo from "./repositories/user.repo";
@@ -168,6 +169,38 @@ class AuthService {
     return {
       token: minted.token,
       expiresAt: new Date(Date.now() + minted.expiresIn * 1000).toISOString(),
+    };
+  }
+
+  /**
+   * Constant-time check of a bearer token against the configured
+   * `MLA_SERVICE_TOKEN` shared secret. When it matches, synthesise a
+   * non-user subject scoped to the two model-lifecycle permissions MLA
+   * actually needs — register a new version and flip its status.
+   *
+   * Why static-secret instead of JWT for this caller:
+   *   - MLA is a long-running process; rotating a JWT mid-run would add
+   *     a refresh thread for one of the lowest-rate callers in the system.
+   *   - The token never leaves the trust boundary (same docker network or
+   *     same operator-managed host).
+   *
+   * Length floor is 32 chars to make guessing infeasible without
+   * adding extra rate-limit machinery on the admin routes. Token is
+   * compared via SHA-256 digest + timingSafeEqual so neither value nor
+   * length leak through response timing.
+   */
+  verifyServiceToken(token: string): AuthSubject | null {
+    const expected = process.env.MLA_SERVICE_TOKEN;
+    if (!expected || expected.length < 32) return null;
+    const tokenDigest = crypto.createHash("sha256").update(token).digest();
+    const expectedDigest = crypto.createHash("sha256").update(expected).digest();
+    if (!crypto.timingSafeEqual(tokenDigest, expectedDigest)) return null;
+    return {
+      userId: "service:mla",
+      tenantId: "default",
+      username: "mla-service",
+      permissions: ["models:read", "models:register", "models:set_status"],
+      mustChangePassword: false,
     };
   }
 

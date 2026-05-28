@@ -363,7 +363,11 @@ class MLAService:
                 num_features=catalog.input_dimension,
             )
 
-            # Step 6: Upload to registry
+            # Step 6: Upload to registry. Trigger source drives whether
+            # RDA auto-activates the new version (drift/initial) or
+            # leaves it as CANDIDATE for operator review (manual). The
+            # `reason` field is set by callers — `_train_initial_model`,
+            # `on_drift_detected`, and `trigger_manual_retrain`.
             logger.info("Step 6/7: Uploading to Model Registry...")
             metadata = {
                 **training_metrics,
@@ -371,12 +375,20 @@ class MLAService:
                 'timestamp': time.time(),
                 'training_data_size': len(X_train)
             }
+            reason = drift_metrics.get('reason')
+            if reason == 'manual':
+                trigger = 'manual'
+            elif reason == 'initial_training':
+                trigger = 'initial'
+            else:
+                trigger = 'drift'
 
             self.model_registry.upload_model(
                 model=new_model,  # Pass model object for pickling
                 model_path=model_path,
                 version=self.next_version,
-                metadata=metadata
+                metadata=metadata,
+                trigger=trigger,
             )
 
             # Step 7: Update MLA state

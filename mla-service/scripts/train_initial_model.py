@@ -140,6 +140,7 @@ def train_initial_model(num_samples: int = None, skip_registry: bool = False):
                     'training_samples': len(X_train),
                     'is_initial_model': True,
                 },
+                trigger='initial',
             )
             logger.info(f"  Registered as version: {version}")
         except Exception as e:
