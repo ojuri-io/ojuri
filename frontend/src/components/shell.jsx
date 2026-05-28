@@ -872,10 +872,14 @@ export function unreadCount(items, lastSeenAt) {
   if (Number.isNaN(seenMs)) return items.length;
   let n = 0;
   for (const it of items) {
-    if (!it?.anchor) {
-      n++;
-      continue;
-    }
+    // No anchor → we can't prove the item is newer than `lastSeenAt`.
+    // Once the user has acknowledged the bell at least once
+    // (lastSeenAt is set, which the early-return above guarantees),
+    // treat anchorless items as seen so the badge can actually drop
+    // to zero. Without this, items derived from props the dashboard
+    // hasn't hydrated yet (e.g. `queue = []` on first load) stick at
+    // anchor=null forever and the badge never clears.
+    if (!it?.anchor) continue;
     const anchorMs = new Date(it.anchor).getTime();
     if (Number.isNaN(anchorMs) || anchorMs > seenMs) n++;
   }
