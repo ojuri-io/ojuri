@@ -22,7 +22,7 @@ and [`src/v1/modules/rda/validations/predict.validator.ts`](../src/v1/modules/rd
 
 | Field             | Type    | Constraints                                                  | Notes |
 |---|---|---|---|
-| `transaction_id`  | string  | UUID                                                         | Echoed in the response and the audit row. |
+| `transaction_id`  | string  | 10–255 chars                                                 | Caller-controlled identifier. Free-form string — UUID, ULID, PSP txn ref, order id, your own format — as long as it's at least 10 chars and unique within your tenant. Echoed in the response, persisted on the audit row and the `transactions` row (`UNIQUE` constraint on the latter), indexed for fast lookup, and searchable from the audit list. There is no separate `reference` field; pick a format and use this one. Pass the same value as `Idempotency-Key` if you want replay-safety. |
 | `sender_id`       | string  | 1–255 chars                                                  | Stable id for the originator. Used to look up Redis features. |
 | `receiver_id`     | string  | 1–255 chars                                                  | Stable id for the counterparty. |
 | `amount`          | number  | `0.01 ≤ x ≤ 9_999_999_999`                                   | Use `currency` to disambiguate per call. |
@@ -41,6 +41,13 @@ first-touch users where the Redis snapshot is sparse.
 | Field    | Type   | Notes |
 |---|---|---|
 | `segment`| string, ≤100 chars | Routes the request through the model registry's per-segment threshold map. Defaults to the global threshold when absent. |
+
+### Display names
+
+| Field                      | Type                | Notes |
+|---|---|---|
+| `customer_account_name`    | string, ≤255 chars  | Display name for the sender chip in Sentinel. Account numbers (`sender_id`) are typically numeric and don't yield readable initials — use this to give the operator a name to read. Persisted on `transactions`. |
+| `beneficiary_account_name` | string, ≤255 chars  | Display name for the receiver chip. Same rationale as `customer_account_name`. |
 
 ### Identity
 
@@ -180,3 +187,95 @@ your own features through here without touching the catalogue.
 | 409    | Another request with the same Idempotency-Key is still in flight. Retry. | `{ status: false, message }` + `Retry-After: 1` |
 | 422    | Idempotency-Key reused with a different request body. | `{ status: false, message }` |
 | 500    | Inference / audit / Kafka pipeline failed catastrophically. | `{ status: false, message }` |
+
+## Sample request — full payload
+
+Every documented field, validated end-to-end against the Docker-stack
+RDA. Omit any block your integration doesn't have — the catalogue
+substitutes defaults. `transaction_id` is caller-controlled — any
+10–255 char string is accepted; use whatever format your upstream
+system already issues (UUID, ULID, PSP txn ref, order id, …). Pass the
+same value as `Idempotency-Key` if you want replay-safe POSTs.
+
+```bash
+curl -X POST http://localhost/v1/predict \
+  -H "Content-Type: application/json" \
+  -H "X-Correlation-ID: trace-sample-001" \
+  -H "Idempotency-Key: 11a4d0eb-4542-4374-9d7c-7d639c4b79a0" \
+  -d '{
+    "transaction_id": "11a4d0eb-4542-4374-9d7c-7d639c4b79a0",
+    "sender_id": "2000000068",
+    "receiver_id": "0250809717",
+    "customer_account_name": "AYODEJI SAMUEL ABODUNRIN",
+    "beneficiary_account_name": "MICHAEL ONYI",
+    "amount": 30000.00,
+    "transaction_type": "TRANSFER",
+    "timestamp": 1779961621428,
+    "segment": "high_value",
+
+    "customer_dob": "1989-04-17",
+    "customer_nationality": "NG",
+    "customer_type": "INDIVIDUAL",
+    "customer_id_type": "BVN",
+    "customer_id_number": "0000000000",
+    "account_age_days": 1284,
+    "is_authenticated": true,
+
+    "channel": "RETAIL",
+    "currency": "NGN",
+    "is_inflow": false,
+    "is_recurring": false,
+    "wallet_balance": 86300.40,
+
+    "customer_latitude": 6.5244,
+    "customer_longitude": 3.3792,
+    "transaction_country": "NG",
+    "destination_country": "NG",
+    "ip_country": "NG",
+    "transaction_lat": 6.5300,
+    "transaction_lng": 3.3700,
+
+    "ip_is_vpn": false,
+    "device_is_trusted": true,
+    "device_type": "MOBILE",
+    "session_to_txn_seconds": 47,
+    "device_fingerprint": {
+      "browser": "Chrome 124",
+      "os": "Android 14",
+      "screen_resolution": "412x915"
+    },
+
+    "agent_id": "agent_lagos_lekki_27",
+    "agent_latitude": 6.4350,
+    "agent_longitude": 3.4715,
+    "agent_battery_level": 73,
+
+    "recipient_nationality": "NG",
+    "recipient_id_type": "NIN",
+    "customer_fi": "9japay",
+    "recipient_fi": "gtbank",
+
+    "request_context": {
+      "narration": "FROM AYODEJI SAMUEL ABODUNRIN TO MICHAEL For food for the family",
+      "provider": "nibssclassic",
+      "transfer_type": "interbank"
+    }
+  }'
+```
+
+Notes on this sample:
+
+- **`Idempotency-Key` reuses `transaction_id`.** Same value, two
+  surfaces — the controller doesn't synthesise the key from anywhere
+  in the body, so callers must opt into replay-safety explicitly with
+  the header. Replaying the same body with the same key within 24 h
+  returns the cached response with `Idempotency-Replay: true`.
+- **`request_context.narration`** is surfaced prominently in
+  Sentinel's transaction detail page; the rest of the object is
+  passed through to PAA and the audit row unchanged.
+- **`recipient_dob`** intentionally absent. The DTO accepts it for
+  forward-compatibility, but the column was dropped from
+  `transactions` on review — recipient age has minimal signal.
+- **Agent lat/lng/battery** are accepted by the DTO but only
+  `agent_id` survives persistence (see the migration comment in
+  `20260515000001_extend_transactions_for_training.ts`).

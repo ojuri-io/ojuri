@@ -63,7 +63,12 @@ decisions.
 - **Node 20+** (see `.nvmrc`) and **npm 10+** for RDA, PAA, and the frontend.
 - **Python 3.11** only if you intend to run MLA (training) or FIA (LLM
   investigation reports) directly on the host. The default `docker compose up`
-  skips both.
+  skips both. Other 3.x versions are not supported — MLA pins ONNX toolchain
+  versions that don't build cleanly elsewhere. Install via
+  `brew install python@3.11` (macOS), `apt install python3.11` (Debian/Ubuntu),
+  or `pyenv install 3.11`. The exact binary name (`python3.11` vs `python3` vs
+  pyenv-shimmed `python`) depends on how you installed it — use whichever
+  resolves to `Python 3.11.x` for `--version`.
 - **Docker 20.10+** with Compose v2.
 - **Host ports** kept free: `80 3000 3001 5173 5433 6380 9090 9091 9093 9094 29092`.
   Postgres in Docker listens on `5433` (not `5432`) to avoid host conflicts.
@@ -87,15 +92,50 @@ PAA workers, and the Prometheus/Grafana stack. FIA is gated behind a profile
 because it carries ~7.6 GB of Phi-3 weights — opt in with
 `docker compose --profile fia up -d fia` when you have the disk and RAM.
 
-> MLA (the model trainer) is intentionally **not** in Compose — it runs on
-> the host venv (`cd mla-service && python -m src.main`). The "System health"
-> page in Sentinel will show MLA as offline until you start it locally; that
-> is expected unless you wire MLA into your own deployment.
-
 > Copying `.env.example` to `.env` is required before `docker compose up` —
 > RDA refuses `/v1/auth/login` without `AUTH_JWT_SECRET`, and the Knex-backed
 > admin endpoints need the `DB_*` block. Rotate `AUTH_JWT_SECRET` before any
 > non-dev deploy.
+
+> MLA (the model trainer) is intentionally **not** in Compose — it runs on
+> the host venv. First-time setup:
+>
+> ````bash
+> cd mla-service
+> python3.11 --version            # must report Python 3.11.x — see Prerequisites
+> python3.11 -m venv venv && source venv/bin/activate
+> pip install -r requirements.txt
+> python -m src.main
+> ````
+>
+> If `python3.11` isn't on your PATH, substitute the binary your installer
+> provides (e.g. `python3` on Debian/Ubuntu after `apt install python3.11`,
+> or the pyenv shim once `pyenv local 3.11` is set in this directory).
+>
+> On subsequent runs, just `source venv/bin/activate && python -m src.main`.
+> The "System health" page in Sentinel will show MLA as offline until you
+> start it locally; that is expected unless you wire MLA into your own
+> deployment.
+>
+> On a fresh checkout MLA will log a one-time `⚠️  No production model
+> found in registry — This is normal for first deployment` and idle
+> waiting for drift signals. This is **not** a conflict with the shipped
+> demo `models/fraud_model.onnx` — that file is what RDA loads at the
+> registry root so `/v1/predict` works out of the box, whereas MLA's
+> registry scans `models/versions/<v>/` for lineage-tracked versions and
+> that directory ships empty. To seed `models/versions/v1.0/` immediately
+> (so MLA has a baseline for A/B comparisons on its first retrain), run
+> the cold-start trainer once before `python -m src.main`:
+>
+> ````bash
+> python scripts/train_initial_model.py     # writes models/versions/v1.0/{model.onnx,model.json,scaler.npz,meta.json}
+> ````
+>
+> Without real `fraudLabel` data in Postgres, the script falls back to
+> synthetic data and logs a warning — fine for a dev walkthrough, not for
+> production results. See [`docs/TRAINING.md`](docs/TRAINING.md) for
+> training against your own data.
+
 
 > A 120 KB demo ONNX model (`models/fraud_model.onnx`, derived from a
 > PaySim-trained XGBoost) ships in the repo so `/v1/predict` returns
@@ -136,8 +176,18 @@ prediction quality when supplied — see
 [`docs/PREDICT-API.md`](docs/PREDICT-API.md) for the full field
 reference.
 
+> `transaction_id` is the single identifier Ojuri tracks. It's
+> caller-controlled — any 10–255 char string is accepted, so plug in
+> whatever your upstream system already issues (UUID, ULID, PSP txn
+> ref, order id, your own format). The same string is what the audit
+> row carries, what `transactions.completed` /
+> `transactions.blocked` are partitioned by (for blocked events), and
+> what Sentinel searches against. Make it unique per transaction
+> within your tenant (the `transactions` table enforces uniqueness),
+> and pass it as `Idempotency-Key` if you want replay-safe POSTs.
+
 ````bash
-curl -X POST http://localhost:3000/v1/predict \
+curl -X POST http://localhost/v1/predict \
   -H "Content-Type: application/json" \
   -d '{
     "transaction_id": "550e8400-e29b-41d4-a716-446655440000",

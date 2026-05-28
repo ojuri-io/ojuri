@@ -323,7 +323,6 @@ function WebhookCard({ w, toast, onRemove }) {
               }}>
                 <div onClick={()=>{ setOpen(false); toast('Sent test event'); }} style={{padding:'6px 10px', borderRadius:4, cursor:'pointer', display:'flex', alignItems:'center', gap:6}}><Ti name="bolt" size={12}/>Send test event</div>
                 <div onClick={()=>{ setOpen(false); toast('Retry all queued'); }} style={{padding:'6px 10px', borderRadius:4, cursor:'pointer', display:'flex', alignItems:'center', gap:6}}><Ti name="refresh" size={12}/>Retry failed</div>
-                <div onClick={()=>{ setOpen(false); toast('Edit subscription coming soon'); }} style={{padding:'6px 10px', borderRadius:4, cursor:'pointer', display:'flex', alignItems:'center', gap:6}}><Ti name="edit" size={12}/>Edit</div>
                 <div style={{height:'0.5px', background:'var(--color-border-tertiary)', margin:'4px 0'}}/>
                 <div onClick={()=>{ setOpen(false); onRemove(); }} style={{padding:'6px 10px', borderRadius:4, cursor:'pointer', display:'flex', alignItems:'center', gap:6, color:'var(--color-text-danger)'}}><Ti name="trash" size={12}/>Remove</div>
               </div>
@@ -354,7 +353,6 @@ function KeyMenu({ key_: _key, onClose, onRotate, onRevoke }) {
       borderRadius:'var(--border-radius-md)', boxShadow:'var(--shadow-md)', minWidth:160, padding:4, fontSize:12
     }}>
       <div style={{padding:'6px 10px', borderRadius:4, cursor:'pointer', display:'flex', alignItems:'center', gap:6}} onClick={onRotate}><Ti name="refresh" size={12}/>Rotate</div>
-      <div style={{padding:'6px 10px', borderRadius:4, cursor:'pointer', display:'flex', alignItems:'center', gap:6}}><Ti name="edit" size={12}/>Edit scope</div>
       <div style={{height:'0.5px', background:'var(--color-border-tertiary)', margin:'4px 0'}}/>
       <div style={{padding:'6px 10px', borderRadius:4, cursor:'pointer', display:'flex', alignItems:'center', gap:6, color:'var(--color-text-danger)'}} onClick={onRevoke}><Ti name="ban" size={12}/>Revoke</div>
     </div>

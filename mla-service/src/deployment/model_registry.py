@@ -107,11 +107,30 @@ class ModelRegistry:
     # Public API (matches the old MinIO-backed class)
     # ───────────────────────────────────────────────────────────
     def upload_model(
-        self, model, model_path: str, version: str, metadata: dict
+        self,
+        model,
+        model_path: str,
+        version: str,
+        metadata: dict,
+        trigger: str = "drift",
     ) -> str:
         """
         Materialise a versioned model directory and, if configured,
-        register the version with RDA + flip to ACTIVE.
+        register the version with RDA. Whether the version is also
+        flipped to ACTIVE depends on ``trigger``:
+
+          - ``"drift"`` (default) — drift detector kicked off the
+            retrain. Auto-activate so RDA hot-swaps without operator
+            action.
+          - ``"initial"`` — cold-start training (``train_initial_model.py``
+            or first-boot bootstrap). Auto-activate so ``/v1/predict``
+            has a real model immediately.
+          - ``"manual"`` — operator pressed "Retrain now" in Sentinel.
+            Register as CANDIDATE only; the operator reviews the
+            metrics and explicitly clicks ACTIVATE in the model
+            registry page. Stops the UI from silently swapping a
+            production model under an operator who pressed the button
+            for inspection.
 
         Returns the version label (used by callers for logging).
         """
@@ -179,7 +198,9 @@ class ModelRegistry:
                 "feature_schema_version": catalog.schema_version,
                 "feature_input_dimension": catalog.input_dimension,
                 "trained_at": time.time(),
+                "trigger": trigger,
             },
+            activate=trigger != "manual",
         )
 
         logger.info("✅ Model %s materialised at %s", version, version_dir)
@@ -289,12 +310,16 @@ class ModelRegistry:
         sha256: str,
         metrics: Dict[str, Any],
         metadata: Optional[Dict[str, Any]] = None,
+        activate: bool = True,
     ) -> None:
         """
-        POST /v1/admin/models to create a CANDIDATE row, then POST the
-        status transition to ACTIVE. Failures are warnings, not
-        exceptions — local-only mode is still useful for adopters who
-        haven't wired up a service account yet.
+        POST /v1/admin/models to create a CANDIDATE row. When
+        ``activate`` is true, also POST the status transition to ACTIVE.
+        Manual (UI-triggered) retrains pass ``activate=False`` so the
+        operator reviews metrics in Sentinel before promoting.
+
+        Failures are warnings, not exceptions — local-only mode is still
+        usable for adopters who haven't wired up the service token.
         """
         if not self.rda_api_url or not self.rda_token:
             return
@@ -323,6 +348,13 @@ class ModelRegistry:
                 )
                 return
             logger.info("  ✅ RDA register: %s (%s)", version, resp.status_code)
+
+            if not activate:
+                logger.info(
+                    "  ⏸  Manual trigger — leaving %s as CANDIDATE for operator review",
+                    version,
+                )
+                return
 
             activate_url = (
                 f"{self.rda_api_url.rstrip('/')}/v1/admin/models/{version}/status"

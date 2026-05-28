@@ -27,7 +27,10 @@ export function requireAuth(...requiredPermissions: string[]) {
       return res.code(httpStatus.UNAUTHORIZED).send(ErrorResponse("Authentication required"));
     }
 
-    const subject = authService.verifyToken(token);
+    // Try the static service-token path first (cheap SHA-256 + timingSafeEqual);
+    // fall through to JWT verification. MLA uses this path to register and
+    // activate model versions without holding a refreshable JWT.
+    const subject = authService.verifyServiceToken(token) ?? authService.verifyToken(token);
     if (!subject) {
       return res
         .code(httpStatus.UNAUTHORIZED)

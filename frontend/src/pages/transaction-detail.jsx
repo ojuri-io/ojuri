@@ -233,12 +233,12 @@ function TransactionDetail({ toast, user, nav, txn, queue, reports: _reports, re
               )}
             </p>
           </div>
-          <span className={'pill danger'} style={{padding:'4px 10px', fontSize:11, flexShrink:0}}>DECLINE · {isPreRule ? 'RULE' : 'ML'}</span>
+          <DecisionPill decision={t.finalDecision} source={t.decisionSource} stage={t.stage}/>
         </div>
         <div style={{display:'grid', gridTemplateColumns:'1fr 28px 1fr', gap:12, alignItems:'center', padding:12, background:'var(--color-background-secondary)', borderRadius:'var(--border-radius-md)'}}>
-          <PartyChip role="Sender" handle={t.sender}/>
+          <PartyChip role="Sender" handle={t.sender} account={t.context?.customerAccountName}/>
           <Ti name="arrow-right" size={16} style={{color:'var(--color-text-tertiary)', justifySelf:'center'}}/>
-          <PartyChip role="Receiver" handle={t.receiver}/>
+          <PartyChip role="Receiver" handle={t.receiver} account={t.context?.beneficiaryAccountName}/>
         </div>
       </section>
 
@@ -252,7 +252,7 @@ function TransactionDetail({ toast, user, nav, txn, queue, reports: _reports, re
           <div style={{display:'grid', gridTemplateColumns:'repeat(3, 1fr)', gap:10, marginBottom:14}}>
             <Tile label="PROBABILITY" value={t.championScore.toFixed(2)} tone="danger"/>
             <Tile label="THRESHOLD" value={t.threshold.toFixed(2)}/>
-            <Tile label="LATENCY" value="3 ms"/>
+            <Tile label="LATENCY" value={t.latencyMs == null ? '—' : `${t.latencyMs} ms`}/>
           </div>
           <p style={{margin:'0 0 8px', fontSize:11, color:'var(--color-text-secondary)'}}>Top reason codes</p>
           <div style={{display:'flex', flexDirection:'column', gap:8}}>
@@ -268,6 +268,15 @@ function TransactionDetail({ toast, user, nav, txn, queue, reports: _reports, re
           </div>
         </section>
       )}
+
+      {/* Transaction context — populated from the `transactions` JOIN on
+          the audit lookup. Sits below ML decision and is collapsed by
+          default; operators expand only when they need to inspect the
+          payload (channel, geography, narration, …). PAA writes the
+          underlying row asynchronously so for very fresh predictions
+          `context` is null and the panel shows a "still gathering"
+          skeleton instead of dashes. */}
+      <TransactionContext context={t.context}/>
 
       {/* FIA report */}
       <section className="panel" style={{marginBottom:12, padding:'16px 18px'}}>
@@ -368,16 +377,35 @@ function TransactionDetail({ toast, user, nav, txn, queue, reports: _reports, re
   );
 }
 
-function PartyChip({ role, handle, tone }) {
+function PartyChip({ role, handle, account, tone }) {
   const bg = tone === 'danger' ? 'var(--color-background-danger)' : 'var(--color-background-info)';
   const fg = tone === 'danger' ? 'var(--color-text-danger)' : 'var(--color-text-info)';
-  const initials = (handle || '').replace(/[^a-z]/gi,'').slice(0,2).toUpperCase() || 'XX';
+  // Prefer the readable account name for both the displayed label and
+  // the initials disc. When neither name nor any letters in the handle
+  // are available, fall back to the first 2 chars of the handle (which
+  // for numeric account numbers gives something like "20", not "XX").
+  const primary = (account || '').trim() || (handle || '').trim() || '';
+  const secondary = account ? handle : null;
+  const lettersFromName = (account || '')
+    .split(/\s+/)
+    .filter(Boolean)
+    .map((w) => w[0])
+    .join('')
+    .slice(0, 2)
+    .toUpperCase();
+  const initials =
+    lettersFromName ||
+    (handle || '').replace(/[^a-z]/gi, '').slice(0, 2).toUpperCase() ||
+    (handle || '').slice(0, 2) ||
+    '—';
   return (
     <div style={{display:'flex', alignItems:'center', gap:10, minWidth:0}}>
       <div style={{width:32, height:32, borderRadius:'50%', background: bg, color: fg, display:'flex', alignItems:'center', justifyContent:'center', fontSize:12, fontWeight:500, flexShrink:0}}>{initials}</div>
       <div style={{minWidth:0}}>
-        <p className="truncate" style={{margin:0, fontSize:12, fontWeight:500}}>{handle || '—'}</p>
-        <p style={{margin:'1px 0 0', fontSize:10, color:'var(--color-text-tertiary)', whiteSpace:'nowrap', overflow:'hidden', textOverflow:'ellipsis'}}>{role}</p>
+        <p className="truncate" style={{margin:0, fontSize:12, fontWeight:500}}>{primary || '—'}</p>
+        <p style={{margin:'1px 0 0', fontSize:10, color:'var(--color-text-tertiary)', whiteSpace:'nowrap', overflow:'hidden', textOverflow:'ellipsis'}}>
+          {secondary ? <><span className="mono">{secondary}</span> · {role}</> : role}
+        </p>
       </div>
     </div>
   );
@@ -453,6 +481,9 @@ function normaliseDetail(row, fromQueue) {
     amount: Number(row.amount ?? base.amount ?? 0),
     txnType: row.txnType || row.transactionType || base.txnType || '—',
     segment: row.segment || base.segment || '—',
+    // Context block from the LEFT JOIN against `transactions` in the
+    // audit repo. Null when PAA hasn't flushed yet — UI handles that.
+    context: row.context ?? base.context ?? null,
     championScore: Number(row.championScore ?? base.championScore ?? 0),
     // shadowScore may be null when no shadow model is registered — keep null
     // so the UI can render "—" instead of "0.00".
@@ -469,6 +500,214 @@ function normaliseDetail(row, fromQueue) {
     decisionSource: row.decisionSource || base.decisionSource || null,
     latencyMs: row.latencyMs ?? base.latencyMs ?? null,
   };
+}
+
+/**
+ * Renders the request-context block surfaced by the audit→transactions
+ * JOIN. The audit row exists immediately at predict-time; PAA flushes
+ * the matching `transactions` row asynchronously, so a brand-new
+ * transaction may arrive with `context === null`. We render a
+ * lightweight "still gathering" line in that case rather than printing
+ * a wall of dashes.
+ *
+ * Sections collapse when empty so adopters who only send the core 6
+ * fields don't see a sea of placeholders. Order intentionally puts
+ * narration first — it's the single most operator-useful line.
+ */
+function TransactionContext({ context }) {
+  // Collapsed by default — the panel sits below the ML decision and an
+  // operator who's just scanning a row's decision doesn't need to see
+  // 30 fields they didn't ask for. Click the header to expand.
+  const [open, setOpen] = useState(false);
+
+  if (!context) {
+    return (
+      <section className="panel" style={{marginBottom:12, padding:'14px 18px'}}>
+        <h2 style={{margin:0, fontSize:14, fontWeight:500}}>Transaction context</h2>
+        <p style={{margin:'6px 0 0', fontSize:12, color:'var(--color-text-tertiary)'}}>
+          Awaiting PAA flush — the contextual payload appears here once PAA writes the
+          <code className="mono"> transactions</code> row (usually within a few seconds of the prediction).
+        </p>
+      </section>
+    );
+  }
+
+  const reqCtx = (context && context.requestContext) || {};
+  const narration = (reqCtx.narration || reqCtx.description || '').toString().trim();
+
+  // Build (label, value) lists per logical group. Empty groups don't render.
+  const sections = [
+    {
+      title: 'Routing',
+      rows: [
+        ['Channel', context.channel],
+        ['Currency', context.currency],
+        ['Provider', reqCtx.provider],
+        ['Transfer type', reqCtx.transfer_type || reqCtx.transferType],
+        ['Fee', reqCtx.fee != null ? String(reqCtx.fee) : null],
+        ['Sender FI', context.customerFi],
+        ['Recipient FI', context.recipientFi],
+        ['Recurring', context.isRecurring == null ? null : context.isRecurring ? 'yes' : 'no'],
+        ['Inflow', context.isInflow == null ? null : context.isInflow ? 'yes' : 'no'],
+      ],
+    },
+    {
+      title: 'Customer',
+      rows: [
+        ['Date of birth', context.customerDob],
+        ['Nationality', context.customerNationality],
+        ['Type', context.customerType],
+        ['ID type', context.customerIdType],
+        ['Account age (days)', context.accountAgeDays],
+        ['Authenticated', context.isAuthenticated == null ? null : context.isAuthenticated ? 'yes' : 'no'],
+        ['Wallet balance', context.walletBalance],
+      ],
+    },
+    {
+      title: 'Recipient',
+      rows: [
+        ['Nationality', context.recipientNationality],
+        ['ID type', context.recipientIdType],
+      ],
+    },
+    {
+      title: 'Geography',
+      rows: [
+        ['Customer location', fmtLatLng(context.customerLatitude, context.customerLongitude)],
+        ['Transaction location', fmtLatLng(context.transactionLat, context.transactionLng)],
+        ['Transaction country', context.transactionCountry],
+        ['Destination country', context.destinationCountry],
+        ['IP country', context.ipCountry],
+        ['IP via VPN', context.ipIsVpn == null ? null : context.ipIsVpn ? 'yes' : 'no'],
+      ],
+    },
+    {
+      title: 'Device / session',
+      rows: [
+        ['Device type', context.deviceType],
+        ['Trusted device', context.deviceIsTrusted == null ? null : context.deviceIsTrusted ? 'yes' : 'no'],
+        ['Session→txn (s)', context.sessionToTxnSeconds],
+        ['Browser', context.deviceFingerprint?.browser],
+        ['OS', context.deviceFingerprint?.os],
+        ['Screen', context.deviceFingerprint?.screen_resolution],
+      ],
+    },
+    {
+      title: 'Agent',
+      rows: [['Agent id', context.agentId]],
+    },
+  ]
+    .map((s) => ({ ...s, rows: s.rows.filter(([, v]) => v != null && v !== '') }))
+    .filter((s) => s.rows.length > 0);
+
+  if (sections.length === 0 && !narration) {
+    // Empty context (everything PAA persisted is null). Hide the panel
+    // — rendering nothing is better than a header followed by a blank.
+    return null;
+  }
+
+  // Compact summary shown next to the collapsed-state chevron — gives
+  // the operator a one-line idea of what's inside without expanding.
+  const summaryParts = [
+    context.channel && context.currency ? `${context.channel} · ${context.currency}` : context.channel || context.currency,
+    sections.length > 0 ? `${sections.reduce((n, s) => n + s.rows.length, 0)} fields` : null,
+    narration ? 'narration' : null,
+  ].filter(Boolean);
+
+  const toggle = () => setOpen((v) => !v);
+
+  return (
+    <section className="panel" style={{marginBottom:12, padding:'14px 18px'}}>
+      <button
+        type="button"
+        onClick={toggle}
+        aria-expanded={open}
+        aria-controls="txn-context-body"
+        style={{
+          display:'flex',
+          alignItems:'center',
+          justifyContent:'space-between',
+          gap:12,
+          width:'100%',
+          padding:0,
+          background:'transparent',
+          border:'none',
+          cursor:'pointer',
+          textAlign:'left',
+          color:'inherit',
+        }}
+      >
+        <div style={{display:'flex', alignItems:'center', gap:8, minWidth:0}}>
+          <Ti name={open ? 'chevron-down' : 'chevron-right'} size={14} style={{color:'var(--color-text-tertiary)', flexShrink:0}}/>
+          <h2 style={{margin:0, fontSize:14, fontWeight:500}}>Transaction context</h2>
+        </div>
+        {summaryParts.length > 0 && (
+          <span className="truncate" style={{fontSize:11, color:'var(--color-text-tertiary)'}}>
+            {summaryParts.join(' · ')}
+          </span>
+        )}
+      </button>
+      {open && (
+        <div id="txn-context-body" style={{marginTop:14}}>
+          {narration && (
+            <div style={{padding:'10px 12px', background:'var(--color-background-secondary)', borderRadius:'var(--border-radius-md)', marginBottom:12}}>
+              <p className="label-up" style={{margin:0}}>Narration</p>
+              <p style={{margin:'4px 0 0', fontSize:13, lineHeight:1.5}}>{narration}</p>
+            </div>
+          )}
+          <div style={{display:'grid', gridTemplateColumns:'repeat(auto-fit, minmax(220px, 1fr))', gap:14}}>
+            {sections.map((s) => (
+              <div key={s.title}>
+                <p className="label-up" style={{margin:'0 0 6px'}}>{s.title}</p>
+                <div style={{display:'flex', flexDirection:'column', gap:4}}>
+                  {s.rows.map(([k, v]) => (
+                    <div key={k} style={{display:'grid', gridTemplateColumns:'120px 1fr', gap:8, fontSize:12}}>
+                      <span style={{color:'var(--color-text-tertiary)'}}>{k}</span>
+                      <span className="truncate" style={{fontFamily: looksLikeId(v) ? 'var(--font-mono)' : undefined}}>{String(v)}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+    </section>
+  );
+}
+
+/**
+ * Hero pill — derives both label and tone from the actual decision on
+ * the audit row. Previously this was hardcoded to "DECLINE · {ML|RULE}"
+ * because the detail page was only opened from the review queue, but
+ * Sentinel now navigates here from the recent-decisions list too where
+ * the row may be ACCEPT or REVIEW.
+ *
+ * `source` (decisionSource) is the layer that produced the final call
+ * — ML, PRE_RULE, or POST_RULE. We render the human form ("ML" /
+ * "RULE") to match the existing label vocabulary.
+ */
+function DecisionPill({ decision, source, stage }) {
+  const finalDecision = decision || 'ACCEPT';
+  const tone = finalDecision === 'DECLINE' ? 'danger' : finalDecision === 'REVIEW' ? 'warn' : 'success';
+  const isRule = source === 'PRE_RULE' || source === 'POST_RULE' || stage === 'PRE_RULE';
+  const label = isRule ? 'RULE' : 'ML';
+  return (
+    <span className={`pill ${tone}`} style={{padding:'4px 10px', fontSize:11, flexShrink:0}}>
+      {finalDecision} · {label}
+    </span>
+  );
+}
+
+function fmtLatLng(lat, lng) {
+  if (lat == null && lng == null) return null;
+  const f = (v) => (v == null ? '—' : Number(v).toFixed(4));
+  return `${f(lat)}, ${f(lng)}`;
+}
+
+function looksLikeId(v) {
+  if (typeof v !== 'string') return false;
+  return /^[A-Za-z]{2,4}_/.test(v) || /^\d{6,}$/.test(v);
 }
 
 export default TransactionDetail;

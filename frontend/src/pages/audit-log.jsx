@@ -11,7 +11,7 @@ import { useState, useMemo, useEffect } from 'react';
 import { Ti, PageHead, fmtNaira, truncId } from '../components/shell.jsx';
 import { SearchInput, DateRangeFilter } from '../components/search-input.jsx';
 import { Pagination } from '../components/pagination.jsx';
-import { listAuditRows, listReasonCodes } from '../api/client.js';
+import { listAuditRows, listReasonCodes, exportAuditRows } from '../api/client.js';
 
 const PER_PAGE = 12;
 // Fallback catalogue used only when /v1/admin/audit/reason-codes hasn't
@@ -78,6 +78,9 @@ function AuditLog({ toast, nav, rules: _rules }) {
   const [forbidden, setForbidden] = useState(false);
   const [loading, setLoading] = useState(false);
   const [queryMs, setQueryMs] = useState(0);
+  // 'csv' | 'json' | null. Doubles as "disabled" guard so a second
+  // click doesn't fire a parallel export and as the spinner icon flag.
+  const [exporting, setExporting] = useState(null);
   // Collapsible filters panel. Sticky per browser so analysts who
   // routinely work with the filters closed don't have to dismiss it
   // on every page visit. Default = open so first-timers see it.
@@ -197,6 +200,60 @@ function AuditLog({ toast, nav, rules: _rules }) {
     }));
     setPage(1);
     toast(`Filters applied · query ${queryMs}ms`);
+  };
+
+  /**
+   * Real export — pages the committed filter set through `/v1/admin/audit`
+   * (no `limit/offset` so we get the whole match up to 5,000 rows) and
+   * triggers a Blob download. CSV is built locally to match the column
+   * order the table renders; JSON ships the raw row payload so adopters
+   * piping into analytics tools don't lose the override / model-version
+   * fields.
+   */
+  const doExport = async (format) => {
+    if (exporting) return;
+    setExporting(format);
+    try {
+      const filterPayload = {
+        search: filters.search || undefined,
+        from: filters.from || undefined,
+        to: filters.to || undefined,
+        decision: filters.decisions && filters.decisions.size > 0 && filters.decisions.size < 3
+          ? Array.from(filters.decisions)
+          : undefined,
+        modelVersion: filters.model || undefined,
+        reasonCodes:
+          filters.reasonFilters && filters.reasonFilters.size > 0
+            ? Array.from(filters.reasonFilters)
+            : undefined,
+        overridden: filters.overridden || undefined,
+        pending: filters.pending || undefined,
+      };
+      const { rows: all, total: matched, truncated } = await exportAuditRows(filterPayload, {
+        maxRows: 5000,
+        pageSize: 500,
+      });
+      if (!all.length) {
+        toast('Nothing to export — the current filters returned no rows', 'warn');
+        return;
+      }
+      const stamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
+      if (format === 'csv') {
+        downloadBlob(`audit-${stamp}.csv`, 'text/csv;charset=utf-8', toCsv(all));
+      } else {
+        downloadBlob(`audit-${stamp}.json`, 'application/json;charset=utf-8', JSON.stringify(all, null, 2));
+      }
+      toast(
+        truncated
+          ? `Exported first ${all.length.toLocaleString()} of ${matched.toLocaleString()} rows`
+          : `Exported ${all.length.toLocaleString()} rows`,
+        'success',
+      );
+    } catch (err) {
+      toast(`Export failed · ${String(err.message || err)}`, 'danger');
+    } finally {
+      setExporting(null);
+    }
   };
 
   const reset = () => {
@@ -404,8 +461,22 @@ function AuditLog({ toast, nav, rules: _rules }) {
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '10px 14px', borderBottom: '0.5px solid var(--color-border-tertiary)', background: 'var(--color-background-secondary)' }}>
           <p style={{ margin: 0, fontSize: 11, color: 'var(--color-text-secondary)' }}>{displayTotal} rows matched · query {queryMs || '—'}ms</p>
           <div style={{ display: 'flex', gap: 6 }}>
-            <button style={{ fontSize: 11, padding: '4px 9px' }} onClick={() => toast('CSV exported · ' + displayTotal + ' rows')}><Ti name="file-type-csv" size={12} />CSV</button>
-            <button style={{ fontSize: 11, padding: '4px 9px' }} onClick={() => toast('JSON exported · ' + displayTotal + ' rows')}><Ti name="braces" size={12} />JSON</button>
+            <button
+              style={{ fontSize: 11, padding: '4px 9px' }}
+              disabled={exporting || displayTotal === 0}
+              onClick={() => doExport('csv')}
+              title={displayTotal === 0 ? 'Nothing to export' : 'Download the current filter set as CSV (caps at 5,000 rows)'}
+            >
+              <Ti name={exporting === 'csv' ? 'loader-2' : 'file-type-csv'} size={12} />CSV
+            </button>
+            <button
+              style={{ fontSize: 11, padding: '4px 9px' }}
+              disabled={exporting || displayTotal === 0}
+              onClick={() => doExport('json')}
+              title={displayTotal === 0 ? 'Nothing to export' : 'Download the current filter set as JSON (caps at 5,000 rows)'}
+            >
+              <Ti name={exporting === 'json' ? 'loader-2' : 'braces'} size={12} />JSON
+            </button>
           </div>
         </div>
 
@@ -498,6 +569,42 @@ function decisionTone(d) {
   if (d === 'ACCEPT') return 'success';
   if (d === 'REVIEW') return 'warn';
   return '';
+}
+
+// CSV / download helpers — duplicated from transactions-list.jsx because
+// extracting them into a shared module is a tiny refactor that gets its
+// own PR. If this pattern shows up in a third page, lift to
+// `frontend/src/lib/csv-export.js`.
+function csvCell(v) {
+  if (v == null) return '';
+  const s = typeof v === 'object' ? JSON.stringify(v) : String(v);
+  if (/[",\n\r]/.test(s)) return '"' + s.replace(/"/g, '""') + '"';
+  return s;
+}
+
+function toCsv(rows) {
+  const headers = [
+    'createdAt', 'transactionId', 'id', 'senderId', 'receiverId',
+    'amount', 'transactionType', 'segment', 'finalDecision', 'decisionSource',
+    'championModelVersion', 'championScore', 'shadowModelVersion', 'shadowScore',
+    'threshold', 'ruleName', 'ruleStage', 'reasonCodes',
+    'overrideDecision', 'overrideReason', 'reviewedBy', 'reviewedAt', 'latencyMs',
+  ];
+  const lines = [headers.join(',')];
+  for (const r of rows) lines.push(headers.map((h) => csvCell(r[h])).join(','));
+  return lines.join('\n');
+}
+
+function downloadBlob(filename, mime, body) {
+  const blob = new Blob([body], { type: mime });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  setTimeout(() => URL.revokeObjectURL(url), 500);
 }
 
 export default AuditLog;

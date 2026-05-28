@@ -384,6 +384,9 @@ class PredictService {
       request_context: (request as unknown as Record<string, unknown>).request_context as
         | Record<string, unknown>
         | undefined,
+
+      customer_account_name: request.customer_account_name,
+      beneficiary_account_name: request.beneficiary_account_name,
     };
 
     this.kafkaProducer.publishAsync(event);

@@ -8,10 +8,30 @@ import {
   listReviewQueue,
 } from '../api/client.js';
 
-function Dashboard({ toast: _toast, user: _user, queue, models, reports, webhooks, nav }) {
+// Shared between the Recent declines header and body rows. Extracted
+// because keeping two literal copies in sync drifts every time the
+// columns change — this is the third regression caused by them
+// evolving independently.
+//
+// Minimums are tuned so the row's total min (~720px + gaps) fits a
+// typical dashboard panel at ≥1024px viewport. Narrower viewports
+// trigger horizontal scroll via `overflow-x: auto` on the wrapper —
+// both rows scroll together since they share the same parent.
+const DECLINE_ROW_GRID =
+  'minmax(180px, 1.4fr) minmax(100px, 0.9fr) minmax(100px, 0.85fr) minmax(150px, 1.2fr) minmax(90px, 0.65fr) minmax(60px, 0.5fr)';
+
+function Dashboard({ toast: _toast, user: _user, queue, models, reports, webhooks, nav, onMarkSeen }) {
+  // Acting on a dashboard item — clicking "Open review queue", or
+  // accepting a "Things to do" tile — is a stronger "I've seen this"
+  // signal than opening the bell, so we treat it as a mark-seen too.
+  // The handler is debounced server-side and no-ops when unset, so
+  // calling it unconditionally is safe.
+  const actAndNav = (target) => {
+    if (typeof onMarkSeen === 'function') onMarkSeen();
+    nav(target);
+  };
   const champion = models.find(m => m.status === 'ACTIVE');
   const shadow = models.find(m => m.status === 'SHADOW');
-  const newReports = reports.slice(0, 4);
   const failingWebhooks = webhooks.filter(w => w.status === 'failing');
 
   // Today's stats — sourced from /v1/stats/today. Empty state surfaces
@@ -21,6 +41,10 @@ function Dashboard({ toast: _toast, user: _user, queue, models, reports, webhook
   const [windowStats, setWindowStats] = useState(null);
   // Live review-queue rows for the "Recent declines" panel.
   const [liveQueue, setLiveQueue] = useState(null);
+  // Server-side aggregates for the "Things to do" tile. Capturing them
+  // alongside the rows keeps the panel honest when the visible slice
+  // is smaller than the real queue (which it almost always is).
+  const [queueAgg, setQueueAgg] = useState({ total: 0, oldestPendingAt: null, totalPendingAmount: 0 });
 
   useEffect(() => {
     let cancelled = false;
@@ -43,11 +67,16 @@ function Dashboard({ toast: _toast, user: _user, queue, models, reports, webhook
     // silently failed the Array.isArray guard, leaving Recent declines empty
     // until the Review Queue page was visited and populated the shared
     // `queue` state.
-    listReviewQueue({ limit: 4 })
+    listReviewQueue({ limit: 8 })
       .then((res) => {
         if (cancelled) return;
         const rows = Array.isArray(res?.rows) ? res.rows : [];
         setLiveQueue(rows);
+        setQueueAgg({
+          total: typeof res?.total === 'number' ? res.total : rows.length,
+          oldestPendingAt: res?.oldestPendingAt ?? null,
+          totalPendingAmount: typeof res?.totalPendingAmount === 'number' ? res.totalPendingAmount : 0,
+        });
       })
       .catch(() => {
         /* fall back to props.queue */
@@ -58,11 +87,21 @@ function Dashboard({ toast: _toast, user: _user, queue, models, reports, webhook
   }, []);
 
   const sourceQueue = Array.isArray(liveQueue) ? liveQueue : queue;
-  const _slaCount = sourceQueue.filter(q => (q.ageMin ?? 0) >= 240).length;
-  const oldestAge = sourceQueue.length ? Math.max(...sourceQueue.map(q => q.ageMin ?? 0), 0) : 0;
-  // `amount` is a string-numeric from /v1/review-queue (pg numeric) —
-  // coerce so the running sum stays numeric rather than concatenating.
-  const totalExposure = sourceQueue.reduce((a, b) => a + Number(b.amount ?? 0), 0);
+  // Aggregates are server-side via /v1/review-queue's `total`,
+  // `oldestPendingAt`, and `totalPendingAmount` — the visible slice
+  // would lie when the queue is larger than the rendered page. When
+  // we're falling back to `props.queue` (live request failed) we
+  // compute from the local slice as a last resort.
+  const usingLive = Array.isArray(liveQueue);
+  const queueTotal = usingLive ? queueAgg.total : sourceQueue.length;
+  const oldestAgeMin = usingLive
+    ? (queueAgg.oldestPendingAt
+        ? Math.max(0, Math.round((Date.now() - new Date(queueAgg.oldestPendingAt).getTime()) / 60000))
+        : 0)
+    : (sourceQueue.length ? Math.max(...sourceQueue.map((q) => q.ageMin ?? 0), 0) : 0);
+  const totalExposure = usingLive
+    ? queueAgg.totalPendingAmount
+    : sourceQueue.reduce((a, b) => a + Number(b.amount ?? 0), 0);
 
   const accept = stats?.counts?.ACCEPT ?? 0;
   const decline = stats?.counts?.DECLINE ?? 0;
@@ -78,65 +117,83 @@ function Dashboard({ toast: _toast, user: _user, queue, models, reports, webhook
 
   // Recent declines — uses the live review queue when reachable, falling
   // back to whatever the parent passed in (an empty array when the API
-  // is offline). Normalises both shapes.
-  //
-  // `ruleCode` is the short identifier shown in the chip (e.g. AMOUNT_HIGH,
-  // FRAUD_TEST_SENDER). `ruleDescr` is the long human-readable name —
-  // surfaced on hover via the chip's `title` attribute so the row's chip
-  // text doesn't dominate the line.
-  const recent = sourceQueue.slice(0, 4).map((q) => {
+  // is offline). The pill carries the *cause* (rule name for
+  // rule-driven, top reason code for ML); the Source column reports the
+  // layer that produced the decision (ML / PRE rule / POST rule).
+  const recent = sourceQueue.slice(0, 8).map((q) => {
     const reasonCodes = (q.reasonCodes || []).map((c) =>
       typeof c === 'string' ? c : c?.code || '',
     ).filter(Boolean);
-    const ruleCode = q.preRule || q.ruleCode || null;
-    const ruleDescr = q.ruleName || null;
+    const decisionSource = q.decisionSource || (q.stage === 'PRE_RULE' ? 'PRE_RULE' : 'ML');
+    const isRule = decisionSource === 'PRE_RULE' || decisionSource === 'POST_RULE';
+    const ruleName = q.ruleName || null;
+    const ruleStage = q.ruleStage || (decisionSource === 'PRE_RULE' ? 'PRE' : decisionSource === 'POST_RULE' ? 'POST' : null);
+    const topReason = reasonCodes[0] || null;
+    const score = Number(q.championScore ?? 0);
     // `/v1/review-queue` returns `createdAt` but not `ageMin`. Mirror the
     // computation used by the review-queue page so the dashboard column
-    // doesn't render blank for live rows (the props.queue fallback path
-    // does already carry `ageMin`).
+    // doesn't render blank for live rows.
     const ageMin = q.ageMin != null
       ? Number(q.ageMin)
       : q.createdAt
         ? Math.max(0, Math.round((Date.now() - new Date(q.createdAt).getTime()) / 60000))
         : null;
     const senderRaw = q.senderId || q.sender || '';
+    // Pill content: rule name when rule-driven (truncated if long),
+    // top reason code when ML, "—" if neither is available.
+    const pillLabel = isRule
+      ? (ruleName && ruleName.length > 24 ? ruleName.slice(0, 23) + '…' : ruleName || 'rule')
+      : (topReason || (Number.isFinite(score) ? score.toFixed(2) : '—'));
+    const pillTitle = isRule
+      ? (ruleName || undefined)
+      : (Number.isFinite(score) && score > 0 ? `score ${score.toFixed(3)}` : undefined);
     return {
-      id: (q.transactionId || '').slice(0, 8) + '…',
+      id: q.transactionId || '',
       sender: senderRaw ? (senderRaw.length > 14 ? senderRaw.slice(0, 14) + '…' : senderRaw) : '—',
       senderFull: senderRaw,
       amount: Number(q.amount ?? 0),
-      score: Number(q.championScore ?? 0),
-      isRule: q.stage === 'PRE_RULE' || q.decisionSource === 'PRE_RULE',
-      ruleCode,
-      ruleDescr,
-      reasons: reasonCodes.slice(0, 2).join(' · ') || '—',
+      score,
+      isRule,
+      pillLabel,
+      pillTitle,
+      // Source = layer that drove the decision. Cleaner than the
+      // previous hard-coded "PRE_RULE" string for every row.
+      sourceLabel: isRule ? `RULE · ${ruleStage || '—'}` : 'ML',
       age: ageMin != null ? fmtAge(ageMin) + ' ago' : '',
     };
   });
 
+  const fiaConfirmed = reports.filter((r) => r.verdict === 'FRAUD_CONFIRMED').length;
+  const fiaUncertain = reports.filter((r) => r.verdict === 'UNCERTAIN').length;
+  const fiaModelVersion =
+    reports.find((r) => r.llmModelVersion)?.llmModelVersion || null;
+
   const todos = [
-    sourceQueue.length > 0 && {
+    queueTotal > 0 && {
       icon: 'flag', tone: 'danger',
-      title: `Review ${sourceQueue.length} declined transactions`,
-      sub: `Oldest waiting since ${fmtAge(oldestAge)} ago · ${fmtNaira(totalExposure)} total exposure`,
+      title: `Review ${queueTotal.toLocaleString()} declined transaction${queueTotal === 1 ? '' : 's'}`,
+      sub: `Oldest waiting since ${fmtAge(oldestAgeMin)} ago · ${fmtNaira(totalExposure)} total exposure`,
       when: 'Today',
-      onClick: () => nav('queue')
+      onClick: () => actAndNav('queue')
     },
-    {
+    reports.length > 0 && {
       icon: 'file-search', tone: 'info',
-      title: `${newReports.length} new FIA investigation reports ready`,
-      sub: `Verdict: ${newReports.filter(r => r.verdict === 'FRAUD_CONFIRMED').length} fraud confirmed, ${newReports.filter(r => r.verdict === 'UNCERTAIN').length} uncertain · phi-3-mini-v1`,
+      title: `${reports.length.toLocaleString()} FIA investigation report${reports.length === 1 ? '' : 's'} ready`,
+      // FIA model version is read from the most recent report that
+      // carries one — older reports may have been written by a
+      // different LLM build, so we report what's currently in flight.
+      sub: `Verdict: ${fiaConfirmed} fraud confirmed, ${fiaUncertain} uncertain${fiaModelVersion ? ` · ${fiaModelVersion}` : ''}`,
       when: 'Today',
-      onClick: () => nav('invest')
+      onClick: () => actAndNav('invest')
     },
     shadow && {
       icon: 'cpu', tone: 'success',
       title: `Model ${shadow.version} ready to activate`,
       // F1 can be null on a freshly-registered candidate that hasn't been
       // scored yet — fall back to "—" instead of throwing on `.toFixed`.
-      sub: `Shadow F1 = ${shadow.F1 == null ? '—' : shadow.F1.toFixed(3)} vs champion ${champion?.F1 == null ? '—' : champion.F1.toFixed(3)} · McNemar p < 0.01`,
+      sub: `Shadow F1 = ${shadow.F1 == null ? '—' : shadow.F1.toFixed(3)} vs champion ${champion?.F1 == null ? '—' : champion.F1.toFixed(3)}`,
       when: 'Today',
-      onClick: () => nav('models')
+      onClick: () => actAndNav('models')
     },
     failingWebhooks.length > 0 && {
       icon: 'webhook', tone: 'warning',
@@ -145,7 +202,7 @@ function Dashboard({ toast: _toast, user: _user, queue, models, reports, webhook
       // when the seed shape evolves — string-coerce defensively.
       sub: `${String(failingWebhooks[0].url || '').replace('https://','').split('/')[0] || 'unknown host'} returned ${failingWebhooks[0].lastDelivery?.code ?? '—'} · retry exhausted`,
       when: 'Recently',
-      onClick: () => nav('integ')
+      onClick: () => actAndNav('integ')
     },
   ].filter(Boolean);
 
@@ -245,25 +302,32 @@ function Dashboard({ toast: _toast, user: _user, queue, models, reports, webhook
           grid template so values stay column-aligned. */}
       <section className="panel">
         <div className="panel-head">
-          <h2>Recent declines</h2>
-          <a href="#" onClick={e=>{e.preventDefault(); nav('queue');}}>Open review queue<Ti name="chevron-right" size={11} style={{marginLeft:2, verticalAlign:-1}}/></a>
+          <div style={{display:'flex', alignItems:'baseline', gap:10, minWidth:0}}>
+            <h2 style={{margin:0}}>Recent declines</h2>
+            {queueTotal > 0 && (
+              <span style={{fontSize:11, color:'var(--color-text-tertiary)', fontVariantNumeric:'tabular-nums'}}>
+                showing {recent.length} of {queueTotal.toLocaleString()}
+              </span>
+            )}
+          </div>
+          <a href="#" onClick={e=>{e.preventDefault(); actAndNav('queue');}}>Open review queue<Ti name="chevron-right" size={11} style={{marginLeft:2, verticalAlign:-1}}/></a>
         </div>
         {recent.length === 0 ? (
           <p style={{margin:'6px 0 0', fontSize:12, color:'var(--color-text-tertiary)'}}>No recent declines — queue is clear.</p>
         ) : (
-          <>
+          <div style={{ overflowX: 'auto' }}>
             {/* Column template — six columns spread proportionally so the
                 row spans the panel rather than collapsing with Age stranded
                 on the right. Numeric cells (Amount, Age) are right-aligned
-                so digits stack down the column. Sender was added because
-                the previous five-column layout left ~500px of empty space
-                inside the Stage cell when rows were short PRE_RULE strings. */}
+                so digits stack down the column. The whole thing is in an
+                overflow-x:auto wrapper so narrow viewports get a
+                horizontal scroll instead of clipping the leftmost column. */}
             <div
               role="row"
               style={{
                 display: 'grid',
-                gridTemplateColumns:
-                  'minmax(90px, 0.9fr) minmax(120px, 1.3fr) minmax(90px, 1fr) auto minmax(110px, 1.4fr) minmax(70px, 0.7fr)',
+                gridTemplateColumns: DECLINE_ROW_GRID,
+                minWidth: 720,
                 gap: 12,
                 alignItems: 'center',
                 padding: '4px 0 8px',
@@ -279,8 +343,8 @@ function Dashboard({ toast: _toast, user: _user, queue, models, reports, webhook
               <span>ID</span>
               <span>Sender</span>
               <span style={{ textAlign: 'right' }}>Amount</span>
-              <span>Rule</span>
-              <span>Stage</span>
+              <span>Reason</span>
+              <span>Source</span>
               <span style={{ textAlign: 'right' }}>Age</span>
             </div>
             {recent.map((r, i) => (
@@ -289,40 +353,37 @@ function Dashboard({ toast: _toast, user: _user, queue, models, reports, webhook
                 role="row"
                 style={{
                   display: 'grid',
-                  gridTemplateColumns:
-                    'minmax(90px, 0.9fr) minmax(120px, 1.3fr) minmax(90px, 1fr) auto minmax(110px, 1.4fr) minmax(70px, 0.7fr)',
+                  gridTemplateColumns: DECLINE_ROW_GRID,
+                  minWidth: 720,
                   gap: 12,
                   alignItems: 'center',
                   padding: '9px 0',
                   borderTop: i === 0 ? 'none' : '0.5px solid var(--color-border-tertiary)',
                 }}
               >
-                <code className="mono truncate" style={{fontSize:11, color:'var(--color-text-secondary)'}}>{r.id}</code>
+                <code className="mono" style={{fontSize:10, color:'var(--color-text-secondary)', overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap'}}>{r.id}</code>
                 <code className="mono truncate" style={{fontSize:11, color:'var(--color-text-secondary)'}} title={r.senderFull || undefined}>{r.sender}</code>
                 <span style={{fontSize:12, fontWeight:500, fontVariantNumeric:'tabular-nums', textAlign:'right'}}>{fmtNaira(r.amount)}</span>
-                {/* Chip = short rule code in mono (e.g. AMOUNT_HIGH).
-                    The long human-readable name moves to the title
-                    attribute as a hover tooltip so it doesn't bloat
-                    the row. Score-based declines keep the
-                    two-decimal probability in the same slot.
-                    `justifySelf: start` keeps the pill hugging its
-                    text width instead of being stretched by the grid. */}
+                {/* Reason pill — rule name (truncated) for rule-driven
+                    declines, top reason code (e.g. AMOUNT_HIGH) for ML
+                    declines. Long rule names hover-expand via the title
+                    attribute. `justifySelf: start` keeps the pill
+                    hugging its text width instead of being stretched
+                    by the grid. */}
                 <span
                   className="pill danger"
-                  style={{fontSize:11, justifySelf:'start'}}
-                  title={r.isRule && r.ruleDescr ? r.ruleDescr : undefined}
+                  style={{fontSize:11, justifySelf:'start', maxWidth:'100%', overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap'}}
+                  title={r.pillTitle}
                 >
-                  {r.isRule
-                    ? (r.ruleCode || 'RULE')
-                    : (typeof r.score === 'number' ? r.score.toFixed(2) : '—')}
+                  {r.pillLabel}
                 </span>
                 <span className="truncate" style={{fontSize:11, color:'var(--color-text-secondary)'}}>
-                  {r.isRule ? 'PRE_RULE' : r.reasons}
+                  {r.sourceLabel}
                 </span>
                 <span style={{fontSize:11, color:'var(--color-text-tertiary)', whiteSpace:'nowrap', fontVariantNumeric:'tabular-nums', textAlign:'right'}}>{r.age || '—'}</span>
               </div>
             ))}
-          </>
+          </div>
         )}
       </section>
     </>

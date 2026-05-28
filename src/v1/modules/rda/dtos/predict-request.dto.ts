@@ -26,6 +26,13 @@ export interface PredictRequestDto {
   timestamp: number;
   segment?: string;
 
+  // ── Display names for the sender / receiver chips ─────────────
+  // Account numbers (`sender_id` / `receiver_id`) are numeric in most
+  // adopter payloads; these readable names are what Sentinel renders
+  // on the transaction detail page.
+  customer_account_name?: string;
+  beneficiary_account_name?: string;
+
   // ── Identity context ──────────────────────────────────────────
   customer_dob?: string;             // ISO-8601 date
   customer_nationality?: string;     // ISO-3166 alpha-2

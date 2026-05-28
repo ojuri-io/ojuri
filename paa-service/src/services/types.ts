@@ -64,6 +64,10 @@ export interface TransactionEvent {
   customer_fi?: string;
   recipient_fi?: string;
   request_context?: Record<string, unknown>;
+
+  // ── Display names (added 2026-05) ────────────────────────────
+  customer_account_name?: string;
+  beneficiary_account_name?: string;
 }
 
 /**

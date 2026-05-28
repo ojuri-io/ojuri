@@ -94,6 +94,10 @@ export interface TransactionEvent {
    * hook reads from this at both predict-time and train-time.
    */
   request_context?: Record<string, unknown>;
+
+  // ── Display names (added in 2026-05) ─────────────────────────
+  customer_account_name?: string;
+  beneficiary_account_name?: string;
 }
 
 /**

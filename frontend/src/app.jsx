@@ -250,9 +250,13 @@ function AuthenticatedApp({ user, onLogout }) {
   // Hydration. Live results overwrite local state; when a call fails the
   // safe() wrapper in client.js returns an empty fallback and the per-page
   // empty-state copy tells the operator what to do next.
+  //
+  // Re-runs when the tab becomes visible again so an operator who registers
+  // a model / mints a key / etc. from the CLI (or a second tab) sees it
+  // after alt-tabbing back, instead of having to hard-refresh.
   useEffect(() => {
     let cancelled = false;
-    (async () => {
+    const hydrate = async () => {
       const [m, r, k, w, rep] = await Promise.all([
         listModels(),
         listRules(),
@@ -269,9 +273,15 @@ function AuthenticatedApp({ user, onLogout }) {
       if (Array.isArray(w)) setWebhooks(w);
       setReports(repReports);
       setReportsLive(repLive);
-    })();
+    };
+    hydrate();
+    const onVisible = () => {
+      if (document.visibilityState === 'visible') hydrate();
+    };
+    document.addEventListener('visibilitychange', onVisible);
     return () => {
       cancelled = true;
+      document.removeEventListener('visibilitychange', onVisible);
     };
   }, []);
 
@@ -286,7 +296,7 @@ function AuthenticatedApp({ user, onLogout }) {
   let PageBody = null;
   let screenLabel = '';
   if (page === 'dash') {
-    PageBody = <Dashboard toast={toast} user={user} queue={queue} models={models} reports={reports} webhooks={webhooks} nav={nav} />;
+    PageBody = <Dashboard toast={toast} user={user} queue={queue} models={models} reports={reports} webhooks={webhooks} nav={nav} onMarkSeen={handleMarkSeen} />;
     screenLabel = '01 Dashboard';
   } else if (page === 'live') {
     PageBody = <LiveDecisions toast={toast} nav={nav} />;
