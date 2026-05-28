@@ -296,7 +296,7 @@ function AuthenticatedApp({ user, onLogout }) {
   let PageBody = null;
   let screenLabel = '';
   if (page === 'dash') {
-    PageBody = <Dashboard toast={toast} user={user} queue={queue} models={models} reports={reports} webhooks={webhooks} nav={nav} />;
+    PageBody = <Dashboard toast={toast} user={user} queue={queue} models={models} reports={reports} webhooks={webhooks} nav={nav} onMarkSeen={handleMarkSeen} />;
     screenLabel = '01 Dashboard';
   } else if (page === 'live') {
     PageBody = <LiveDecisions toast={toast} nav={nav} />;

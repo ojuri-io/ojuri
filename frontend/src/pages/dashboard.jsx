@@ -20,7 +20,16 @@ import {
 const DECLINE_ROW_GRID =
   'minmax(180px, 1.4fr) minmax(100px, 0.9fr) minmax(100px, 0.85fr) minmax(150px, 1.2fr) minmax(90px, 0.65fr) minmax(60px, 0.5fr)';
 
-function Dashboard({ toast: _toast, user: _user, queue, models, reports, webhooks, nav }) {
+function Dashboard({ toast: _toast, user: _user, queue, models, reports, webhooks, nav, onMarkSeen }) {
+  // Acting on a dashboard item — clicking "Open review queue", or
+  // accepting a "Things to do" tile — is a stronger "I've seen this"
+  // signal than opening the bell, so we treat it as a mark-seen too.
+  // The handler is debounced server-side and no-ops when unset, so
+  // calling it unconditionally is safe.
+  const actAndNav = (target) => {
+    if (typeof onMarkSeen === 'function') onMarkSeen();
+    nav(target);
+  };
   const champion = models.find(m => m.status === 'ACTIVE');
   const shadow = models.find(m => m.status === 'SHADOW');
   const failingWebhooks = webhooks.filter(w => w.status === 'failing');
@@ -165,7 +174,7 @@ function Dashboard({ toast: _toast, user: _user, queue, models, reports, webhook
       title: `Review ${queueTotal.toLocaleString()} declined transaction${queueTotal === 1 ? '' : 's'}`,
       sub: `Oldest waiting since ${fmtAge(oldestAgeMin)} ago · ${fmtNaira(totalExposure)} total exposure`,
       when: 'Today',
-      onClick: () => nav('queue')
+      onClick: () => actAndNav('queue')
     },
     reports.length > 0 && {
       icon: 'file-search', tone: 'info',
@@ -175,7 +184,7 @@ function Dashboard({ toast: _toast, user: _user, queue, models, reports, webhook
       // different LLM build, so we report what's currently in flight.
       sub: `Verdict: ${fiaConfirmed} fraud confirmed, ${fiaUncertain} uncertain${fiaModelVersion ? ` · ${fiaModelVersion}` : ''}`,
       when: 'Today',
-      onClick: () => nav('invest')
+      onClick: () => actAndNav('invest')
     },
     shadow && {
       icon: 'cpu', tone: 'success',
@@ -184,7 +193,7 @@ function Dashboard({ toast: _toast, user: _user, queue, models, reports, webhook
       // scored yet — fall back to "—" instead of throwing on `.toFixed`.
       sub: `Shadow F1 = ${shadow.F1 == null ? '—' : shadow.F1.toFixed(3)} vs champion ${champion?.F1 == null ? '—' : champion.F1.toFixed(3)}`,
       when: 'Today',
-      onClick: () => nav('models')
+      onClick: () => actAndNav('models')
     },
     failingWebhooks.length > 0 && {
       icon: 'webhook', tone: 'warning',
@@ -193,7 +202,7 @@ function Dashboard({ toast: _toast, user: _user, queue, models, reports, webhook
       // when the seed shape evolves — string-coerce defensively.
       sub: `${String(failingWebhooks[0].url || '').replace('https://','').split('/')[0] || 'unknown host'} returned ${failingWebhooks[0].lastDelivery?.code ?? '—'} · retry exhausted`,
       when: 'Recently',
-      onClick: () => nav('integ')
+      onClick: () => actAndNav('integ')
     },
   ].filter(Boolean);
 
@@ -301,7 +310,7 @@ function Dashboard({ toast: _toast, user: _user, queue, models, reports, webhook
               </span>
             )}
           </div>
-          <a href="#" onClick={e=>{e.preventDefault(); nav('queue');}}>Open review queue<Ti name="chevron-right" size={11} style={{marginLeft:2, verticalAlign:-1}}/></a>
+          <a href="#" onClick={e=>{e.preventDefault(); actAndNav('queue');}}>Open review queue<Ti name="chevron-right" size={11} style={{marginLeft:2, verticalAlign:-1}}/></a>
         </div>
         {recent.length === 0 ? (
           <p style={{margin:'6px 0 0', fontSize:12, color:'var(--color-text-tertiary)'}}>No recent declines — queue is clear.</p>
