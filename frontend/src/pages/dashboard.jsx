@@ -96,38 +96,48 @@ function Dashboard({ toast: _toast, user: _user, queue, models, reports, webhook
 
   // Recent declines — uses the live review queue when reachable, falling
   // back to whatever the parent passed in (an empty array when the API
-  // is offline). Normalises both shapes.
-  //
-  // `ruleCode` is the short identifier shown in the chip (e.g. AMOUNT_HIGH,
-  // FRAUD_TEST_SENDER). `ruleDescr` is the long human-readable name —
-  // surfaced on hover via the chip's `title` attribute so the row's chip
-  // text doesn't dominate the line.
+  // is offline). The pill carries the *cause* (rule name for
+  // rule-driven, top reason code for ML); the Source column reports the
+  // layer that produced the decision (ML / PRE rule / POST rule).
   const recent = sourceQueue.slice(0, 8).map((q) => {
     const reasonCodes = (q.reasonCodes || []).map((c) =>
       typeof c === 'string' ? c : c?.code || '',
     ).filter(Boolean);
-    const ruleCode = q.preRule || q.ruleCode || null;
-    const ruleDescr = q.ruleName || null;
+    const decisionSource = q.decisionSource || (q.stage === 'PRE_RULE' ? 'PRE_RULE' : 'ML');
+    const isRule = decisionSource === 'PRE_RULE' || decisionSource === 'POST_RULE';
+    const ruleName = q.ruleName || null;
+    const ruleStage = q.ruleStage || (decisionSource === 'PRE_RULE' ? 'PRE' : decisionSource === 'POST_RULE' ? 'POST' : null);
+    const topReason = reasonCodes[0] || null;
+    const score = Number(q.championScore ?? 0);
     // `/v1/review-queue` returns `createdAt` but not `ageMin`. Mirror the
     // computation used by the review-queue page so the dashboard column
-    // doesn't render blank for live rows (the props.queue fallback path
-    // does already carry `ageMin`).
+    // doesn't render blank for live rows.
     const ageMin = q.ageMin != null
       ? Number(q.ageMin)
       : q.createdAt
         ? Math.max(0, Math.round((Date.now() - new Date(q.createdAt).getTime()) / 60000))
         : null;
     const senderRaw = q.senderId || q.sender || '';
+    // Pill content: rule name when rule-driven (truncated if long),
+    // top reason code when ML, "—" if neither is available.
+    const pillLabel = isRule
+      ? (ruleName && ruleName.length > 24 ? ruleName.slice(0, 23) + '…' : ruleName || 'rule')
+      : (topReason || (Number.isFinite(score) ? score.toFixed(2) : '—'));
+    const pillTitle = isRule
+      ? (ruleName || undefined)
+      : (Number.isFinite(score) && score > 0 ? `score ${score.toFixed(3)}` : undefined);
     return {
       id: q.transactionId || '',
       sender: senderRaw ? (senderRaw.length > 14 ? senderRaw.slice(0, 14) + '…' : senderRaw) : '—',
       senderFull: senderRaw,
       amount: Number(q.amount ?? 0),
-      score: Number(q.championScore ?? 0),
-      isRule: q.stage === 'PRE_RULE' || q.decisionSource === 'PRE_RULE',
-      ruleCode,
-      ruleDescr,
-      reasons: reasonCodes.slice(0, 2).join(' · ') || '—',
+      score,
+      isRule,
+      pillLabel,
+      pillTitle,
+      // Source = layer that drove the decision. Cleaner than the
+      // previous hard-coded "PRE_RULE" string for every row.
+      sourceLabel: isRule ? `RULE · ${ruleStage || '—'}` : 'ML',
       age: ageMin != null ? fmtAge(ageMin) + ' ago' : '',
     };
   });
@@ -305,8 +315,8 @@ function Dashboard({ toast: _toast, user: _user, queue, models, reports, webhook
               <span>ID</span>
               <span>Sender</span>
               <span style={{ textAlign: 'right' }}>Amount</span>
-              <span>Rule</span>
-              <span>Stage</span>
+              <span>Reason</span>
+              <span>Source</span>
               <span style={{ textAlign: 'right' }}>Age</span>
             </div>
             {recent.map((r, i) => (
@@ -316,7 +326,7 @@ function Dashboard({ toast: _toast, user: _user, queue, models, reports, webhook
                 style={{
                   display: 'grid',
                   gridTemplateColumns:
-                    'minmax(90px, 0.9fr) minmax(120px, 1.3fr) minmax(90px, 1fr) auto minmax(110px, 1.4fr) minmax(70px, 0.7fr)',
+                    'minmax(260px, 1.6fr) minmax(110px, 1fr) minmax(90px, 0.9fr) auto minmax(100px, 1fr) minmax(64px, 0.55fr)',
                   gap: 12,
                   alignItems: 'center',
                   padding: '9px 0',
@@ -326,24 +336,21 @@ function Dashboard({ toast: _toast, user: _user, queue, models, reports, webhook
                 <code className="mono" style={{fontSize:10, color:'var(--color-text-secondary)', overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap'}}>{r.id}</code>
                 <code className="mono truncate" style={{fontSize:11, color:'var(--color-text-secondary)'}} title={r.senderFull || undefined}>{r.sender}</code>
                 <span style={{fontSize:12, fontWeight:500, fontVariantNumeric:'tabular-nums', textAlign:'right'}}>{fmtNaira(r.amount)}</span>
-                {/* Chip = short rule code in mono (e.g. AMOUNT_HIGH).
-                    The long human-readable name moves to the title
-                    attribute as a hover tooltip so it doesn't bloat
-                    the row. Score-based declines keep the
-                    two-decimal probability in the same slot.
-                    `justifySelf: start` keeps the pill hugging its
-                    text width instead of being stretched by the grid. */}
+                {/* Reason pill — rule name (truncated) for rule-driven
+                    declines, top reason code (e.g. AMOUNT_HIGH) for ML
+                    declines. Long rule names hover-expand via the title
+                    attribute. `justifySelf: start` keeps the pill
+                    hugging its text width instead of being stretched
+                    by the grid. */}
                 <span
                   className="pill danger"
-                  style={{fontSize:11, justifySelf:'start'}}
-                  title={r.isRule && r.ruleDescr ? r.ruleDescr : undefined}
+                  style={{fontSize:11, justifySelf:'start', maxWidth:'100%', overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap'}}
+                  title={r.pillTitle}
                 >
-                  {r.isRule
-                    ? (r.ruleCode || 'RULE')
-                    : (typeof r.score === 'number' ? r.score.toFixed(2) : '—')}
+                  {r.pillLabel}
                 </span>
                 <span className="truncate" style={{fontSize:11, color:'var(--color-text-secondary)'}}>
-                  {r.isRule ? 'PRE_RULE' : r.reasons}
+                  {r.sourceLabel}
                 </span>
                 <span style={{fontSize:11, color:'var(--color-text-tertiary)', whiteSpace:'nowrap', fontVariantNumeric:'tabular-nums', textAlign:'right'}}>{r.age || '—'}</span>
               </div>
