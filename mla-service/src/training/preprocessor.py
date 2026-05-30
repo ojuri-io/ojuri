@@ -30,7 +30,9 @@ class DataPreprocessor:
     """
     
     def __init__(self):
-        self.scaler = StandardScaler()
+        # Identity scaler: RDA does not apply the paired scaler.npz at
+        # inference, and XGBoost (tree-based) doesn't need scaling.
+        self.scaler = StandardScaler(with_mean=False, with_std=False)
         self.smote_ratio = config.SMOTE_RATIO
         self._is_fitted = False
         

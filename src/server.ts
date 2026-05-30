@@ -9,6 +9,11 @@ import appConfig from "./config/app.config";
 import logger from "./shared/utils/logger";
 import KafkaProducer from "./shared/kafka/kafka-producer";
 import ModelRegistryService from "./shared/models/model-registry.service";
+// Must use the @shared alias (not relative): module-alias maps it to
+// dist/, which is the same path predict.service.ts resolves through —
+// a relative import here would load the source copy and split the
+// tsyringe singleton across two distinct class objects.
+import OnnxService from "@shared/onnx/onnx.service";
 import RulesService from "./shared/rules/rules.service";
 import RuntimeSettingsService from "./shared/settings/runtime-settings.service";
 import { startWebhookWorker, stopWebhookWorker } from "./shared/webhooks/webhook-worker";
@@ -46,6 +51,13 @@ async function start() {
   const modelRegistry = container.resolve(ModelRegistryService);
   await modelRegistry.initialize().catch((err) =>
     logger.warn({ err }, "Model registry initial load failed - will retry on schedule")
+  );
+
+  // Without this call the OnnxService singleton stays uninitialised
+  // and every predict() falls through to mockInference silently.
+  const onnxService = container.resolve(OnnxService);
+  await onnxService.initialize().catch((err) =>
+    logger.error({ err }, "ONNX service initialisation failed - predictions will run in degraded mock mode")
   );
 
   const rules = container.resolve(RulesService);

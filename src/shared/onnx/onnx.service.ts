@@ -300,10 +300,18 @@ class OnnxService {
       const feeds = { input: inputTensor };
       const results = await this.session.run(feeds);
 
-      // Extract probability from output
-      const output = results.output || results.probabilities || Object.values(results)[0];
+      // XGBoost-via-onnxmltools emits `probabilities` shape [N, 2] as
+      // [P(legit), P(fraud)] — we need index 1. Legacy single-output
+      // stubs still expose a scalar at index 0.
+      const output: ort.Tensor =
+        (results.probabilities as ort.Tensor | undefined) ??
+        (results.output as ort.Tensor | undefined) ??
+        (Object.values(results)[0] as ort.Tensor);
       if (!output) throw new Error("ONNX inference returned no output tensor");
-      const probability = (output.data as Float32Array)[0]!;
+      const data = output.data as Float32Array;
+      const dims = output.dims ?? [];
+      const isBinaryProbs = dims.length === 2 && dims[1] === 2 && data.length >= 2;
+      const probability = isBinaryProbs ? data[1]! : data[0]!;
 
       const inferenceTime = Date.now() - startTime;
       metricsService.recordModelInferenceLatency(inferenceTime);
