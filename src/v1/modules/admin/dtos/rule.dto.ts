@@ -8,6 +8,7 @@ export interface CreateRuleDto {
   stage?: RuleStage;
   priority?: number;
   tenantId?: string;
+  isActive?: boolean;
 }
 
 export interface UpdateRuleDto {

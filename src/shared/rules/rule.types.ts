@@ -63,6 +63,8 @@ export interface CreateRuleInput {
   stage?: RuleStage;
   priority?: number;
   tenantId?: string;
+  isActive?: boolean;
+  createdBy?: string | null;
 }
 
 export interface UpdateRuleInput {

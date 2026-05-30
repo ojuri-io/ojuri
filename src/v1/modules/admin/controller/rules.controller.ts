@@ -14,7 +14,8 @@ class RulesController {
 
   create = async (req: FastifyRequest<{ Body: CreateRuleDto }>, res: FastifyReply) => {
     try {
-      const row = await this.rulesService.create(req.body);
+      const createdBy = req.auth?.username ?? req.apiKey?.name ?? null;
+      const row = await this.rulesService.create({ ...req.body, createdBy });
       return res.code(httpStatus.CREATED).send(SuccessResponse("Rule created", row));
     } catch (err) {
       // Capture the full error context (message, code, stack, and the
@@ -72,7 +73,7 @@ class RulesController {
   // effect immediately.
   reload = async (_req: FastifyRequest, res: FastifyReply) => {
     try {
-      await this.rulesService.reload();
+      await this.rulesService.reloadAndBroadcast();
       const counts = this.rulesService.counts();
       return res.send(SuccessResponse("Rules cache reloaded", counts));
     } catch (err) {

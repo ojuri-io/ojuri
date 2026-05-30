@@ -3,7 +3,7 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { Ti, PageHead, Modal, actionPill, hasPermission, permLock } from '../components/shell.jsx';
 import { SearchInput } from '../components/search-input.jsx';
-import { saveRule, deleteRule, setRuleActive } from '../api/client.js';
+import { saveRule, deleteRule, setRuleActive, listRules } from '../api/client.js';
 import { RuleBuilder, toJsonLogic } from './rule-builder.jsx';
 import { EXAMPLES } from './rule-templates.js';
 
@@ -128,6 +128,7 @@ function RuleEditor({ toast, rules, setRules, user }) {
   const [saving, setSaving] = useState(false);
   const [countdown, setCountdown] = useState(18);
   const [showDelete, setShowDelete] = useState(false);
+  const [refreshing, setRefreshing] = useState(false);
   const [search, setSearch] = useState('');
   // Which tab is open on the editor pane: 'visual' (form), 'json' (raw
   // editor), 'examples' (preset palette). Defaults to 'visual' for new
@@ -240,6 +241,19 @@ function RuleEditor({ toast, rules, setRules, user }) {
     }
   };
 
+  const onRefresh = async () => {
+    setRefreshing(true);
+    try {
+      const fresh = await listRules();
+      if (Array.isArray(fresh)) setRules(fresh);
+      toast('Rules refreshed', 'success');
+    } catch (err) {
+      toast(`Refresh failed · ${String(err?.message || err).slice(0, 200)}`, 'danger');
+    } finally {
+      setRefreshing(false);
+    }
+  };
+
   const onCreate = () => {
     const id = 'r_new_' + Math.floor(Math.random() * 9999);
     const next = {
@@ -299,6 +313,7 @@ function RuleEditor({ toast, rules, setRules, user }) {
           <Ti name="refresh" size={12}/>
           <span>Hot-reload in <span className="mono" style={{color:'var(--color-text-primary)'}}>{countdown}s</span></span>
         </div>
+        <button onClick={onRefresh} disabled={refreshing}><Ti name="refresh" size={14}/>{refreshing ? 'Refreshing…' : 'Refresh'}</button>
         <button><Ti name="history" size={14}/>History</button>
         <button className="info-bg" onClick={onCreate} {...permLock(user, 'rules:create')}><Ti name="plus" size={14}/>New rule</button>
       </PageHead>
