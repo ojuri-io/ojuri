@@ -17,6 +17,7 @@ services:
       - KAFKA_TOPIC=transactions.completed
       - KAFKA_BLOCKED_TOPIC=transactions.blocked
       - MODEL_PATH=/app/models/fraud_model.onnx
+      - MODEL_INPUT_DIMENSION=${MODEL_INPUT_DIMENSION:-0}
       - FRAUD_THRESHOLD=0.65
       - LOG_LEVEL=debug
       - DB_CLIENT=pg

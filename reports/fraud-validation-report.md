@@ -330,6 +330,83 @@ After: (a) Bugs 1–4 patched, (b) `mla-service/scripts/seed_labeled_training_da
 
 Latency p50=54 ms, p99=109 ms, ~232 req/s. Slower than the 0% run because real inference takes more time than `mockInference`; still well within the SLA envelope.
 
+## 6e. IEEE-CIS / PaySim cross-distribution test (added 2026-05-30 23:45 UTC)
+
+The 8/8 result in §6d came from a model trained on the *same database
+columns* the RDA harness uses at predict time. That's a best case. To
+check how the deployed pipeline behaves on a model trained on real-world
+distributions, I re-ran `train_with_datasets.py` against the two big
+public datasets the repo ships loaders for and re-fired the harness.
+
+### IEEE-CIS (683k credit-card transactions, 431 native features)
+
+```
+Offline metrics:   F1=0.5544   AUC=0.911   Precision=0.84   Recall=0.41
+Native input dim:  431  (RDA pads from 64 → 431 with zeros via MODEL_INPUT_DIMENSION)
+Top 5 features:    feature_315, feature_21, feature_309, feature_270, feature_368
+```
+
+Harness result against IEEE-CIS model (400 legit + 300 fraud):
+
+| Persona | n | A/D/R | Detection | Median score |
+|---|---:|---:|---:|---:|
+| legit              | 400 | 347/53/0 | 86.75% TN, **13.25% FP** | 0.203 |
+| account_takeover   | 10  | 8/2/0    | 20% | 0.162 |
+| card_testing       | 72  | 47/25/0  | 35% | 0.340 |
+| mule_layering      | 48  | 38/10/0  | 21% | 0.195 |
+| smurfing           | 60  | 42/18/0  | 30% | 0.211 |
+| velocity_burst     | 48  | 35/13/0  | 27% | 0.221 |
+| romance_scam       | 40  | 22/18/0  | 45% | 0.203 |
+| geo_anomaly        | 12  | 11/1/0   | 8%  | 0.224 |
+| new_account_drain  | 10  | 7/3/0    | 30% | 0.268 |
+
+**The model runs (this isn't the mockInference bug).** Scores show real variance and some signal — card_testing and romance_scam are above legit, account_takeover is below. But recall is weak across the board and the 13% legit false-positive rate would be unacceptable in production. Root cause is structural: IEEE-CIS's top 9 most-important features are at native indices 21, 46, 51, 52, 120, 146, 177, 250, 252, 270, 309, 315, 368 — twelve of those are above position 64 and therefore get *zero-padded* at inference. The model is making decisions on a degraded view of its own training distribution.
+
+### PaySim (50k mobile-money transactions, 11 native columns → padded to 434)
+
+```
+Offline metrics:   F1=0.9991   AUC=0.9999   Precision=0.9994   Recall=0.9988
+Native input dim:  434  (padded by the trainer; original PaySim is ~11 columns)
+Top 5 features:    feature_13, feature_16, feature_17, feature_3, feature_28
+```
+
+Harness result against PaySim model (400 legit + 300 fraud):
+
+| Persona | n | A/D/R | Detection | Median score |
+|---|---:|---:|---:|---:|
+| legit              | 400 | **0/400/0** | **0% TN — 100% FP** | 0.997 |
+| account_takeover   | 10  | 0/10/0      | 100% | 0.998 |
+| card_testing       | 72  | 0/72/0      | 100% | 0.998 |
+| mule_layering      | 48  | 0/48/0      | 100% | 0.998 |
+| smurfing           | 60  | 0/60/0      | 100% | 0.998 |
+| velocity_burst     | 48  | 0/48/0      | 100% | 0.998 |
+| romance_scam       | 40  | 0/40/0      | 100% | 0.997 |
+| geo_anomaly        | 12  | 0/12/0      | 100% | 0.997 |
+| new_account_drain  | 10  | 0/10/0      | 100% | 0.998 |
+
+The PaySim model is *also* not the mockInference bug — but it's degenerate in the opposite direction. Trained on a heavily class-imbalanced dataset and SMOTE-balanced to 50/50, the model's offline F1=0.999 looks pristine. At inference RDA passes 64-dim catalogue values through positions the trainer used for completely different PaySim columns. The model finds those values "look fraud-shaped" relative to its training distribution and DECLINEs everything at score ≈0.997 — including 400/400 legit. **Effectively unusable in production despite perfect offline metrics.**
+
+### What this tells us
+
+The same pipeline produces three very different behaviours depending on what shaped the training data:
+
+| Model trained on                       | Legit median | Fraud median | FP rate | Recall (5/8 personas, threshold 0.65) | Verdict |
+|----------------------------------------|--------------|--------------|---------|----------------------------------------|---------|
+| `mockInference` heuristic (the bug)    | 0.12         | 0.13         | 0%      | 0%   | constant-ish, no signal |
+| Random synthetic (default fallback)    | 0.12         | 0.12         | 0%      | 0%   | random noise |
+| Seeded with learnable rule (§6d)       | 0.06         | ≥0.78        | 0%      | 100% | **clean — but training data is hand-crafted** |
+| IEEE-CIS native (431-dim)              | 0.20         | 0.16–0.34    | 13%     | ~25% | runs, but inputs the model considers important are zero-padded |
+| PaySim native (434-dim)                | 0.997        | 0.997        | 100%    | 100% | declines everything — feature-position mismatch |
+
+So no, IEEE-CIS and PaySim **do not** reproduce the original 0%-flat behaviour. The four-bug fix did work — the model is being called and its outputs do propagate. But the bigger structural lesson is that the deployed system has one extra invariant that nothing currently enforces: **the model must be trained on the same 64-dim catalogue contract that RDA serves**. The IEEE-CIS / PaySim trainers internally pad to 434-dim using their own column ordering, which is not the same ordering RDA's `feature-builder.ts` uses for those same 64 positions. The result is two different "feature ID 26" meanings — one in training, another in inference.
+
+The right way to use real datasets going forward is one of:
+
+1. Re-derive a training feature pipeline from the *same* `feature-catalog.v1.json` RDA uses, project IEEE-CIS / PaySim columns into those 64 catalogue slots explicitly, and train at 64-dim. The seeded-data run already proved this works.
+2. Or freeze a wider input contract, train at e.g. 434-dim, and have RDA's `feature-builder.ts` produce all 434 features (PAA-enriched velocity, graph, plus IEEE-CIS-style identity hashes, etc.) before inference. Much more invasive but matches the prior commit history's intent.
+
+Either way, the current zero-padding fallback is a foot-gun: it lets a 64-dim catalogue serve a 434-dim model with no error, and the only signal you get is bad inference quality — which we now know is the hardest failure mode to diagnose.
+
 ## 7. Recommended next steps
 
 1. **Land Bugs 1–4 as proper PRs.** The four fixes I made are minimal but live in `src/server.ts`, `src/shared/onnx/onnx.service.ts`, and `mla-service/src/training/preprocessor.py`. They're each a few lines and have unit-test surface. Without them the system silently runs mock predictions in production.
