@@ -6,6 +6,7 @@ export const createRuleValidationRules = {
   action: "required|string|in:ALLOW,DENY,REVIEW,NONE",
   expression: "required",
   tenantId: "string|max:255",
+  isActive: "boolean",
 };
 
 export const createRuleValidationMessages = {

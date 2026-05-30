@@ -27,9 +27,9 @@ class PredictController {
   ): Promise<void> => {
     const traceId = `req-${(req.headers["x-correlation-id"] as string) || randomUUID()}`;
     const tenantId = resolveTenantId(req);
-    const idempotencyKey = (req.headers["idempotency-key"] as string | undefined) || null;
+    const headerKey = (req.headers["idempotency-key"] as string | undefined) || null;
 
-    if (idempotencyKey && idempotencyKey.length > IDEMPOTENCY_KEY_MAX_LENGTH) {
+    if (headerKey && headerKey.length > IDEMPOTENCY_KEY_MAX_LENGTH) {
       return res
         .code(httpStatus.BAD_REQUEST)
         .header("X-Correlation-ID", traceId)
@@ -37,6 +37,8 @@ class PredictController {
           ErrorResponse(`Idempotency-Key must be ${IDEMPOTENCY_KEY_MAX_LENGTH} characters or fewer`)
         );
     }
+
+    const idempotencyKey = headerKey || req.body?.transaction_id || null;
 
     await TraceContext.runAsync(
       { traceId, transactionId: req.body.transaction_id, senderId: req.body.sender_id },
