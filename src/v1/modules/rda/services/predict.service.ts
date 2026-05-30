@@ -21,6 +21,20 @@ const log = createServiceLogger("PredictService");
 
 const IDEMPOTENCY_TTL_MS = Number(process.env.IDEMPOTENCY_TTL_MS) || 24 * 60 * 60 * 1000;
 
+/**
+ * Thrown by `finalize` when the audit-row insert hits the
+ * `(tenantId, transactionId)` unique constraint. We bubble up rather
+ * than continuing because the prior call already published the Kafka
+ * event and webhook — doing it again would double-process at PAA /
+ * MLA / FIA and fan out a second `decision.created` notification.
+ */
+class DuplicateTransactionError extends Error {
+  constructor(public readonly transactionId: string) {
+    super(`Duplicate transaction_id for tenant: ${transactionId}`);
+    this.name = "DuplicateTransactionError";
+  }
+}
+
 export interface PredictInvocation {
   request: PredictRequestDto;
   traceId: string;
@@ -33,7 +47,8 @@ export type PredictOutcome =
   | { kind: "ok"; response: PredictResponseDto; latencyMs: number }
   | { kind: "replay"; response: Record<string, unknown> }
   | { kind: "conflict" }
-  | { kind: "in_flight" };
+  | { kind: "in_flight" }
+  | { kind: "duplicate"; transactionId: string };
 
 @injectable()
 class PredictService {
@@ -58,10 +73,17 @@ class PredictService {
     const { idempotencyKey, tenantId, apiKeyId, request } = invocation;
 
     if (!idempotencyKey) {
-      const response = await this.predict(invocation);
-      const latencyMs = Date.now() - startTime;
-      this.recordOk(latencyMs);
-      return { kind: "ok", response, latencyMs };
+      try {
+        const response = await this.predict(invocation);
+        const latencyMs = Date.now() - startTime;
+        this.recordOk(latencyMs);
+        return { kind: "ok", response, latencyMs };
+      } catch (err) {
+        if (err instanceof DuplicateTransactionError) {
+          return { kind: "duplicate", transactionId: err.transactionId };
+        }
+        throw err;
+      }
     }
 
     const idemKey = {
@@ -95,6 +117,9 @@ class PredictService {
       this.recordOk(latencyMs);
       return { kind: "ok", response, latencyMs };
     } catch (err) {
+      if (err instanceof DuplicateTransactionError) {
+        return { kind: "duplicate", transactionId: err.transactionId };
+      }
       this.recordError();
       throw err;
     } finally {
@@ -217,7 +242,7 @@ class PredictService {
 
     metricsService.recordDecision(args.finalDecision);
 
-    const auditId = await this.decisionAudit.record({
+    const auditResult = await this.decisionAudit.record({
       transactionId: request.transaction_id,
       tenantId: invocation.tenantId ?? null,
       apiKeyId: invocation.apiKeyId ?? null,
@@ -251,6 +276,12 @@ class PredictService {
       latencyMs,
     });
 
+    if (auditResult.kind === "duplicate") {
+      throw new DuplicateTransactionError(request.transaction_id);
+    }
+
+    const auditId = auditResult.kind === "ok" ? auditResult.id : null;
+
     this.publishTransactionEvent(
       request,
       args.finalDecision === "DECLINE",
@@ -258,7 +289,7 @@ class PredictService {
       args.finalDecision,
       args.decisionSource,
       args.rule?.rule.name ?? null,
-      auditId ?? null
+      auditId
     );
 
     this.webhookService
