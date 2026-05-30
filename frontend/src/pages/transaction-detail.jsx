@@ -353,39 +353,41 @@ function TransactionDetail({ toast, user, nav, txn, queue, reports: _reports, re
       </section>
 
       {/* Reviewer action */}
-      <section className="panel" style={{padding:'16px 18px'}}>
-        <h2 style={{margin:'0 0 4px', fontSize:14, fontWeight:500}}>Reviewer action</h2>
-        <p style={{margin:'0 0 12px', fontSize:11, color:'var(--color-text-secondary)'}}>Recorded in <code className="mono">decisionAuditLog</code>. Fires the <code className="mono">decision.overridden</code> webhook.</p>
-        <div style={{display:'grid', gridTemplateColumns:'1fr 1fr', gap:8, marginBottom:12}}>
-          <ActionCard
-            checked={action === 'confirm'}
-            onClick={()=>setAction('confirm')}
-            tone="danger"
-            title="Confirm fraud"
-            sub={<>Keep DECLINE, set <code className="mono">fraudLabel = true</code>. Feeds MLA training.</>}
-          />
-          <ActionCard
-            checked={action === 'release'}
-            onClick={()=>setAction('release')}
-            tone="success"
-            title="Override to accept"
-            sub="Release the transaction. Customer verified out-of-band."
-          />
-        </div>
-        <div style={{marginBottom:12}}>
-          <label className="label-up" style={{display:'block', marginBottom:5}}>Reason</label>
-          <textarea value={reason} onChange={e=>setReason(e.target.value)} rows={2} placeholder="Customer confirmed unauthorized access via support call #84291…" style={{width:'100%', resize:'vertical', fontFamily:'var(--font-sans)'}}/>
-        </div>
-        <div style={{display:'flex', alignItems:'center', justifyContent:'space-between', gap:8}}>
-          <p style={{margin:0, fontSize:10, color:'var(--color-text-tertiary)'}}>Reviewer: <span style={{color:'var(--color-text-secondary)'}}>{displayName(user)}{user?.username ? ` · ${user.username}` : ''}</span></p>
-          <div style={{display:'flex', gap:6}}>
-            <button onClick={()=>nav('tx')}>Cancel</button>
-            <button className={action === 'confirm' ? 'danger-bg' : 'success-bg'} disabled={!reason.trim()} onClick={submit}>
-              {action === 'confirm' ? 'Confirm fraud' : 'Release'}
-            </button>
+      {!isOverridden && (
+        <section className="panel" style={{padding:'16px 18px'}}>
+          <h2 style={{margin:'0 0 4px', fontSize:14, fontWeight:500}}>Reviewer action</h2>
+          <p style={{margin:'0 0 12px', fontSize:11, color:'var(--color-text-secondary)'}}>Recorded in <code className="mono">decisionAuditLog</code>. Fires the <code className="mono">decision.overridden</code> webhook.</p>
+          <div style={{display:'grid', gridTemplateColumns:'1fr 1fr', gap:8, marginBottom:12}}>
+            <ActionCard
+              checked={action === 'confirm'}
+              onClick={()=>setAction('confirm')}
+              tone="danger"
+              title="Confirm fraud"
+              sub={<>Keep DECLINE, set <code className="mono">fraudLabel = true</code>. Feeds MLA training.</>}
+            />
+            <ActionCard
+              checked={action === 'release'}
+              onClick={()=>setAction('release')}
+              tone="success"
+              title="Override to accept"
+              sub="Release the transaction. Customer verified out-of-band."
+            />
           </div>
-        </div>
-      </section>
+          <div style={{marginBottom:12}}>
+            <label className="label-up" style={{display:'block', marginBottom:5}}>Reason</label>
+            <textarea value={reason} onChange={e=>setReason(e.target.value)} rows={2} placeholder="Customer confirmed unauthorized access via support call #84291…" style={{width:'100%', resize:'vertical', fontFamily:'var(--font-sans)'}}/>
+          </div>
+          <div style={{display:'flex', alignItems:'center', justifyContent:'space-between', gap:8}}>
+            <p style={{margin:0, fontSize:10, color:'var(--color-text-tertiary)'}}>Reviewer: <span style={{color:'var(--color-text-secondary)'}}>{displayName(user)}{user?.username ? ` · ${user.username}` : ''}</span></p>
+            <div style={{display:'flex', gap:6}}>
+              <button onClick={()=>nav('tx')}>Cancel</button>
+              <button className={action === 'confirm' ? 'danger-bg' : 'success-bg'} disabled={!reason.trim()} onClick={submit}>
+                {action === 'confirm' ? 'Confirm fraud' : 'Release'}
+              </button>
+            </div>
+          </div>
+        </section>
+      )}
     </>
   );
 }
