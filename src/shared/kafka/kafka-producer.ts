@@ -253,8 +253,21 @@ class KafkaProducer {
     attempt: number = 0
   ): Promise<void> {
     try {
+      // The kafkajs producer disconnects silently after periods of
+      // inactivity (no "producer.disconnect" event observed) and
+      // `producer.send` then rejects with "The producer is disconnected".
+      // Reconnect lazily on first publish before the send.
       if (!this.isConnected) {
-        throw new Error("Kafka producer not connected");
+        try {
+          await this.producer.connect();
+          this.isConnected = true;
+        } catch (connectErr) {
+          log.warn("publishWithRetry", "Lazy reconnect failed; attempting send anyway", {
+            traceId,
+            transactionId: event.transaction_id,
+            error: connectErr instanceof Error ? connectErr.message : String(connectErr),
+          });
+        }
       }
 
       await this.producer.send({
@@ -277,6 +290,13 @@ class KafkaProducer {
         attempt,
       });
     } catch (err) {
+      // A "disconnected" error means the kafkajs internal state is out
+      // of sync with our cached flag — force a reconnect on the next
+      // attempt instead of spinning the retry loop with no recovery.
+      const msg = err instanceof Error ? err.message : String(err);
+      if (/disconnect/i.test(msg)) {
+        this.isConnected = false;
+      }
       if (attempt < this.maxRetries) {
         const delay = this.retryDelays[attempt] ?? this.retryDelays[this.retryDelays.length - 1]!;
         log.warn("publishWithRetry", `Publish failed, retrying attempt ${attempt + 1}/${this.maxRetries}`, {

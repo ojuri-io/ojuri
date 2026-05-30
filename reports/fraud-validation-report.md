@@ -490,6 +490,83 @@ The model picks them all up because the PaySim distribution genuinely encodes "T
 - **Threshold against operating constraint.** 0.65 was fixed by env. With this score distribution, anything from 0.10 to 0.50 would give the same detection / FP numbers — but you'd want to derive the threshold from a target legit-block-rate (e.g. ≤ 0.1%) before going live.
 - **Adversarial robustness.** A motivated attacker who knows the training distribution can construct a transaction whose `is_inflow + transaction_type_code + amount` profile sits in the legit cluster. This was not tested.
 
+## 6g. Option 2 — train on audit snapshots that include PAA enrichment (added 2026-05-31 00:30 UTC)
+
+§6f closed the train/serve mismatch between the trainer's PaySim pipeline (434-dim, native ordering) and RDA's inference catalogue (64-dim) by inserting PaySim rows into the `transactions` table and re-using `data_loader.py`. The result was a working 64-dim model that hit 100% detection and 0% FP on the harness — **but every training row had `featuresDefault`-equivalent semantics**, so the model learned to ignore the PAA-derived positions entirely (importance ≈ 0 on velocity / graph / pair).
+
+Option 2 closes the *next* loop: feed training data through the *production* RDA → Kafka → PAA → Redis path, so that by the time RDA records the audit row, `featuresSnapshot` reflects whatever PAA has populated. Train on the snapshot directly, joined with the ground-truth label.
+
+### Implementation
+
+Two new scripts:
+
+- `mla-service/scripts/replay_paysim_through_rda.py` — async POSTs the 100k labelled PaySim rows from the transactions table at `POST /v1/predict`, in chronological order, ~330 req/s. Each predict fires a Kafka event → PAA consumes → graph & velocity & pair features land in Redis. Run **twice**: first cold (PAA accumulates state), then warm (audit log captures Redis-populated snapshots).
+- `mla-service/scripts/train_from_audit_snapshots.py` — `SELECT a.featuresSnapshot, t.fraudLabel FROM decisionAuditLog a JOIN transactions t ON a.transactionId = t.transactionId`, materialise as `(N, 64)` float32 + label vector, train XGBoost, convert to ONNX, write a metadata JSON.
+
+A side fix landed during this work: **RDA's Kafka producer was permanently disconnected**. kafkajs's `producer.connect` event fires once at startup, then the internal connection drops silently with no `producer.disconnect` event — every subsequent `producer.send` rejects with "The producer is disconnected" and the disk-buffer flush logs `Database is not open` forever. Before this fix, **zero successful publishes** had occurred in the entire validation session (106,391 failed buffers in the log); §6f's "0 FP / 100% detection" worked only because every harness payload hit cold-cache and used request-level fields. Patch in `src/shared/kafka/kafka-producer.ts:248-310`: drop the cached `isConnected` gate, attempt `producer.connect()` lazily before each `send`, and reset the flag if the surfaced error message contains "disconnect". After this, `processedCount` jumped from 3.4k → 99.9k in 5 minutes, the velocity tracker went from 0 → 95,906 users tracked.
+
+### Training result
+
+After the second replay finished, the audit log held 99,988 rows with `featuresDefault=false` on 99,965 of them — exactly what we wanted. Trainer on the joined snapshots:
+
+```
+Training rows:    100,000  (~5% fraud after PaySim oversample)
+F1-score:         0.3387
+AUC-ROC:          0.9159
+Precision:        0.2153
+Recall:           0.7946
+
+Top 15 feature importances (option-2 model):
+  is_inflow                       0.5884
+  transaction_type_code           0.2214
+  amount                          0.0666
+  amount_mean_30d                 0.0496  ← PAA-derived (zero before)
+  graph_out_degree                0.0206  ← PAA-derived
+  velocity_1h                     0.0176  ← PAA-derived
+  pair_time_since_last_send       0.0087  ← PAA-derived
+  graph_pagerank                  0.0064  ← PAA-derived
+  graph_community_id              0.0063  ← PAA-derived
+  velocity_24h                    0.0055  ← PAA-derived
+  amount_std_30d                  0.0037  ← PAA-derived
+  amount_zscore_vs_sender         0.0033  ← PAA-derived
+  velocity_7d                     0.0021  ← PAA-derived
+```
+
+**Eight PAA-derived features now carry non-zero importance** — every one of them was 0 in §6f's training. The PAA → Redis → RDA → audit loop is closed end-to-end and MLA's model has learned to use it.
+
+### Deployment harness result — *and the next problem this exposes*
+
+Harness run (800 curated legit + 5,000 PaySim-style background + 300 fraud) against the option-2 model:
+
+| Stream | n | Decision | Result |
+|---|---:|---|---|
+| `legit` (curated) | 800 | 0/800/0 | **100% false positive — every legit transaction declined** |
+| `background` (PaySim-mix legit) | 5000 | 0/5000/0 | **100% false positive — every legit transaction declined** |
+| all 8 fraud personas | 300 | 0/300/0 | 100% detection at score 1.0 |
+
+Every transaction in the run scored ≥ threshold. **Worse than the §6f result on the same harness.** Diagnosis:
+
+- Training set: 99,965 / 99,988 rows had `featuresDefault=false`. PaySim's senders appear repeatedly (most have ≥2 transactions), so after the second replay the warm-cache Redis state was the norm.
+- Harness set: 800 + 5,000 background payloads use **brand-new sender IDs** (`legit_user_*`, `bg_user_*`) that PAA has never seen. Redis returns defaults. `featuresSnapshot` carries the catalogue defaults (`velocity_1h=2.5, graph_pagerank=0.15, amount_mean_30d=25000`, …) — the same constants for every row.
+- The model trained against a distribution where those positions *vary meaningfully* on legit-vs-fraud, and now sees them all pegged at catalogue defaults. It interprets this out-of-distribution state as fraud.
+
+This is **a real production failure mode**: a model trained on PAA-enriched data fails on cold-cache traffic, which is what every brand-new sender's first transaction is. §6f's model didn't have this problem because it never learned to rely on PAA features in the first place — it sat at chance on the cold-cache distribution by accident.
+
+### What option 2 actually proves
+
+Two distinct facts that need to be held separately:
+
+1. **The training loop works.** The PAA → Kafka → Redis → audit → trainer path is end-to-end functional, and a model trained from it genuinely uses PAA-derived features. This was the open structural gap in every previous iteration.
+2. **Production-ready models need to learn both cold and warm cache states.** A model that only sees warm-cache data fails on new users by construction. The §6f model is safe but ignores PAA; the §6g model uses PAA but fails on new users. Neither is shippable on its own.
+
+Three concrete paths to a robust model:
+
+- **Mix the two replays' audit data.** The first replay produced 99,988 cold-cache snapshots; the second produced 99,965 warm. Train on both and the model sees the full distribution. (Costs nothing — just don't truncate audit between replays.)
+- **Add feature-dropout regularisation** at train time: zero out PAA columns in a random N% of rows so the model learns to fall back to request-level fields when PAA defaults are present.
+- **Train a two-stage cascade**: a cold-cache model that uses only request-level fields, plus a warm-cache uplift model that adds PAA. Cheap on the cold path, accurate on the warm path.
+
+For now the deployed model has been reverted to the §6f path (F1=0.39, AUC=0.89 — the working state) so the system remains usable while a follow-up iteration picks one of the three.
+
 ## 7. Recommended next steps
 
 1. **Land Bugs 1–4 as proper PRs.** The four fixes I made are minimal but live in `src/server.ts`, `src/shared/onnx/onnx.service.ts`, and `mla-service/src/training/preprocessor.py`. They're each a few lines and have unit-test surface. Without them the system silently runs mock predictions in production.
