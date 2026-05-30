@@ -22,6 +22,7 @@ import { dirname, resolve } from "path";
 interface CliArgs {
   url: string;
   legit: number;
+  background: number;
   concurrency: number;
   apiKey?: string;
   tenant?: string;
@@ -30,6 +31,7 @@ interface CliArgs {
 
 type Persona =
   | "legit"
+  | "background"
   | "mule_layering"
   | "card_testing"
   | "account_takeover"
@@ -59,6 +61,7 @@ function parseArgs(argv: string[]): CliArgs {
   const out: CliArgs = {
     url: "http://127.0.0.1:3000",
     legit: 800,
+    background: 0,
     concurrency: 16,
     out: "reports/load-test-results.json",
   };
@@ -68,6 +71,7 @@ function parseArgs(argv: string[]): CliArgs {
     switch (k) {
       case "--url":         out.url = v; i++; break;
       case "--legit":       out.legit = Number(v); i++; break;
+      case "--background":  out.background = Number(v); i++; break;
       case "--concurrency": out.concurrency = Number(v); i++; break;
       case "--api-key":     out.apiKey = v; i++; break;
       case "--tenant":      out.tenant = v; i++; break;
@@ -88,6 +92,47 @@ function lognormalAmount(): number {
 
 function pick<T>(arr: readonly T[]): T {
   return arr[Math.floor(Math.random() * arr.length)]!;
+}
+
+/**
+ * Background-traffic generator — PaySim-style legit distribution.
+ *
+ * Realistic mix: 35% PAYMENT (groceries / utilities), 25% CASH_IN
+ * (salary / refunds), 20% TRANSFER (person-to-person), 15% CASH_OUT
+ * (ATM), 5% DEBIT. Lognormal amounts skewed small. Used to measure
+ * precision: every flagged transaction in this stream is a false
+ * positive.
+ */
+function backgroundLegitTxn(i: number): Job {
+  const typeRoll = Math.random();
+  const txType =
+    typeRoll < 0.35 ? "PAYMENT" :
+    typeRoll < 0.60 ? "CASH_IN" :
+    typeRoll < 0.80 ? "TRANSFER" :
+    typeRoll < 0.95 ? "CASH_OUT" : "DEBIT";
+  const country = pick(COUNTRIES_LOW_RISK);
+  return {
+    persona: "background",
+    expected: "ACCEPT",
+    payload: {
+      transaction_id: randomUUID(),
+      sender_id: `bg_user_${i % 5000}`,
+      receiver_id: txType === "CASH_IN" ? `bg_payer_${i % 200}` : `bg_recipient_${(i * 11) % 8000}`,
+      amount: Math.round(lognormalAmount() * 100) / 100,
+      transaction_type: txType,
+      timestamp: nowS(),
+      segment: "standard",
+      channel: pick(["MOBILE", "WEB", "POS", "AGENT"]),
+      currency: "USD",
+      is_authenticated: true,
+      device_is_trusted: Math.random() < 0.9,
+      account_age_days: 180 + Math.floor(Math.random() * 2000),
+      transaction_country: country,
+      ip_country: country,
+      is_recurring: Math.random() < 0.1,
+      wallet_balance: 1000 + Math.random() * 9000,
+    },
+  };
 }
 
 /* ------------------------- Persona generators ------------------------- */
@@ -418,6 +463,7 @@ async function main() {
 
   // Build job graph.
   const legitJobs: Job[] = Array.from({ length: args.legit }, (_, i) => legitTxn(i));
+  const backgroundJobs: Job[] = Array.from({ length: args.background }, (_, i) => backgroundLegitTxn(i));
 
   const groups: Job[][] = [];
   for (let s = 0; s < 8; s++) groups.push(muleLayeringBurst(s));
@@ -430,6 +476,7 @@ async function main() {
   const standaloneJobs: Job[] = [
     ...Array.from({ length: 12 }, (_, i) => geoAnomalyTxn(i)),
     ...Array.from({ length: 10 }, (_, i) => newAccountDrainTxn(i)),
+    ...backgroundJobs,
   ];
 
   const totalCount =
