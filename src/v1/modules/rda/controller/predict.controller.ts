@@ -227,6 +227,15 @@ function sendOutcome(
         .header("Retry-After", "1")
         .send(ErrorResponse("Another request with this Idempotency-Key is still in flight"));
       return;
+    case "duplicate":
+      res
+        .code(httpStatus.CONFLICT)
+        .send(
+          ErrorResponse(
+            `transaction_id "${outcome.transactionId}" already processed for this tenant`
+          )
+        );
+      return;
   }
 }
 

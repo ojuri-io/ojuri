@@ -325,7 +325,7 @@ class MetricsService {
    * error so predictions still succeed, but it gets counted so a
    * Prometheus alert can fire on a sustained spike.
    */
-  recordAuditWriteFailure(op: "record" | "override") {
+  recordAuditWriteFailure(op: "record" | "override" | "duplicate") {
     this.auditWriteFailures.inc({ op });
   }
 

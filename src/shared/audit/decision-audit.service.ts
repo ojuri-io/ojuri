@@ -41,11 +41,22 @@ export interface DecisionAuditRecord {
   latencyMs: number;
 }
 
+export type DecisionAuditRecordResult =
+  | { kind: "ok"; id: string }
+  | { kind: "duplicate" }
+  | { kind: "failed" };
+
+// Postgres unique-violation SQLSTATE. Surfaced on Objection / pg errors
+// as `err.code`; we narrow to this specific value so generic failures
+// still hit the "swallow & log" branch (audit failures must never break
+// the decision path).
+const PG_UNIQUE_VIOLATION = "23505";
+
 @singleton()
 class DecisionAuditService {
   constructor(private readonly repo: DecisionAuditRepo) {}
 
-  async record(rec: DecisionAuditRecord): Promise<string | null> {
+  async record(rec: DecisionAuditRecord): Promise<DecisionAuditRecordResult> {
     try {
       const row = await this.repo.save({
         transactionId: rec.transactionId,
@@ -81,8 +92,16 @@ class DecisionAuditService {
         latencyMs: rec.latencyMs,
       });
 
-      return row.id;
+      return { kind: "ok", id: row.id };
     } catch (err) {
+      if (isUniqueViolation(err)) {
+        log.warn("record", "Duplicate (tenantId, transactionId) — replay rejected", {
+          tenantId: rec.tenantId ?? null,
+          transactionId: rec.transactionId,
+        });
+        metricsService.recordAuditWriteFailure("duplicate");
+        return { kind: "duplicate" };
+      }
       // Audit-log failures must never break the decision path. The
       // counter makes a sustained spike alertable instead of a silent
       // regression in case-management coverage.
@@ -91,7 +110,7 @@ class DecisionAuditService {
         err: String(err),
       });
       metricsService.recordAuditWriteFailure("record");
-      return null;
+      return { kind: "failed" };
     }
   }
 
@@ -178,6 +197,13 @@ class DecisionAuditService {
   async listSimilar(auditId: string, limit: number) {
     return this.repo.listSimilar(auditId, limit);
   }
+}
+
+function isUniqueViolation(err: unknown): boolean {
+  if (!err || typeof err !== "object") return false;
+  const code = (err as { code?: unknown; nativeError?: { code?: unknown } }).code
+    ?? (err as { nativeError?: { code?: unknown } }).nativeError?.code;
+  return code === PG_UNIQUE_VIOLATION;
 }
 
 export default DecisionAuditService;
