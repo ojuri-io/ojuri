@@ -79,6 +79,11 @@ decisions.
 
 ## Quick start
 
+> **On Windows?** Follow [`docs/WINDOWS-SETUP.md`](docs/WINDOWS-SETUP.md)
+> instead — it covers the Windows installer flow, `py -3.11` invocation,
+> the MSVC redistributable XGBoost needs, and the cmd/PowerShell
+> activation syntax. The commands below assume a POSIX shell.
+
 ````bash
 git clone https://github.com/ojuri-io/ojuri.git
 cd ojuri
@@ -92,6 +97,11 @@ PAA workers, and the Prometheus/Grafana stack. FIA is gated behind a profile
 because it carries ~7.6 GB of Phi-3 weights — opt in with
 `docker compose --profile fia up -d fia` when you have the disk and RAM.
 
+> Make sure the Docker daemon is running before `docker compose up -d` —
+> start Docker Desktop (macOS/Windows) or `sudo systemctl start docker` (Linux)
+> and confirm with `docker info`. Compose will fail with
+> `Cannot connect to the Docker daemon` if it isn't up.
+
 > Copying `.env.example` to `.env` is required before `docker compose up` —
 > RDA refuses `/v1/auth/login` without `AUTH_JWT_SECRET`, and the Knex-backed
 > admin endpoints need the `DB_*` block. Rotate `AUTH_JWT_SECRET` before any
@@ -102,15 +112,18 @@ because it carries ~7.6 GB of Phi-3 weights — opt in with
 >
 > ````bash
 > cd mla-service
-> python3.11 --version            # must report Python 3.11.x — see Prerequisites
-> python3.11 -m venv venv && source venv/bin/activate
+> python --version                # must report Python 3.11.x — see Prerequisites
+> python -m venv venv
+> source venv/bin/activate
 > pip install -r requirements.txt
 > python -m src.main
 > ````
 >
-> If `python3.11` isn't on your PATH, substitute the binary your installer
-> provides (e.g. `python3` on Debian/Ubuntu after `apt install python3.11`,
-> or the pyenv shim once `pyenv local 3.11` is set in this directory).
+> If `python` on your PATH isn't 3.11, substitute the binary your installer
+> provides (e.g. `python3.11` / `python3` on Debian/Ubuntu after
+> `apt install python3.11`, or the pyenv shim once `pyenv local 3.11` is
+> set in this directory). Windows users: see [`docs/WINDOWS-SETUP.md`](docs/WINDOWS-SETUP.md)
+> for the cmd/PowerShell equivalent.
 >
 > On subsequent runs, just `source venv/bin/activate && python -m src.main`.
 > The "System health" page in Sentinel will show MLA as offline until you
