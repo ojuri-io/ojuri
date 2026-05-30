@@ -386,6 +386,30 @@ Harness result against PaySim model (400 legit + 300 fraud):
 
 The PaySim model is *also* not the mockInference bug — but it's degenerate in the opposite direction. Trained on a heavily class-imbalanced dataset and SMOTE-balanced to 50/50, the model's offline F1=0.999 looks pristine. At inference RDA passes 64-dim catalogue values through positions the trainer used for completely different PaySim columns. The model finds those values "look fraud-shaped" relative to its training distribution and DECLINEs everything at score ≈0.997 — including 400/400 legit. **Effectively unusable in production despite perfect offline metrics.**
 
+### Pre-existing synthetic dataset (`data/synthetic/train_synthetic.csv`, 50k rows, 3.34% fraud)
+
+A third dataset shipped via the sibling `fraud-service-msc` repo. Trainer result:
+
+```
+Offline metrics:   F1=0.0000   AUC=0.5322   Precision=0.0   Recall=0.0
+```
+
+The model literally never predicts positive on the held-out test set — AUC 0.53 is barely above coin-flip. Deployed anyway and ran the harness:
+
+| Persona | Detection | Median score |
+|---|---:|---:|
+| legit              | 100% ACCEPT | 0.188 |
+| account_takeover   | **0%** | 0.175 |
+| card_testing       | **0%** | 0.161 |
+| mule_layering      | **0%** | 0.119 |
+| smurfing           | **0%** | 0.136 |
+| velocity_burst     | **0%** | 0.126 |
+| romance_scam       | **0%** | 0.179 |
+| geo_anomaly        | **0%** | 0.149 |
+| new_account_drain  | **0%** | 0.150 |
+
+**This is visually indistinguishable from the original mockInference bug** — flat low scores in the 0.12–0.19 range, every fraud accepted. But the model is *genuinely* running real ONNX inference. The difference is the model learned nothing because the training data is random-shaped. This is the exact failure mode the original four-bug stack masqueraded as for who-knows-how-long, and it's why "scores cluster low, everything accepts" is the absolute *worst* diagnostic signature to inherit — it could be a coding bug, it could be untrained data, it could be feature-position mismatch, and there is no signal in the output to tell you which.
+
 ### What this tells us
 
 The same pipeline produces three very different behaviours depending on what shaped the training data:
@@ -394,6 +418,7 @@ The same pipeline produces three very different behaviours depending on what sha
 |----------------------------------------|--------------|--------------|---------|----------------------------------------|---------|
 | `mockInference` heuristic (the bug)    | 0.12         | 0.13         | 0%      | 0%   | constant-ish, no signal |
 | Random synthetic (default fallback)    | 0.12         | 0.12         | 0%      | 0%   | random noise |
+| Pre-shipped synthetic CSV (50k, 3% fraud) | 0.19      | 0.12–0.18    | 0%      | 0%   | **identical-looking to the bug, but a real model that learned nothing — F1=0, AUC=0.53** |
 | Seeded with learnable rule (§6d)       | 0.06         | ≥0.78        | 0%      | 100% | **clean — but training data is hand-crafted** |
 | IEEE-CIS native (431-dim)              | 0.20         | 0.16–0.34    | 13%     | ~25% | runs, but inputs the model considers important are zero-padded |
 | PaySim native (434-dim)                | 0.997        | 0.997        | 100%    | 100% | declines everything — feature-position mismatch |
