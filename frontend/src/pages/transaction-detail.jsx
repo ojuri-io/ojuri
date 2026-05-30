@@ -102,6 +102,8 @@ function TransactionDetail({ toast, user, nav, txn, queue, reports: _reports, re
   }
 
   const isPreRule = t.stage === 'PRE_RULE';
+  const isOverridden = !!t.overrideDecision || !!t.reviewedAt;
+  const effectiveDecision = t.overrideDecision || t.finalDecision;
   // Did the FIA service actually return a narrative for this transaction?
   // We treat the synthetic queue fallback (verdict UNCERTAIN, narrative '')
   // as "no report" so the user gets a Request button rather than ghost text.
@@ -212,8 +214,8 @@ function TransactionDetail({ toast, user, nav, txn, queue, reports: _reports, re
         </div>
         <div style={{display:'flex', gap:6, flexShrink:0}}>
           <button onClick={()=>document.getElementById('followup-input')?.focus()}><Ti name="message-circle" size={14}/>Ask FIA</button>
-          <button onClick={()=>setAction('release')}>Override</button>
-          <button className="danger-bg" onClick={()=>setAction('confirm')}>Mark fraudulent</button>
+          {!isOverridden && <button onClick={()=>setAction('release')}>Override</button>}
+          {!isOverridden && <button className="danger-bg" onClick={()=>setAction('confirm')}>Mark fraudulent</button>}
         </div>
       </div>
 
@@ -233,13 +235,24 @@ function TransactionDetail({ toast, user, nav, txn, queue, reports: _reports, re
               )}
             </p>
           </div>
-          <DecisionPill decision={t.finalDecision} source={t.decisionSource} stage={t.stage}/>
+          <DecisionPill decision={effectiveDecision} source={isOverridden ? 'REVIEWER_OVERRIDE' : t.decisionSource} stage={t.stage}/>
         </div>
         <div style={{display:'grid', gridTemplateColumns:'1fr 28px 1fr', gap:12, alignItems:'center', padding:12, background:'var(--color-background-secondary)', borderRadius:'var(--border-radius-md)'}}>
           <PartyChip role="Sender" handle={t.sender} account={t.context?.customerAccountName}/>
           <Ti name="arrow-right" size={16} style={{color:'var(--color-text-tertiary)', justifySelf:'center'}}/>
           <PartyChip role="Receiver" handle={t.receiver} account={t.context?.beneficiaryAccountName}/>
         </div>
+        {isOverridden && (
+          <OverrideBanner
+            overrideDecision={t.overrideDecision}
+            originalDecision={t.finalDecision}
+            originalSource={t.decisionSource}
+            ruleName={t.preRule?.name}
+            reviewedBy={t.reviewedBy}
+            reviewedAt={t.reviewedAt}
+            reason={t.overrideReason}
+          />
+        )}
       </section>
 
       {/* ML decision */}
@@ -498,6 +511,10 @@ function normaliseDetail(row, fromQueue) {
     finalDecision: row.finalDecision || base.finalDecision || null,
     mlDecision: row.mlDecision || base.mlDecision || null,
     decisionSource: row.decisionSource || base.decisionSource || null,
+    overrideDecision: row.overrideDecision ?? base.overrideDecision ?? null,
+    overrideReason: row.overrideReason ?? base.overrideReason ?? null,
+    reviewedBy: row.reviewedBy ?? base.reviewedBy ?? null,
+    reviewedAt: row.reviewedAt ?? base.reviewedAt ?? null,
     latencyMs: row.latencyMs ?? base.latencyMs ?? null,
   };
 }
@@ -720,12 +737,37 @@ function TransactionContext({ context }) {
 function DecisionPill({ decision, source, stage }) {
   const finalDecision = decision || 'ACCEPT';
   const tone = finalDecision === 'DECLINE' ? 'danger' : finalDecision === 'REVIEW' ? 'warn' : 'success';
-  const isRule = source === 'PRE_RULE' || source === 'POST_RULE' || stage === 'PRE_RULE';
-  const label = isRule ? 'RULE' : 'ML';
+  const isOverride = source === 'REVIEWER_OVERRIDE';
+  const isRule = !isOverride && (source === 'PRE_RULE' || source === 'POST_RULE' || stage === 'PRE_RULE');
+  const label = isOverride ? 'OVERRIDE' : isRule ? 'RULE' : 'ML';
   return (
     <span className={`pill ${tone}`} style={{padding:'4px 10px', fontSize:11, flexShrink:0}}>
       {finalDecision} · {label}
     </span>
+  );
+}
+
+function OverrideBanner({ overrideDecision, originalDecision, originalSource, ruleName, reviewedBy, reviewedAt, reason }) {
+  const tone = overrideDecision === 'DECLINE' ? 'danger' : 'success';
+  const originalLabel = originalSource === 'PRE_RULE' || originalSource === 'POST_RULE'
+    ? `${originalDecision} by rule${ruleName ? ` · ${ruleName}` : ''}`
+    : `${originalDecision} by ML`;
+  const when = reviewedAt ? new Date(reviewedAt).toLocaleString() : '—';
+  return (
+    <div className={`banner ${tone}`} style={{marginTop:12, display:'flex', alignItems:'flex-start', gap:10, padding:'10px 12px'}}>
+      <Ti name="user-check" size={14} className="b-icon"/>
+      <div style={{flex:1, minWidth:0}}>
+        <p style={{margin:0, fontSize:12, fontWeight:500}}>
+          Reviewer overrode to <span className="mono">{overrideDecision}</span>
+          {reviewedBy ? <> · by <span className="mono">{reviewedBy}</span></> : null}
+          <> · {when}</>
+        </p>
+        <p style={{margin:'3px 0 0', fontSize:11, color:'var(--color-text-secondary)'}}>
+          Original: <span className="mono" style={{textDecoration:'line-through'}}>{originalLabel}</span>
+          {reason ? <> · Reason: {reason}</> : null}
+        </p>
+      </div>
+    </div>
   );
 }
 
