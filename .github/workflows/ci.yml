@@ -290,6 +290,13 @@ jobs:
           # 3. Hit the reload endpoint. Returns the new in-memory cache
           #    counts; the demo seed installs four PRE rules, so any
           #    `pre` count < 4 means the rules engine isn't seeing them.
+          #
+          # IMPORTANT: this only refreshes the in-memory cache on the
+          # SINGLE replica that NGINX routed this request to — the other
+          # two RDA replicas still hold empty caches. The next step
+          # restarts all three replicas so every one of them cold-boots
+          # the rules cache from the now-seeded DB before demo:load
+          # round-robins traffic across them.
           RESP=$(curl -sS -m 10 -X POST http://localhost/v1/admin/rules/reload \
             -H "Authorization: Bearer $TOK2")
           echo "$RESP"
@@ -300,9 +307,30 @@ jobs:
           data = d.get('data') or {}
           pre = int(data.get('pre', 0))
           post = int(data.get('post', 0))
-          print(f'rules cache reloaded: pre={pre} post={post}')
+          print(f'rules cache reloaded on one replica: pre={pre} post={post}')
           assert pre >= 4, f'expected >=4 PRE rules (the demo seed installs 4), got {pre}'
           "
+
+      # The reload endpoint is single-replica by design; restart the
+      # other two so every RDA process sees the seeded rules before
+      # demo:load round-robins traffic across them. Without this step
+      # demo:load can come back with review=0 simply because most of
+      # the rule-matching entries happened to land on a replica whose
+      # in-memory cache hadn't been forced to reload yet.
+      - name: Restart RDA replicas so all three cold-boot the seeded rules
+        run: |
+          set -e
+          docker compose restart rda-1 rda-2 rda-3
+          # Wait for nginx to re-route to the recovered replicas — the
+          # restart is fast (~2-3s per container) but nginx's upstream
+          # health checks take a tick to follow.
+          for i in {1..30}; do
+            if curl -sf -m 2 http://localhost/health > /dev/null; then
+              echo "nginx healthy after $((i*2))s post-restart"
+              break
+            fi
+            sleep 2
+          done
 
       - name: Smoke npm run demo:load against the running stack
         run: |
