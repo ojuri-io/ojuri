@@ -96,11 +96,20 @@ class ONNXConverter:
         scaler_path = output_path.replace('.onnx', '_scaler.npz')
         
         try:
+            # Identity-scaler case: with_mean=False, with_std=False
+            # leaves mean_/scale_/var_ as None. numpy.savez stores
+            # None as an object array, which then fails to load with
+            # numpy.load(..., allow_pickle=False) — the secure default.
+            # Substitute identity arrays so the saved file is plain
+            # float32 and loadable without trust-pickle gymnastics.
+            mean = scaler.mean_ if scaler.mean_ is not None else np.zeros(num_features)
+            scale = scaler.scale_ if scaler.scale_ is not None else np.ones(num_features)
+            var = scaler.var_ if scaler.var_ is not None else np.ones(num_features)
             np.savez(
                 scaler_path,
-                mean=scaler.mean_,
-                scale=scaler.scale_,
-                var=scaler.var_
+                mean=mean,
+                scale=scale,
+                var=var,
             )
             logger.info(f"  ✅ Scaler saved: {scaler_path}")
             

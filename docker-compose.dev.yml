@@ -36,12 +36,15 @@ services:
       - DB_PASSWORD=${POSTGRES_PASSWORD:-postgres}
     volumes:
       - ./src:/app/src
-      - ./dist:/app/dist
+      # dist/ is built inside the image (Dockerfile.dev RUN npm run build);
+      # mounting host dist/ over it caused stale-build issues for new
+      # contributors who hadn't run the build locally.
       - ./models:/app/models:ro
       - ./package.json:/app/package.json:ro
       - ./tsconfig.json:/app/tsconfig.json:ro
       - ./nodemon.json:/app/nodemon.json:ro
       - /app/node_modules
+      - /app/dist
     ports:
       - "3000:3000"
     depends_on:

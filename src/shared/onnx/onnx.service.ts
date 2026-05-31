@@ -218,12 +218,25 @@ class OnnxService {
     const startTime = Date.now();
 
     try {
-      // Check if model file exists
       if (!fs.existsSync(this.modelPath)) {
-        onnxLogger.warn("loadModel", "Model file not found, creating placeholder", {
-          modelPath: this.modelPath,
-        });
-        await this.createPlaceholderModel();
+        // No placeholder, no mock fallback. The previous behaviour
+        // created an empty placeholder and silently flipped into
+        // mockInference — which is exactly the silent-failure mode
+        // we removed in the open-source-readiness pass. Without a
+        // real model file, OnnxService stays uninitialised, the
+        // calibration probe records "no session", and /readyz reports
+        // onnx-model: DOWN with an actionable error in the logs.
+        onnxLogger.error(
+          "loadModel",
+          "Model file not found — train a model with " +
+            "`cd mla-service && source venv/bin/activate && python scripts/train_initial_model.py` " +
+            "then copy the resulting .onnx to models/fraud_model.onnx. " +
+            "RDA will not accept traffic until /readyz reports onnx-model: UP.",
+          { modelPath: this.modelPath }
+        );
+        this.session = null;
+        this.isModelLoaded = false;
+        return;
       }
 
       // Configure session options for optimal performance
@@ -252,28 +265,6 @@ class OnnxService {
       });
       throw err;
     }
-  }
-
-  /**
-   * Create a placeholder model for development/testing
-   */
-  private async createPlaceholderModel(): Promise<void> {
-    // Create directory if it doesn't exist
-    const modelDir = path.dirname(this.modelPath);
-    if (!fs.existsSync(modelDir)) {
-      fs.mkdirSync(modelDir, { recursive: true });
-    }
-
-    onnxLogger.warn(
-      "createPlaceholderModel",
-      "NO ONNX MODEL LOADED — predictions are running in degraded mock mode. " +
-        "Train your first model with `cd mla-service && python scripts/train_initial_model.py` " +
-        "and copy the resulting .onnx to models/fraud_model.onnx. /readyz will continue to " +
-        "report DOWN until a real model is loaded.",
-      { modelPath: this.modelPath }
-    );
-
-    this.isModelLoaded = false;
   }
 
   /**
@@ -417,8 +408,16 @@ class OnnxService {
 
     try {
       if (!this.session || !this.isModelLoaded) {
-        // Use mock inference for development
-        return this.mockInference(features);
+        // Mockinference was deleted in the open-source-readiness pass:
+        // it was a demo heuristic (0.1 + small_random) that produced
+        // plausible-looking but meaningless scores when the real model
+        // wasn't loaded, hiding production silent-failure bugs behind
+        // health checks that read green. Now we throw, the circuit
+        // breaker catches it and returns the existing fail-closed 1.0,
+        // every predict declines, and /readyz already reports DOWN via
+        // the calibration probe. Loud failure is the only safe failure
+        // mode for a fraud system.
+        throw new Error("ONNX session not loaded — predict cannot proceed");
       }
 
       // Pad-to-fit if the loaded model expects more dimensions than
@@ -473,42 +472,13 @@ class OnnxService {
   }
 
   /**
-   * Heuristic fallback used when no ONNX model is loaded (dev / first
-   * boot before MLA registers an artefact). Reads positions defined by
-   * the base catalogue in `models/feature-catalog.v1.json`.
+   * Removed. The previous heuristic fallback produced plausible-looking
+   * but meaningless scores when no model was loaded, silently masking
+   * the four bugs that motivated the open-source-readiness work. The
+   * predict path now hard-fails when the session is null; the circuit
+   * breaker returns the existing 1.0 (DECLINE) and /readyz reports
+   * onnx-model: DOWN via the calibration probe.
    */
-  private mockInference(features: Float32Array): number {
-    // Catalogue base layout: 0=velocity_1h, 1=velocity_24h, 2=velocity_7d,
-    // 3=amount_mean_30d, 5=graph_pagerank, and `amount` lives in the
-    // transaction block. See models/feature-catalog.v1.json for the
-    // authoritative index map.
-    const velocity1h = features[0] || 0;
-    const velocity24h = features[1] || 0;
-    const avgAmount30d = features[3] || 0;
-    const pagerank = features[5] || 0;
-    const amount = features[10] || 0;
-
-    // Simple heuristic for demo purposes
-    let probability = 0.1;
-
-    // High transaction amount relative to user's average
-    if (avgAmount30d > 0 && amount > avgAmount30d * 3) probability += 0.25;
-    else if (amount > 100000) probability += 0.3;
-    else if (amount > 50000) probability += 0.2;
-    else if (amount > 10000) probability += 0.1;
-
-    // High velocity indicates suspicious activity
-    if (velocity1h > 10) probability += 0.2;
-    if (velocity24h > 50) probability += 0.15;
-
-    // Low pagerank (new/peripheral user) slightly increases risk
-    if (pagerank < 0.1) probability += 0.05;
-
-    // Add small randomness for demo variety
-    probability += Math.random() * 0.05;
-
-    return Math.min(probability, 1.0);
-  }
 
   /**
    * Check if a real ONNX session is loaded. Previously this returned

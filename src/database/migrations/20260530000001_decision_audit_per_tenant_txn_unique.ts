@@ -26,6 +26,40 @@ export async function up(knex: Knex): Promise<void> {
     table.string("tenantId", 255).notNullable().defaultTo("default").alter();
   });
 
+  // Dedupe before the unique constraint or the migration fails on any
+  // environment where duplicates accumulated under the previous Redis-
+  // only idempotency regime — anything older than 24 h or split across
+  // API keys. Keep the newest row per (tenantId, transactionId) on the
+  // assumption that newer = more accurate (reviewer overrides, rule
+  // changes, etc. always land on later rows). The audit log is append-
+  // only from the predict path, so we are only ever discarding "old
+  // duplicates" — never authoritative information.
+  // The (createdAt, id) ordering matters: two duplicate rows inserted
+  // in the same statement share a createdAt to-the-microsecond, so a
+  // pure `createdAt <` check leaves them tied and the unique constraint
+  // still fails. Adding `id` as a tiebreaker guarantees exactly one row
+  // survives per (tenantId, transactionId) pair regardless of clock
+  // collisions.
+  const deletedRows = await knex.raw(
+    `DELETE FROM "${DB_TABLES.DECISION_AUDIT_LOG}" a
+       USING "${DB_TABLES.DECISION_AUDIT_LOG}" b
+      WHERE a."tenantId" = b."tenantId"
+        AND a."transactionId" = b."transactionId"
+        AND (a."createdAt" < b."createdAt"
+             OR (a."createdAt" = b."createdAt" AND a.id < b.id))`
+  );
+  // `rowCount` shape differs between pg drivers; cast through `unknown`.
+  const deleted = (deletedRows as unknown as { rowCount?: number })?.rowCount ?? 0;
+  if (deleted > 0) {
+    // eslint-disable-next-line no-console
+    console.warn(
+      `[migration 20260530000001] Deduped ${deleted} older decisionAuditLog ` +
+        `rows before adding the unique constraint. These were duplicate ` +
+        `(tenantId, transactionId) pairs from pre-constraint traffic; the ` +
+        `newest row per pair has been retained.`
+    );
+  }
+
   await knex.raw(
     `ALTER TABLE "${DB_TABLES.DECISION_AUDIT_LOG}"
        ADD CONSTRAINT ${UNIQUE_NAME} UNIQUE ("tenantId", "transactionId")`
