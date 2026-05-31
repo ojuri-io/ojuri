@@ -64,3 +64,8 @@ build/
 Thumbs.db
 *.swp
 *.swo
+
+# Validation / load-test artefacts. `scripts/fraud-validation-load-test.ts`
+# defaults `--out` to `reports/...`; that output is per-run debugging
+# data, not source of truth. Re-generate locally when needed.
+reports/
