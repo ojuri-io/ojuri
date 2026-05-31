@@ -7,15 +7,20 @@ import { container } from "tsyringe";
 import App from "./app";
 import appConfig from "./config/app.config";
 import logger from "./shared/utils/logger";
-import KafkaProducer from "./shared/kafka/kafka-producer";
-import ModelRegistryService from "./shared/models/model-registry.service";
-// Must use the @shared alias (not relative): module-alias maps it to
-// dist/, which is the same path predict.service.ts resolves through —
-// a relative import here would load the source copy and split the
-// tsyringe singleton across two distinct class objects.
+// Every @singleton class is imported via the @shared alias here so it
+// resolves through module-alias to dist/ — the same module file that
+// every other call site (predict, FIA, admin controllers) sees. In dev
+// mode a relative import would load src/ via ts-node, producing a
+// second class object under the hood and a second tsyringe singleton:
+// server.ts's instance would be initialised while predict's stays
+// empty. We've hit this twice now (OnnxService in §6b, ModelRegistry
+// in §6l) — locking every @singleton to the alias path is the
+// structural fix that prevents the same shape of bug.
+import KafkaProducer from "@shared/kafka/kafka-producer";
+import ModelRegistryService from "@shared/models/model-registry.service";
 import OnnxService from "@shared/onnx/onnx.service";
-import RulesService from "./shared/rules/rules.service";
-import RuntimeSettingsService from "./shared/settings/runtime-settings.service";
+import RulesService from "@shared/rules/rules.service";
+import RuntimeSettingsService from "@shared/settings/runtime-settings.service";
 import { startWebhookWorker, stopWebhookWorker } from "./shared/webhooks/webhook-worker";
 import { loadCatalog } from "./shared/features/feature-catalog";
 

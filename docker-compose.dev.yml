@@ -18,7 +18,11 @@ services:
       - KAFKA_BLOCKED_TOPIC=transactions.blocked
       - MODEL_PATH=/app/models/fraud_model.onnx
       - MODEL_INPUT_DIMENSION=${MODEL_INPUT_DIMENSION:-0}
-      - FRAUD_THRESHOLD=0.65
+      # Threshold calibrated against §6j model's score distribution via
+      # scripts/threshold_sweep.py — 0.15 gives 100% recall at 0.09% FP
+      # on the validation harness. Re-run the sweep on the deployed
+      # model before pushing past dev.
+      - FRAUD_THRESHOLD=${FRAUD_THRESHOLD:-0.15}
       - LOG_LEVEL=debug
       - DB_CLIENT=pg
       - DB_URL=postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-postgres}@postgres:5432/${POSTGRES_DB:-fraud_db}

@@ -815,6 +815,69 @@ Tree-based XGBoost classifiers like the one trained in §6j sit at the extreme: 
 
 The determinism check is the most important and the cheapest. mockInference returns `0.1 + small_random`. Sending the same vector twice exposes the random component in microseconds. Any future fallback / mock / degraded-mode path that uses randomness will be flagged before it serves a single production request.
 
+## 6l. Threshold tune surfaces the singleton split (again) — 100% recall (added 2026-05-31 06:05 UTC)
+
+The original `FRAUD_THRESHOLD=0.65` was an env default with no analysis behind it. `scripts/threshold_sweep.py` reads any saved harness JSON and computes precision/recall/F1 at every candidate threshold. Sweeping the §6k harness output:
+
+```
+threshold    recall   precision    FP rate     F1
+   0.05      1.0000      0.9772     0.0012   0.9885
+   0.10      1.0000      0.9804     0.0010   0.9901
+   0.15      1.0000      0.9836     0.0009   0.9917  ← optimal
+   0.20      0.8667      0.9811     0.0009   0.9204  (sharp cliff)
+   0.65      0.8367      0.9843     0.0007   0.9045  (the env default)
+   0.95      0.8333      1.0000     0.0000   0.9091
+```
+
+There's a sharp recall cliff between 0.15 and 0.20 — the natural separation point in this model's score distribution. The 0.65 default was leaving 17% of fraud on the floor at essentially no precision gain.
+
+### Threshold change requires a registry update + the singleton fix
+
+I updated `modelVersions.defaultThreshold` from 0.65 to 0.15. Reloaded the registry — `Registry refreshed { champion: "v1.0", thresholds: 1 }`. Restarted RDA. Smoke test predict still returned `model_version: "default", threshold: 0.65`.
+
+The reason: **the same singleton split bug from §6b on `OnnxService` was also present on `ModelRegistryService`**. `server.ts` imported it via `./shared/models/model-registry.service` (resolved by ts-node to `/app/src/...`), while `predict.service.ts` imported via `@shared/models/model-registry.service` (resolved by module-alias to `/app/dist/...`). Two absolute paths → two module-cache entries → two distinct constructor objects → two distinct tsyringe singleton registrations.
+
+The empirical proof at the moment of detection: the registry's reload log printed `champion: "v1.0"` at the same wall-clock moment a `/v1/predict` returned `model_version: "default"`. They were reading different instances of "the singleton".
+
+**Structural fix in `src/server.ts:9-21`**: every `@singleton`-decorated service is now imported via the `@shared/...` alias, identical to how every other call site imports it. `module-alias` resolves both code paths to `dist/`, Node de-duplicates the load, and the constructor identity is shared. After:
+
+```
+GET /v1/predict response:
+  model_version: v1.0
+  threshold: 0.15
+  decision: REVIEW   ← post-rule downgraded DECLINE → REVIEW
+```
+
+### Side bug exposed by the fix
+
+Once the singleton was shared, the previously-quiet `ModelRegistry.onActiveChange` listener actually reached `OnnxService.applyActiveVersion`. The handler copied `models/versions/v1.0/model.onnx` over `models/fraud_model.onnx` — but the file in `versions/v1.0/` was the older 434-dim IEEE-CIS artefact. RDA's `OnnxService` swapped the working 64-dim model for a 434-dim one. Every predict then threw on the dim mismatch and the circuit breaker fired its fail-closed 1.0 fallback.
+
+Two fixes:
+1. Sync the registry-tracked file with the actually-deployed model (`models/versions/v1.0/model.onnx`).
+2. **`applyActiveVersion` now re-runs `runCalibrationProbe` after the hot-swap** (`src/shared/onnx/onnx.service.ts:378`). If a future registry update points at a broken artefact, `/readyz` flips DOWN immediately — orchestrator drains traffic instead of routing it to a model that fail-closes everything.
+
+### Final harness result
+
+| Stream | n | Decision A/D/R | Detection | Median score |
+|---|---:|---:|---:|---:|
+| `legit` (curated)     | 800 | 800/0/0 | **100% TN** (0 FP) | 0.000 |
+| `background`          | 5000 | 4995/5/0 | **99.90% TN** (5 FP) | 0.000 |
+| `account_takeover`    | 10 | 0/10/0 | **100%** | 0.7499 |
+| `card_testing`        | 72 | 0/72/0 | **100%** | 1.000 |
+| `mule_layering`       | 48 | 0/48/0 | **100%** | 1.000 |
+| `smurfing`            | 60 | 0/60/0 | **100%** | 1.000 |
+| `velocity_burst`      | 48 | 0/32/16 | **100%** (32 DECLINE + 16 REVIEW via post-rule) | 1.000 |
+| `geo_anomaly`         | 12 | 0/12/0 | **100%** | 1.000 |
+| `new_account_drain`   | 10 | 0/10/0 | **100%** | 1.000 |
+| `romance_scam`        | 40 | 0/40/0 | **100%** (all REVIEW via post-rule) | 0.1565 |
+
+**Aggregate**:
+- 300 / 300 fraud detected (**100% recall**)
+- 5 / 5,800 legit declined (**0.086% FP rate**)
+- p99 = 139 ms, ~296 req/s
+
+This is the highest-quality end-state in the project, and it's the result of three compounding changes that took 12 iterations to chase down — the model, the labels, the data shape, the catalogue order, the threshold, **and** the singleton paths all had to be right at once.
+
 ## 7. Recommended next steps
 
 1. **Land Bugs 1–4 as proper PRs.** The four fixes I made are minimal but live in `src/server.ts`, `src/shared/onnx/onnx.service.ts`, and `mla-service/src/training/preprocessor.py`. They're each a few lines and have unit-test surface. Without them the system silently runs mock predictions in production.

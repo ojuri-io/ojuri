@@ -374,9 +374,15 @@ class OnnxService {
     }
 
     await this.loadModel();
+    // Re-probe after every hot-swap. A model that loads at the ONNX-runtime
+    // level can still be wrong-dim, constant, or inverted at the prediction
+    // level — without this the registry could swap in a broken artefact and
+    // /readyz would stay UP while every predict returns the fail-closed 1.0.
+    await this.runCalibrationProbe();
     onnxLogger.success("applyActiveVersion", "Hot-reloaded ACTIVE model", {
       sourceUri,
       modelPath: this.modelPath,
+      calibrationHealthy: this.isCalibrationHealthy,
     });
   }
 
