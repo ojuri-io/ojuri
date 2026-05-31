@@ -83,31 +83,48 @@ function warnIfUnsafeDefaults(): void {
   const requireApiKey = (process.env.RDA_REQUIRE_API_KEY ?? "false").toLowerCase() === "true";
   const jwtSecret = process.env.AUTH_JWT_SECRET ?? "";
   const corsOrigins = process.env.SENTINEL_CORS_ORIGINS ?? "";
+  const allowProdUnsafe = (process.env.ALLOW_UNSAFE_PROD_DEFAULTS ?? "").toLowerCase() === "true";
+
+  // Collect every unsafe-default violation and decide what to do in
+  // one pass. In production we refuse to boot unless every check
+  // passes or `ALLOW_UNSAFE_PROD_DEFAULTS=true` is set as an explicit
+  // operator opt-in (e.g. behind a private VPC where the dashboard's
+  // own auth is sufficient). In dev/staging each one still logs WARN.
+  const violations: string[] = [];
 
   if (!requireApiKey) {
-    logger.warn(
+    violations.push(
       "RDA_REQUIRE_API_KEY is false — POST /v1/predict is OPEN to any caller that can reach this process. " +
         "Set RDA_REQUIRE_API_KEY=true and issue keys via POST /v1/admin/api-keys before exposing this beyond your own host."
     );
   }
 
   if (jwtSecret.startsWith("dev-only-secret") || jwtSecret.length < 32) {
-    const message =
+    violations.push(
       "AUTH_JWT_SECRET is the development default or shorter than 32 characters. " +
-      "Generate a real secret (e.g. `openssl rand -base64 48`) and set AUTH_JWT_SECRET before exposing this service.";
-    if (isProduction) {
-      logger.error(message + " Refusing to continue with NODE_ENV=production.");
-      process.exit(1);
-    }
-    logger.warn(message);
+        "Generate a real secret (e.g. `openssl rand -base64 48`) and set AUTH_JWT_SECRET before exposing this service."
+    );
   }
 
-  if (isProduction && (corsOrigins.length === 0 || corsOrigins.includes("localhost"))) {
-    logger.warn(
-      "SENTINEL_CORS_ORIGINS is unset or still points at localhost in production. " +
+  if (corsOrigins.length === 0 || corsOrigins.includes("localhost")) {
+    violations.push(
+      "SENTINEL_CORS_ORIGINS is unset or still points at localhost. " +
         "Set it to your dashboard's public origin(s), e.g. SENTINEL_CORS_ORIGINS=https://sentinel.example.com"
     );
   }
+
+  if (violations.length === 0) return;
+
+  if (isProduction && !allowProdUnsafe) {
+    logger.error(
+      { violations },
+      "Refusing to boot with NODE_ENV=production and unsafe defaults still in place. " +
+        "Set ALLOW_UNSAFE_PROD_DEFAULTS=true to override (only do this on a private network where the dashboard's own auth is sufficient)."
+    );
+    process.exit(1);
+  }
+
+  for (const v of violations) logger.warn(v);
 }
 
 async function gracefulShutdown(signal: string): Promise<void> {

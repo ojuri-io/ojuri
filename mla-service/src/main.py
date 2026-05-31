@@ -52,6 +52,21 @@ class MLAService:
         logger.info("MODEL LEARNING AGENT STARTING")
         logger.info("=" * 70)
 
+        # Fail fast on AUTH_JWT_SECRET. The HTTP retrain endpoint
+        # (POST /v1/admin/retrain) verifies tokens minted by RDA using
+        # the *same* secret. If MLA boots without it the endpoint
+        # 500s on first call — operator only finds out when they try
+        # to use it. Surface the misconfiguration at startup instead.
+        jwt_secret = os.environ.get("AUTH_JWT_SECRET", "")
+        if not jwt_secret or len(jwt_secret) < 16:
+            logger.error(
+                "AUTH_JWT_SECRET is not configured or shorter than 16 chars. "
+                "MLA cannot verify RDA-minted tokens — every authenticated "
+                "request to /v1/admin/* would return 500. Set AUTH_JWT_SECRET "
+                "in mla-service/.env (it must match the value RDA uses)."
+            )
+            sys.exit(1)
+
         # Initialize components
         logger.info("Initializing components...")
 

@@ -204,15 +204,25 @@ class DataPreprocessor:
     def get_scaler_params(self) -> dict:
         """
         Get scaler parameters for saving.
-        
+
         Returns:
-            Dict with mean and scale arrays
+            Dict with mean and scale arrays. When the scaler is an
+            identity transform (the current default — see __init__),
+            `scaler.mean_` and `scaler.scale_` are None; we return
+            identity-shaped arrays (zeros / ones) so downstream
+            consumers (ONNX converter, test fixtures) can keep treating
+            the params as ndarray-shaped without a None guard.
         """
         if not self._is_fitted:
             raise RuntimeError("Scaler not fitted. Call preprocess() first.")
-        
+
+        import numpy as np
+        n_features = int(self.scaler.n_features_in_)
+        mean = self.scaler.mean_ if self.scaler.mean_ is not None else np.zeros(n_features)
+        scale = self.scaler.scale_ if self.scaler.scale_ is not None else np.ones(n_features)
+        var = self.scaler.var_ if self.scaler.var_ is not None else np.ones(n_features)
         return {
-            'mean': self.scaler.mean_,
-            'scale': self.scaler.scale_,
-            'var': self.scaler.var_
+            'mean': mean,
+            'scale': scale,
+            'var': var,
         }

@@ -15,6 +15,16 @@ RUN npm ci
 # Copy source code
 COPY . .
 
+# Build to populate dist/. The dist directory is excluded from the
+# image by .dockerignore (build artefacts get rebuilt inside the
+# container), so we have to compile here — `package.json:_moduleAliases`
+# resolves `@shared/*` → `dist/*` at runtime, and without this step
+# nodemon would crash on first load with "Cannot find module
+# /app/dist/shared/error/app.error". nodemon still watches src/ for
+# hot-reload; ts-node compiles changed files on-the-fly while dist/
+# stays the source of truth for module-alias lookups.
+RUN npm run build
+
 # Environment variables
 ENV NODE_ENV=development
 ENV PORT=3000

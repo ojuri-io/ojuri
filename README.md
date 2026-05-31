@@ -152,18 +152,22 @@ because it carries ~7.6 GB of Phi-3 weights — opt in with
 
 > A 120 KB demo ONNX model (`models/fraud_model.onnx`, derived from a
 > PaySim-trained XGBoost) ships in the repo so `/v1/predict` returns
-> real ML decisions out of the box — `decision_source` will read `"ML"`,
-> not `"MOCK"`. The performance numbers in this README were measured
-> against this same model. Replace it with your own once MLA has trained
-> on your data: `cd mla-service && python scripts/train_initial_model.py`
-> writes `models/versions/<v>/model.onnx`; activate it via the admin UI
-> or copy it to `models/fraud_model.onnx` for RDA to pick up. Replacements
-> are gitignored so retrained models don't accidentally land in commits.
+> real ML decisions out of the box. The performance numbers in this
+> README were measured against this same model. Replace it with your
+> own once MLA has trained on your data: `cd mla-service && python
+> scripts/train_initial_model.py` writes `models/versions/<v>/model.onnx`;
+> activate it via the admin UI or copy it to `models/fraud_model.onnx`
+> for RDA to pick up. Replacements are gitignored so retrained models
+> don't accidentally land in commits.
 >
-> If you delete the demo model and don't replace it, RDA falls back to a
-> placeholder inference that returns pseudo-random scores —
-> `/readyz` reports `DOWN` and a loud startup warning fires so the
-> degraded mode is unmissable.
+> Each model load (boot or hot-reload) runs through a two-check
+> calibration probe: a deterministic re-run and a clearly-legit vs
+> clearly-fraud discrimination test. If either fails — file missing,
+> constant output, wrong feature dimension — `/readyz` reports
+> `{"name":"onnx-model","status":"DOWN"}` and the circuit-breaker
+> fail-closes every predict to a `1.0` (DECLINE) score until a working
+> model is loaded. There is no longer a degraded-mode heuristic that
+> would silently serve random predictions.
 
 The dashboard runs separately. If you brought the backend up with
 `docker compose up -d` (the quickstart above), tell vite to proxy
