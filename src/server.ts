@@ -7,10 +7,20 @@ import { container } from "tsyringe";
 import App from "./app";
 import appConfig from "./config/app.config";
 import logger from "./shared/utils/logger";
-import KafkaProducer from "./shared/kafka/kafka-producer";
-import ModelRegistryService from "./shared/models/model-registry.service";
-import RulesService from "./shared/rules/rules.service";
-import RuntimeSettingsService from "./shared/settings/runtime-settings.service";
+// Every @singleton class is imported via the @shared alias here so it
+// resolves through module-alias to dist/ — the same module file that
+// every other call site (predict, FIA, admin controllers) sees. In dev
+// mode a relative import would load src/ via ts-node, producing a
+// second class object under the hood and a second tsyringe singleton:
+// server.ts's instance would be initialised while predict's stays
+// empty. We've hit this twice now (OnnxService in §6b, ModelRegistry
+// in §6l) — locking every @singleton to the alias path is the
+// structural fix that prevents the same shape of bug.
+import KafkaProducer from "@shared/kafka/kafka-producer";
+import ModelRegistryService from "@shared/models/model-registry.service";
+import OnnxService from "@shared/onnx/onnx.service";
+import RulesService from "@shared/rules/rules.service";
+import RuntimeSettingsService from "@shared/settings/runtime-settings.service";
 import { startWebhookWorker, stopWebhookWorker } from "./shared/webhooks/webhook-worker";
 import { loadCatalog } from "./shared/features/feature-catalog";
 
@@ -46,6 +56,13 @@ async function start() {
   const modelRegistry = container.resolve(ModelRegistryService);
   await modelRegistry.initialize().catch((err) =>
     logger.warn({ err }, "Model registry initial load failed - will retry on schedule")
+  );
+
+  // Without this call the OnnxService singleton stays uninitialised
+  // and every predict() falls through to mockInference silently.
+  const onnxService = container.resolve(OnnxService);
+  await onnxService.initialize().catch((err) =>
+    logger.error({ err }, "ONNX service initialisation failed - predictions will run in degraded mock mode")
   );
 
   const rules = container.resolve(RulesService);

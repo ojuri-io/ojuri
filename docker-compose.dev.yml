@@ -17,7 +17,17 @@ services:
       - KAFKA_TOPIC=transactions.completed
       - KAFKA_BLOCKED_TOPIC=transactions.blocked
       - MODEL_PATH=/app/models/fraud_model.onnx
-      - FRAUD_THRESHOLD=0.65
+      - MODEL_INPUT_DIMENSION=${MODEL_INPUT_DIMENSION:-0}
+      # Env-level fallback only — last in RDA's threshold cascade:
+      #   1. segmentThresholds (per-segment override in the DB)
+      #   2. modelVersions.defaultThreshold (per-model in the registry)
+      #   3. runtimeSettings.fraud_threshold (operator-editable, seeded 0.65)
+      #   4. env FRAUD_THRESHOLD (this line)
+      # 0.65 is the conservative cold-start value; pick a real number
+      # for your own deployed model via `python scripts/threshold_sweep.py
+      # reports/<your-harness-output>.json --target-fp-rate <N>` and set
+      # it on the model's registry row, not here.
+      - FRAUD_THRESHOLD=${FRAUD_THRESHOLD:-0.65}
       - LOG_LEVEL=debug
       - DB_CLIENT=pg
       - DB_URL=postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-postgres}@postgres:5432/${POSTGRES_DB:-fraud_db}
@@ -31,6 +41,7 @@ services:
       - DB_PASSWORD=${POSTGRES_PASSWORD:-postgres}
     volumes:
       - ./src:/app/src
+      - ./dist:/app/dist
       - ./models:/app/models:ro
       - ./package.json:/app/package.json:ro
       - ./tsconfig.json:/app/tsconfig.json:ro

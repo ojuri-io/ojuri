@@ -50,7 +50,17 @@ class PostgresService {
         amount: event.amount,
         transactionType: event.transaction_type,
         timestamp: event.timestamp,
-        fraudLabel: event.fraud,
+        // Do NOT persist the system's own decision as `fraudLabel` —
+        // doing so creates a feedback loop where the next training run
+        // learns to reproduce past decisions instead of detecting real
+        // fraud. The 2026-05-14 schema migration introduced
+        // `groundTruthFraud` for verified labels (chargebacks, reviewer
+        // overrides, customer reports) — `fraudLabel` is left NULL here
+        // and only populated by that explicit labelling path. The
+        // decision itself is already recorded in `decisionAuditLog` for
+        // auditability, and `fraudProbability` below preserves the
+        // model's confidence for downstream calibration work.
+        fraudLabel: null,
         fraudProbability: event.fraud_probability,
         // Persist what drove the decision so MLA can exclude
         // rule-driven rows from its training set. Pre-rules-engine
