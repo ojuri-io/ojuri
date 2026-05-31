@@ -82,6 +82,40 @@ def fetch_training_data(args):
     return X, y, first_keys
 
 
+PAA_FEATURE_PREFIXES = (
+    "velocity_",
+    "amount_mean_",
+    "amount_std_",
+    "amount_max_",
+    "amount_zscore",
+    "graph_",
+    "pair_",
+    "unique_receivers_",
+    "recipient_dispute_",
+    "recipient_lifetime_",
+    "hour_dev_from_sender",
+)
+
+# Catalogue-default values for PAA-derived positions. Matches
+# DEFAULT_REDIS_SNAPSHOT in src/v1/modules/rda/services/feature.service.ts
+# (any field not listed defaults to 0 in the feature builder).
+PAA_DEFAULTS = {
+    "velocity_1h": 2.5,
+    "velocity_24h": 15,
+    "velocity_7d": 75,
+    "amount_mean_30d": 25000.0,
+    "amount_std_30d": 15000.0,
+    "graph_pagerank": 0.15,
+    "graph_clustering_coef": 0.35,
+    "graph_shortest_path_to_fraud": 99.0,
+    "pair_time_since_last_send": 3600.0,
+}
+
+
+def is_paa_feature(name: str) -> bool:
+    return any(name.startswith(p) for p in PAA_FEATURE_PREFIXES)
+
+
 def main():
     p = argparse.ArgumentParser()
     p.add_argument("--host", default=os.getenv("POSTGRES_HOST", "localhost"))
@@ -90,10 +124,31 @@ def main():
     p.add_argument("--user", default=os.getenv("POSTGRES_USER", "postgres"))
     p.add_argument("--password", default=os.getenv("POSTGRES_PASSWORD", "postgres"))
     p.add_argument("--out", default="./models/fraud_model_v1.0.onnx")
+    p.add_argument(
+        "--paa-dropout-rate",
+        type=float,
+        default=0.0,
+        help="Probability that a training row has its PAA-derived feature "
+        "columns replaced with catalogue defaults. Lets the model learn "
+        "to fall back to request-level fields on Redis cold-cache.",
+    )
     args = p.parse_args()
 
     X, y, feature_names = fetch_training_data(args)
     print(f"Class distribution: legit={int((y==0).sum())} fraud={int((y==1).sum())} rate={float(y.mean()):.4%}")
+
+    # PAA-feature dropout: replace PAA-sourced columns with their
+    # catalogue defaults for a random subset of rows. Mirrors what RDA
+    # serves at inference when Redis returns a miss for a brand-new
+    # sender — without this the model never sees that distribution.
+    if args.paa_dropout_rate > 0:
+        paa_cols = [i for i, n in enumerate(feature_names) if is_paa_feature(n)]
+        rng = np.random.default_rng(42)
+        mask = rng.random(len(X)) < args.paa_dropout_rate
+        for i in paa_cols:
+            name = feature_names[i]
+            X[mask, i] = PAA_DEFAULTS.get(name, 0.0)
+        print(f"Applied PAA-feature dropout to {int(mask.sum())} rows ({len(paa_cols)} PAA cols)")
 
     X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42, stratify=y)
     print(f"Train: {len(X_train)}  Test: {len(X_test)}")

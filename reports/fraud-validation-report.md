@@ -567,6 +567,53 @@ Three concrete paths to a robust model:
 
 For now the deployed model has been reverted to the §6f path (F1=0.39, AUC=0.89 — the working state) so the system remains usable while a follow-up iteration picks one of the three.
 
+## 6h. Path (1) and (2) — natural cold+warm mix and PAA-feature dropout (added 2026-05-31 02:45 UTC)
+
+Both follow-up paths from §6g were implemented and tested. **Neither produced a model that simultaneously detected fraud and avoided false positives on the harness.** The failure mode shifted in interesting ways and surfaced a deeper structural issue.
+
+### What I tried
+
+1. **Path (1) — natural cold+warm mix.** Ingested a second 100k PaySim batch (same sender pool, different sample), ran a single 200k replay with concurrency 24. Without `--paa-dropout-rate`, the resulting audit log split 52% warm / 48% cold by accident — concurrent posts outran PAA's consumer for the first ~half of the run, then PAA caught up. Training on this natural mix.
+2. **Path (2) — PAA-feature dropout.** Added `--paa-dropout-rate` to `train_from_audit_snapshots.py:33-105`. For a random N% of training rows the 30 PAA-derived columns are replaced with catalogue defaults (matching exactly what the feature builder serves on a Redis miss).
+
+### Training metrics — both healthier than §6g
+
+| Iteration         | F1   | AUC  | Precision | Recall | Top feature(s) |
+|-------------------|------|------|-----------|--------|---|
+| §6f (raw cols)    | 0.41 | 0.92 | 0.28      | 0.76   | is_inflow (0.56), transaction_type_code |
+| §6g (warm-only)   | 0.34 | 0.92 | 0.22      | 0.79   | is_inflow (0.59), transaction_type_code |
+| §6h.1 (natural mix) | 0.27 | 0.94 | 0.16    | **0.85** | **graph_out_degree (0.58)** — PAA-derived! |
+| §6h.2 (dropout 0.5) | 0.34 | **0.95** | 0.22 | 0.83 | is_inflow (0.38), transaction_type_code, **account_age_days (0.10)**, **channel_code (0.05)**, **pair_amount_ratio_to_pair_mean** |
+
+The dropout-trained model has the **most balanced importance distribution** of any iteration: it leans on both request-level fields *and* PAA-derived features. Exactly what we wanted on paper.
+
+### Harness reality — both fail in opposite directions
+
+| Iteration         | Legit FP rate | Fraud detection | What's happening |
+|-------------------|---------------|------------------|---|
+| §6f (raw cols)    | 0%            | 100% (300/300)   | Works on harness shape |
+| §6g (warm-only)   | **100%**      | 100%             | Cold-cache new senders → out-of-distribution → flag everything |
+| §6h.1 (natural mix) | 0%          | **0%**           | Model learned "cold-cache = legit" because most cold-cache training rows were legit (concurrent replay outran PAA for early-burst rows, which were mostly small legit transactions). Now declines nothing. |
+| §6h.2 (dropout)   | 0%            | **0%**           | Different failure: model relies on `account_age_days`, `channel_code`, `ip_country` etc. The replay script *held those constant* (every PaySim row sent with `account_age_days=365, channel=MOBILE, ip_country=US`). Model never saw them vary. Harness payloads use varied values for those fields — out-of-distribution along axes the model has no signal on. |
+
+### The deeper issue this exposes
+
+PaySim's data only carries `amount, type, oldbalanceOrg, newbalanceOrig, oldbalanceDest, newbalanceDest`. The 64-dim catalogue has 30+ other request-level fields the harness varies (`account_age_days, channel, ip_country, ip_is_vpn, transaction_country, device_is_trusted, session_to_txn_seconds, customer_age_days`, …). The replay script has to fill those when POSTing to `/v1/predict`; the easiest thing is to set them to a sensible constant. But a constant-valued column gives the trainer zero gradient — the model's parameter weight on that column converges to 0. At inference, the harness varies the column meaningfully and the model's decision is independent of it.
+
+§6f sidestepped this only because it read directly from the `transactions` table with `featuresDefault`-equivalent semantics — *every* feature was at a catalogue default at training, so the harness's variation also looked like defaults along the unused dimensions. The model "worked" but was using exactly the same three features (is_inflow, transaction_type_code, amount) that the §6h.2 dropout model still uses.
+
+### What this changes about the project's path to a real model
+
+The option-2 loop is *correct*. PAA → Redis → RDA audit → MLA trainer is now wired and the trainer genuinely uses PAA-derived features when they vary. That part of the system is no longer the bottleneck.
+
+The bottleneck is **training-data coverage of the request-level field distribution**. A model trained on PaySim alone can never learn signal on `account_age_days`, `ip_is_vpn`, `channel`, `ip_country`, `device_is_trusted`, etc., because PaySim doesn't carry those columns. The replay can't manufacture variation in them honestly. Three options for a production-quality model:
+
+1. **Shadow on real traffic, retrain on captured audit.** This is the only path that gives natural variation along all 64 catalogue dimensions. Stand the system up, run it in advisory/log-only mode for a few weeks against real transactions where every field actually varies, then `train_from_audit_snapshots.py` against the captured audit log. The infrastructure for this is now in place.
+2. **Augment the replay with synthetic per-row context.** Modify `replay_paysim_through_rda.py` to vary `account_age_days, channel, ip_country, device_is_trusted, etc.` per PaySim row using a realistic distribution (e.g. lognormal account ages, 70/20/10 split across MOBILE/WEB/POS, 95/5 split between domestic/foreign IP). Cheap to add, gives the trainer something to grip on. The hand-engineered fraud rule we'd want to encode would inevitably leak into harness 100% detection — same circular-validation trap as §6d.
+3. **Combine PaySim+synthetic-context with the seeded fraud rule (§6d).** Use PaySim labels as ground truth for the *transaction-shape* features, layer a hand-coded rule on top for the *identity/device* features. The harness already tests both axes; a model that has signal on both should detect.
+
+Deployed model is reverted to §6f's working state (F1=0.42, AUC=0.92) until one of those is taken.
+
 ## 7. Recommended next steps
 
 1. **Land Bugs 1–4 as proper PRs.** The four fixes I made are minimal but live in `src/server.ts`, `src/shared/onnx/onnx.service.ts`, and `mla-service/src/training/preprocessor.py`. They're each a few lines and have unit-test surface. Without them the system silently runs mock predictions in production.
