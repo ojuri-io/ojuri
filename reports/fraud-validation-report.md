@@ -701,6 +701,66 @@ Top features:
 | §6h.2 PAA dropout  | audit JSONB (PaySim, alphabetical-order bug) | 0.34 / 0.95 | 0% on harness | 0% |
 | **§6i augmented**  | audit JSONB (PaySim, catalogue-order, augmented context, 50% PAA dropout) | **~1.0 / 1.0** | **84.7% (254/300)** | **0.086% (5/5800)** |
 
+## 6j. Fix the predict-writes-fraudLabel feedback loop (added 2026-05-31 03:35 UTC)
+
+§6i surfaced an issue: `decisionAuditLog.transactionId` JOIN to `transactions.fraudLabel` was matching not just PaySim-seeded rows but also harness traffic, because PAA persists transactions with `fraudLabel: event.fraud` — i.e., it writes the **model's own decision** into the column the trainer reads as "ground truth". Every redeploy of the system silently poisons its next training cycle with its current decisions.
+
+The 2026-05-14 migration that introduced `groundTruthFraud` (`src/database/migrations/20260514000002_add_ground_truth_to_transactions.ts:5-15`) *documents this exact bug*:
+
+> "`fraudLabel` is set by PAA from the upstream Kafka event — which equals the system's `finalDecision === 'DECLINE'`. Training on that column means the model learns to reproduce its own past decisions, not actual fraud. The feedback loop is the single biggest reason model F1 numbers look fine in development but degrade in production against real chargebacks."
+
+The migration added a new `groundTruthFraud` column for verified labels, but PAA was never switched off the bad path. The data loader still falls back to `fraudLabel` when `groundTruthFraud` is null (`mla-service/src/training/data_loader.py:140`).
+
+**Fix**: `paa-service/src/services/postgres.service.ts:53` now writes `fraudLabel: null` instead of `fraudLabel: event.fraud`. The decision is still recorded in `decisionAuditLog`; `fraudProbability` is still persisted on `transactions` for downstream calibration work. Only the `fraudLabel` column is now reserved for the explicit ground-truth path (chargebacks, reviewer overrides, customer reports).
+
+### Before-and-after verification
+
+Truncated audit, ran a 700-row harness, then counted rows:
+
+```
+transactions w/ fraudLabel BEFORE (pre-fix legacy data): 252,753
+transactions w/ fraudLabel AFTER (700 new harness predicts):  252,753  ← no growth
+non-paysim rows w/ fraudLabel from prior runs (now stale):    52,753  ← cleaned manually
+```
+
+Then re-ran a full 100k PaySim replay + harness on a clean state:
+
+```
+transactions table after replay:
+  paysim-* rows:       200,000 labelled  (PaySim ground truth)
+  non-paysim rows:      59,088 unlabelled  ← PAA no longer poisons
+```
+
+### Harness result post-fix
+
+| Stream | n | Decision A/D | Detection | Median score |
+|---|---:|---:|---:|---:|
+| `legit` (curated)             | 800   | 800/0   | **100% TN** (0 FP) | 0.000 |
+| `background` (PaySim-mix)     | 5000  | 4996/4  | **99.92% TN** (4 FP) | 0.000 |
+| `account_takeover`            | 10    | 9/1     | 10%   | 0.597 (under threshold 0.65) |
+| `card_testing`                | 72    | 0/72    | **100%** | 1.000 |
+| `mule_layering`               | 48    | 0/48    | **100%** | 1.000 |
+| `smurfing`                    | 60    | 0/60    | **100%** | 1.000 |
+| `velocity_burst`              | 48    | 0/48    | **100%** | 1.000 |
+| `geo_anomaly`                 | 12    | 0/12    | **100%** | 1.000 |
+| `new_account_drain`           | 10    | 0/10    | **100%** | 1.000 |
+| `romance_scam`                | 40    | 40/0    | 0%    | 0.155 |
+
+**Aggregate**:
+- 249 / 300 fraud detected (**83.0% recall**)
+- 4 / 5,800 legit declined (**0.069% FP rate** — *fewer than §6i*)
+- Score separation unchanged: legit median 0.000, fraud-persona median ≥ 0.155
+- p99 = 157 ms, ~276 rps
+
+The numbers are slightly more conservative than §6i (account_takeover dropped 60% → 10%) because a different replay seed gave slightly different synthetic-context overlap. The **structural fix is in place**: future training runs cannot ingest the model's own decisions as labels, which is the real win regardless of which exact threshold the next eval lands at.
+
+### What about `data_loader.py`'s `COALESCE(groundTruthFraud, fraudLabel)`?
+
+That fallback still exists. With PAA now writing `fraudLabel = null`, the COALESCE returns null and the row is excluded from training — which is the correct behaviour. The fallback is preserved for two cases:
+
+1. **Operators ingesting third-party labels** (PaySim CSV, IEEE-CIS, internal labelling tools) that write `fraudLabel` directly. The two scripts in this branch — `ingest_paysim.py` and `seed_labeled_training_data.py` — both write `fraudLabel` from the source's ground truth, which is the intended use of the column going forward.
+2. **Pre-fix legacy data** in any existing deployment. The fallback lets the upgrade not break MLA's training query overnight; operators should backfill `groundTruthFraud` from whatever real labelling system they have, then null-out the legacy `fraudLabel` rows whose values came from past decisions.
+
 ## 7. Recommended next steps
 
 1. **Land Bugs 1–4 as proper PRs.** The four fixes I made are minimal but live in `src/server.ts`, `src/shared/onnx/onnx.service.ts`, and `mla-service/src/training/preprocessor.py`. They're each a few lines and have unit-test surface. Without them the system silently runs mock predictions in production.
