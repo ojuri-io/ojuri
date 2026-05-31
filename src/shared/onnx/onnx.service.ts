@@ -29,6 +29,11 @@ class OnnxService {
   private modelPath: string;
   private inferenceCircuitBreaker!: CircuitBreaker<any[], any>;
   private isModelLoaded: boolean = false;
+  // Calibration check at load time: same-input determinism and
+  // clearly-legit-vs-clearly-fraud discrimination. Goes false if the
+  // deployed model is constant or behaving like the demo heuristic,
+  // and that propagates to /readyz so orchestrators can drain traffic.
+  private isCalibrationHealthy: boolean = false;
   private unsubscribeActiveChange: (() => void) | null = null;
 
   constructor() {
@@ -62,6 +67,7 @@ class OnnxService {
   async initialize(): Promise<void> {
     try {
       await this.loadModel();
+      await this.runCalibrationProbe();
       // Subscribe synchronously so any ACTIVE-flip that happens between
       // `loadModel()` and the first request can't slip past us. The
       // dynamic import is still required to break the circular dep with
@@ -75,6 +81,134 @@ class OnnxService {
       });
       throw err;
     }
+  }
+
+  /**
+   * Sanity-probe the loaded model right after `loadModel()`. Catches
+   * two failure modes that previously slipped past every health check:
+   *
+   * 1. mockInference fallback — happens when `session` is null or
+   *    when an earlier OnnxService init never ran. mockInference adds
+   *    `Math.random() * 0.05`, so two identical inputs produce
+   *    different scores. The determinism check fails.
+   *
+   * 2. Constant or near-constant model — happens when training was
+   *    misconfigured (feature-ordering bug, label-leak, wrong loss).
+   *    A clearly-legit vs clearly-fraud input pair should differ by
+   *    at least `MIN_DISCRIMINATION_GAP`. If both score the same the
+   *    model has no signal and we'd rather refuse traffic than serve
+   *    coin-flip predictions.
+   *
+   * Either failure marks the service NOT ready; `/readyz` will return
+   * DOWN until a working model replaces the bad one.
+   */
+  private async runCalibrationProbe(): Promise<void> {
+    if (!this.session || !this.isModelLoaded) {
+      this.isCalibrationHealthy = false;
+      onnxLogger.error("calibrationProbe", "No ONNX session loaded — skipping probe (service will report NOT ready)", {});
+      return;
+    }
+
+    const MIN_DISCRIMINATION_GAP = 0.15;
+    const DETERMINISM_TOLERANCE = 1e-4;
+
+    try {
+      // Clearly-legit: trusted device, mature account, domestic, long session.
+      const legitVec = this.buildProbeVector({ fraud: false });
+      // Clearly-fraud: VPN, new account, foreign IP, 1-second session.
+      const fraudVec = this.buildProbeVector({ fraud: true });
+
+      const [legit1, legit2, fraud1, fraud2] = await Promise.all([
+        this.runRawInference(legitVec),
+        this.runRawInference(legitVec),
+        this.runRawInference(fraudVec),
+        this.runRawInference(fraudVec),
+      ]);
+
+      const legitJitter = Math.abs(legit1 - legit2);
+      const fraudJitter = Math.abs(fraud1 - fraud2);
+      const gap = fraud1 - legit1;
+
+      const isDeterministic = legitJitter < DETERMINISM_TOLERANCE && fraudJitter < DETERMINISM_TOLERANCE;
+      const discriminates = gap >= MIN_DISCRIMINATION_GAP;
+
+      if (!isDeterministic) {
+        onnxLogger.error(
+          "calibrationProbe",
+          "Model output is non-deterministic — identical inputs produced different scores. " +
+            "This is the signature of the mockInference fallback. /readyz will report DOWN.",
+          { legitJitter, fraudJitter, tolerance: DETERMINISM_TOLERANCE }
+        );
+        this.isCalibrationHealthy = false;
+        return;
+      }
+      if (!discriminates) {
+        onnxLogger.error(
+          "calibrationProbe",
+          "Model fails to discriminate between clearly-legit and clearly-fraud inputs. " +
+            `Score gap ${gap.toFixed(4)} is below the ${MIN_DISCRIMINATION_GAP} threshold. ` +
+            "Model is constant or near-constant — /readyz will report DOWN.",
+          { legitScore: legit1, fraudScore: fraud1, gap }
+        );
+        this.isCalibrationHealthy = false;
+        return;
+      }
+
+      this.isCalibrationHealthy = true;
+      onnxLogger.success("calibrationProbe", "Model passed calibration", {
+        legitScore: legit1,
+        fraudScore: fraud1,
+        gap: Number(gap.toFixed(4)),
+      });
+    } catch (err) {
+      onnxLogger.error("calibrationProbe", "Probe threw — marking model NOT ready", {
+        error: err instanceof Error ? err.message : String(err),
+      });
+      this.isCalibrationHealthy = false;
+    }
+  }
+
+  /**
+   * Build a 64-dim probe vector at catalogue positions. The values are
+   * chosen to be unambiguously legit or fraud along several axes any
+   * sensibly-trained model picks up — small amount + authenticated +
+   * trusted device + mature account + domestic for legit; vice versa
+   * for fraud. The vector itself never enters production; it's used
+   * only inside the calibration probe.
+   */
+  private buildProbeVector(opts: { fraud: boolean }): Float32Array {
+    const dim = Number(process.env.MODEL_INPUT_DIMENSION) || 64;
+    const v = new Float32Array(dim);
+    if (opts.fraud) {
+      v[26] = 850000;   // amount
+      v[28] = 4;        // transaction_type_code (CASH_OUT-ish)
+      v[31] = 0;        // is_inflow=false
+      v[35] = 1;        // account_age_days=1
+      v[39] = 0;        // is_authenticated=false
+      v[52] = 1;        // ip_is_vpn=true
+      v[53] = 0;        // device_is_trusted=false
+      v[57] = 1;        // session_to_txn_seconds=1
+    } else {
+      v[26] = 42.5;     // amount
+      v[28] = 2;        // transaction_type_code (PAYMENT-ish)
+      v[31] = 0;        // is_inflow
+      v[35] = 730;      // account_age_days
+      v[39] = 1;        // is_authenticated=true
+      v[52] = 0;        // ip_is_vpn=false
+      v[53] = 1;        // device_is_trusted=true
+      v[57] = 180;      // session_to_txn_seconds
+    }
+    return v;
+  }
+
+  /**
+   * Bypass the circuit breaker for the calibration probe. Going through
+   * `predict()` would route through opossum and either get classified
+   * as a failure or get the 1.0 fail-closed fallback — neither is what
+   * we want at probe time.
+   */
+  private async runRawInference(features: Float32Array): Promise<number> {
+    return this.runInference(features);
   }
 
   /**
@@ -381,7 +515,7 @@ class OnnxService {
    * "fix me" signal from the health probe.
    */
   isReady(): boolean {
-    return this.session !== null;
+    return this.session !== null && this.isCalibrationHealthy;
   }
 
   /**

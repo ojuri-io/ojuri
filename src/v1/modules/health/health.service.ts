@@ -1,9 +1,10 @@
 import { FastifyReply, FastifyRequest } from "fastify";
-import { injectable } from "tsyringe";
+import { container, injectable } from "tsyringe";
 import Redis from "ioredis";
 import httpStatus from "http-status";
 import { Kafka, logLevel } from "kafkajs";
 import RedisClient from "@shared/redis-client/redis-client";
+import OnnxService from "@shared/onnx/onnx.service";
 import appConfig from "@config/app.config";
 import { getKnexInstance } from "../../../database";
 
@@ -61,17 +62,42 @@ class HealthService {
   async readinessCheck(req: FastifyRequest, reply: FastifyReply) {
     const postgresHealth = await this.checkPostgresHealth();
     const redisHealth = await this.checkRedisHealth();
+    const modelHealth = this.checkModelHealth();
 
-    if (postgresHealth.status === "UP" && redisHealth.status === "OK") {
+    const allUp =
+      postgresHealth.status === "UP" &&
+      redisHealth.status === "OK" &&
+      modelHealth.status === "UP";
+
+    if (allUp) {
       reply.code(httpStatus.OK).send({
         status: "UP",
-        checks: [postgresHealth, redisHealth],
+        checks: [postgresHealth, redisHealth, modelHealth],
       });
     } else {
       reply.code(httpStatus.SERVICE_UNAVAILABLE).send({
         status: "DOWN",
-        checks: [postgresHealth, redisHealth],
+        checks: [postgresHealth, redisHealth, modelHealth],
       });
+    }
+  }
+
+  /**
+   * Inline check (no awaits) — OnnxService records its calibration
+   * status synchronously at init time. If a model is loaded but
+   * calibration failed (constant output / mockInference fallback /
+   * non-deterministic output) this returns DOWN so the orchestrator
+   * pulls traffic instead of routing it to a broken predictor.
+   */
+  private checkModelHealth(): { name: string; status: "UP" | "DOWN" } {
+    try {
+      const onnxService = container.resolve(OnnxService);
+      return {
+        name: "onnx-model",
+        status: onnxService.isReady() ? "UP" : "DOWN",
+      };
+    } catch {
+      return { name: "onnx-model", status: "DOWN" };
     }
   }
 

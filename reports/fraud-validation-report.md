@@ -761,6 +761,60 @@ That fallback still exists. With PAA now writing `fraudLabel = null`, the COALES
 1. **Operators ingesting third-party labels** (PaySim CSV, IEEE-CIS, internal labelling tools) that write `fraudLabel` directly. The two scripts in this branch — `ingest_paysim.py` and `seed_labeled_training_data.py` — both write `fraudLabel` from the source's ground truth, which is the intended use of the column going forward.
 2. **Pre-fix legacy data** in any existing deployment. The fallback lets the upgrade not break MLA's training query overnight; operators should backfill `groundTruthFraud` from whatever real labelling system they have, then null-out the legacy `fraudLabel` rows whose values came from past decisions.
 
+## 6k. `/readyz` model-quality gate (added 2026-05-31 03:50 UTC)
+
+The whole §6a–§6j journey would not have started if the original silent failures (mockInference running because `onnxService.initialize()` was never called, then later a wrong-dimension model loading without complaint) had tripped `/readyz`. This iteration closes that gap with a calibration probe at startup, plugged into the readiness chain.
+
+### Two-check probe at `OnnxService.initialize()`
+
+`src/shared/onnx/onnx.service.ts:79-220` adds `runCalibrationProbe()` right after `loadModel()`:
+
+1. **Determinism**: feed the same vector through twice; if the two scores differ by more than 1e-4 the model is non-deterministic — the signature of `mockInference`'s `Math.random()` fallback. Fail.
+2. **Discrimination**: feed a clearly-legit vector (small amount, mature account, authenticated, trusted device, domestic, long session) and a clearly-fraud vector (large amount, new account, unauth, VPN, foreign IP, 1-second session). The fraud score minus the legit score must be ≥ 0.15. Fail otherwise.
+
+Both checks set a private `isCalibrationHealthy` flag. `isReady()` now returns `session !== null && isCalibrationHealthy`, so a model that loaded but failed calibration reports NOT ready.
+
+### `/readyz` wiring
+
+`src/v1/modules/health/health.service.ts:62-101` adds a third check alongside Postgres and Redis:
+
+```ts
+private checkModelHealth(): { name: string; status: "UP" | "DOWN" } {
+  const onnx = container.resolve(OnnxService);
+  return { name: "onnx-model", status: onnx.isReady() ? "UP" : "DOWN" };
+}
+```
+
+If any of the three checks is down, `/readyz` returns 503 with the per-check breakdown.
+
+### Verification
+
+Three deliberate failure modes, all caught:
+
+```
+case 1 — wrong-dimension model (434-dim file on 64-dim catalogue)
+  log: "Probe threw — marking model NOT ready"
+       "Got invalid dimensions for input: index 1 Got: 64 Expected: 434"
+  /readyz: {"status":"DOWN","checks":[…,{"name":"onnx-model","status":"DOWN"}]}
+
+case 2 — corrupt model file (truncated to first 100 bytes)
+  log: "loadModel: Failed to load ONNX model"
+  /readyz: {"status":"DOWN","checks":[…,{"name":"onnx-model","status":"DOWN"}]}
+
+case 3 — healthy 64-dim catalogue model (the §6j/§6h.2 build)
+  log: "calibrationProbe: Success. Model passed calibration"
+       "{ legitScore: 0.0000045, fraudScore: 0.9999973, gap: 1.0 }"
+  /readyz: {"status":"UP","checks":[…,{"name":"onnx-model","status":"UP"}]}
+```
+
+The dimension-mismatch case (1) is **a bug this validation surfaced incidentally**: the deployed `models/fraud_model.onnx` was from an earlier 434-dim training run, but the catalogue had since shrunk to 64 dimensions. Before this iteration that mismatch would have led to a runtime error on first inference — not a deploy-time refusal. Now `/readyz` blocks traffic until the file matches.
+
+### Why these checks are useful even on a perfect model
+
+Tree-based XGBoost classifiers like the one trained in §6j sit at the extreme: probe gap of 1.0 (saturated). A future model might be more cautious — e.g. a logistic regression with gap 0.3 between probe vectors. That's fine; the threshold is 0.15 specifically to allow weaker but still-honest discriminators while rejecting "predicts the same number for everything" failure modes that look indistinguishable from real predictions otherwise.
+
+The determinism check is the most important and the cheapest. mockInference returns `0.1 + small_random`. Sending the same vector twice exposes the random component in microseconds. Any future fallback / mock / degraded-mode path that uses randomness will be flagged before it serves a single production request.
+
 ## 7. Recommended next steps
 
 1. **Land Bugs 1–4 as proper PRs.** The four fixes I made are minimal but live in `src/server.ts`, `src/shared/onnx/onnx.service.ts`, and `mla-service/src/training/preprocessor.py`. They're each a few lines and have unit-test surface. Without them the system silently runs mock predictions in production.
