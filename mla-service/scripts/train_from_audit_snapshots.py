@@ -38,16 +38,40 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 from src.deployment.onnx_converter import ONNXConverter  # noqa: E402
 
 
+def _load_catalogue_order():
+    """
+    Load feature names in catalogue order (matches RDA's feature-builder
+    output positions). Alphabetical ordering is WRONG — RDA emits the
+    vector in catalogue index order, so a model trained on alphabetically
+    sorted columns will see "amount" at position 2 but RDA puts it at
+    position 26 — same numbers at different positions → model output
+    uncorrelated with training labels at inference.
+    """
+    import json
+    from pathlib import Path
+    catalog_path = (
+        Path(__file__).resolve().parent.parent.parent / "models" / "feature-catalog.v1.json"
+    )
+    with catalog_path.open() as f:
+        cat = json.load(f)
+    return [f["name"] for f in cat["features"]]
+
+
 def fetch_training_data(args):
     """
     SELECT featuresSnapshot, fraudLabel from audit JOIN transactions.
     Returns (X, y, feature_names) where X is a (N, 64) float32 array
-    sorted by catalogue order.
+    in catalogue order (the same order RDA serves at inference).
     """
     conn = psycopg2.connect(
         host=args.host, port=args.port, dbname=args.db, user=args.user, password=args.password
     )
     cur = conn.cursor()
+    # Restrict to PaySim-seeded rows only — the harness's audit rows
+    # also write a transactions entry with the model decision *as* the
+    # fraudLabel, which is not ground truth and would poison training.
+    # PaySim rows are the only ones whose fraudLabel comes from the
+    # source CSV's `isFraud` column.
     cur.execute(
         """
         SELECT a."featuresSnapshot", t."fraudLabel"
@@ -55,6 +79,7 @@ def fetch_training_data(args):
         JOIN transactions t ON a."transactionId" = t."transactionId"
         WHERE t."fraudLabel" IS NOT NULL
           AND a."featuresSnapshot" IS NOT NULL
+          AND a."transactionId" LIKE 'paysim-%%'
         """
     )
     rows = cur.fetchall()
@@ -64,22 +89,30 @@ def fetch_training_data(args):
     if not rows:
         sys.exit("No audit rows with matching fraudLabel found. Did replay run?")
 
-    # Establish feature order from the first row's keys, sorted
-    # alphabetically (audit JSONB is unordered). All rows must share
-    # the same key set since RDA serialises from the same catalogue.
-    first_keys = sorted(rows[0][0].keys())
-    print(f"Found {len(rows)} labelled audit rows")
-    print(f"Feature columns ({len(first_keys)}): {first_keys[:8]} … {first_keys[-3:]}")
+    catalog_order = _load_catalogue_order()
+    snapshot_keys = set(rows[0][0].keys())
+    # Sanity-check that every catalogue feature is present in the audit
+    # snapshot — a missing key means RDA's feature-builder dropped a
+    # column the model trained against, which is silently dangerous.
+    missing = [n for n in catalog_order if n not in snapshot_keys]
+    extra = [k for k in snapshot_keys if k not in catalog_order]
+    if missing:
+        print(f"WARN: catalogue features missing from audit snapshot: {missing}")
+    if extra:
+        print(f"INFO: audit snapshot has extra keys not in catalogue: {extra}")
 
-    X = np.zeros((len(rows), len(first_keys)), dtype=np.float32)
+    print(f"Found {len(rows)} labelled audit rows")
+    print(f"Feature columns ({len(catalog_order)} in catalogue order): {catalog_order[:5]} … {catalog_order[-3:]}")
+
+    X = np.zeros((len(rows), len(catalog_order)), dtype=np.float32)
     y = np.zeros(len(rows), dtype=np.int8)
     for i, (snapshot, label) in enumerate(rows):
-        for j, k in enumerate(first_keys):
+        for j, k in enumerate(catalog_order):
             v = snapshot.get(k, 0)
             X[i, j] = float(v) if v is not None and not isinstance(v, bool) else (1.0 if v is True else 0.0)
         y[i] = 1 if label else 0
 
-    return X, y, first_keys
+    return X, y, catalog_order
 
 
 PAA_FEATURE_PREFIXES = (

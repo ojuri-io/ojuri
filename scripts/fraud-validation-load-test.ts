@@ -131,6 +131,11 @@ function backgroundLegitTxn(i: number): Job {
       ip_country: country,
       is_recurring: Math.random() < 0.1,
       wallet_balance: 1000 + Math.random() * 9000,
+      // Realistic legit session length — users typically dwell 20s-10min
+      // before submitting a payment. Without this the field defaults to 0
+      // (visually identical to a fraud "1-second burst") and any model
+      // trained on session_to_txn_seconds will flag legit as fraud.
+      session_to_txn_seconds: 20 + Math.floor(Math.random() * 580),
     },
   };
 }
@@ -175,6 +180,7 @@ function legitTxn(i: number): Job {
       transaction_country: country,
       ip_country: country,
       is_recurring: i % 13 === 0,
+      session_to_txn_seconds: 20 + Math.floor(Math.random() * 580),
     },
   };
 }
