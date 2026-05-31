@@ -4,7 +4,7 @@
     "transaction_id": "11111111-0000-0000-0000-000000000001",
     "sender_id": "demo_user_alice",
     "receiver_id": "merchant_supermart",
-    "amount": 42.50,
+    "amount": 42.5,
     "transaction_type": "PAYMENT",
     "timestamp": 1747400000,
     "segment": "standard",
@@ -14,14 +14,15 @@
     "account_age_days": 712,
     "transaction_country": "US",
     "ip_country": "US",
-    "device_is_trusted": true
+    "device_is_trusted": true,
+    "session_to_txn_seconds": 90
   },
   {
     "_note": "Salary inflow — recurring credit. Plain ACCEPT.",
     "transaction_id": "11111111-0000-0000-0000-000000000002",
     "sender_id": "employer_acme_payroll",
     "receiver_id": "demo_user_alice",
-    "amount": 4250.00,
+    "amount": 4250.0,
     "transaction_type": "CASH_IN",
     "timestamp": 1747400100,
     "segment": "standard",
@@ -30,7 +31,8 @@
     "is_inflow": true,
     "is_recurring": true,
     "is_authenticated": true,
-    "account_age_days": 712
+    "account_age_days": 712,
+    "session_to_txn_seconds": 193
   },
   {
     "_note": "Coffee shop card-present. Tiny ticket size, classic ACCEPT.",
@@ -44,14 +46,15 @@
     "channel": "POS",
     "currency": "USD",
     "is_authenticated": true,
-    "device_is_trusted": true
+    "device_is_trusted": true,
+    "session_to_txn_seconds": 287
   },
   {
     "_note": "Domestic transfer between known parties — standard ACCEPT.",
     "transaction_id": "11111111-0000-0000-0000-000000000004",
     "sender_id": "demo_user_alice",
     "receiver_id": "demo_user_friend_carol",
-    "amount": 250.00,
+    "amount": 250.0,
     "transaction_type": "TRANSFER",
     "timestamp": 1747400300,
     "segment": "standard",
@@ -59,14 +62,15 @@
     "currency": "USD",
     "is_authenticated": true,
     "transaction_country": "US",
-    "ip_country": "US"
+    "ip_country": "US",
+    "session_to_txn_seconds": 292
   },
   {
     "_note": "Borderline mid-size payment, new device but authenticated. REVIEW candidate.",
     "transaction_id": "11111111-0000-0000-0000-000000000005",
     "sender_id": "demo_user_bob",
     "receiver_id": "merchant_electronics",
-    "amount": 1750.00,
+    "amount": 1750.0,
     "transaction_type": "PAYMENT",
     "timestamp": 1747400400,
     "segment": "high_value",
@@ -82,7 +86,7 @@
     "transaction_id": "11111111-0000-0000-0000-000000000006",
     "sender_id": "demo_user_eve",
     "receiver_id": "merchant_giftcards",
-    "amount": 600.00,
+    "amount": 600.0,
     "transaction_type": "PAYMENT",
     "timestamp": 1747400500,
     "segment": "standard",
@@ -90,14 +94,15 @@
     "currency": "USD",
     "is_authenticated": false,
     "device_is_trusted": false,
-    "wallet_balance": 615.00
+    "wallet_balance": 615.0,
+    "session_to_txn_seconds": 1
   },
   {
     "_note": "Cross-border transfer to a new corridor. REVIEW for a closer look.",
     "transaction_id": "11111111-0000-0000-0000-000000000007",
     "sender_id": "demo_user_alice",
     "receiver_id": "recipient_foreign_partner",
-    "amount": 850.00,
+    "amount": 850.0,
     "transaction_type": "TRANSFER",
     "timestamp": 1747400600,
     "segment": "high_value",
@@ -106,14 +111,15 @@
     "is_authenticated": true,
     "transaction_country": "US",
     "destination_country": "GH",
-    "ip_country": "US"
+    "ip_country": "US",
+    "session_to_txn_seconds": 17
   },
   {
     "_note": "Very large cash-out via new agent. Likely DECLINE.",
     "transaction_id": "22222222-0000-0000-0000-000000000001",
     "sender_id": "demo_user_charlie",
     "receiver_id": "agent_node_unknown_42",
-    "amount": 950000.00,
+    "amount": 950000.0,
     "transaction_type": "CASH_OUT",
     "timestamp": 1747400700,
     "segment": "high_value",
@@ -122,14 +128,15 @@
     "is_authenticated": false,
     "device_is_trusted": false,
     "account_age_days": 3,
-    "agent_id": "agent_node_unknown_42"
+    "agent_id": "agent_node_unknown_42",
+    "session_to_txn_seconds": 5
   },
   {
     "_note": "VPN + unfamiliar IP country + giftcard merchant. Textbook DECLINE.",
     "transaction_id": "22222222-0000-0000-0000-000000000002",
     "sender_id": "demo_user_eve",
     "receiver_id": "merchant_giftcards",
-    "amount": 4900.00,
+    "amount": 4900.0,
     "transaction_type": "PAYMENT",
     "timestamp": 1747400800,
     "segment": "high_value",
@@ -147,7 +154,7 @@
     "transaction_id": "22222222-0000-0000-0000-000000000003",
     "sender_id": "demo_user_attacker_one",
     "receiver_id": "mule_account_blue",
-    "amount": 250000.00,
+    "amount": 250000.0,
     "transaction_type": "TRANSFER",
     "timestamp": 1747400900,
     "segment": "high_value",
@@ -155,14 +162,15 @@
     "currency": "USD",
     "is_authenticated": true,
     "device_is_trusted": false,
-    "account_age_days": 17
+    "account_age_days": 17,
+    "session_to_txn_seconds": 5
   },
   {
     "_note": "Same attacker again seconds later to a different mule. DECLINE.",
     "transaction_id": "22222222-0000-0000-0000-000000000004",
     "sender_id": "demo_user_attacker_one",
     "receiver_id": "mule_account_green",
-    "amount": 250000.00,
+    "amount": 250000.0,
     "transaction_type": "TRANSFER",
     "timestamp": 1747400905,
     "segment": "high_value",
@@ -170,14 +178,15 @@
     "currency": "USD",
     "is_authenticated": true,
     "device_is_trusted": false,
-    "account_age_days": 17
+    "account_age_days": 17,
+    "session_to_txn_seconds": 5
   },
   {
     "_note": "And once more. DECLINE — and downstream FIA should pick this up.",
     "transaction_id": "22222222-0000-0000-0000-000000000005",
     "sender_id": "demo_user_attacker_one",
     "receiver_id": "mule_account_red",
-    "amount": 175000.00,
+    "amount": 175000.0,
     "transaction_type": "TRANSFER",
     "timestamp": 1747400910,
     "segment": "high_value",
@@ -185,14 +194,15 @@
     "currency": "USD",
     "is_authenticated": true,
     "device_is_trusted": false,
-    "account_age_days": 17
+    "account_age_days": 17,
+    "session_to_txn_seconds": 4
   },
   {
     "_note": "Geographic mismatch: customer in NG, transaction in CA at 4am UTC. DECLINE.",
     "transaction_id": "22222222-0000-0000-0000-000000000006",
     "sender_id": "demo_user_dave",
     "receiver_id": "merchant_electronics_can",
-    "amount": 3200.00,
+    "amount": 3200.0,
     "transaction_type": "PAYMENT",
     "timestamp": 1747401000,
     "segment": "high_value",
@@ -201,7 +211,8 @@
     "is_authenticated": false,
     "transaction_country": "CA",
     "destination_country": "CA",
-    "ip_country": "NG"
+    "ip_country": "NG",
+    "session_to_txn_seconds": 5
   },
   {
     "_note": "Refund inflow — recurring, ACCEPT.",
@@ -214,28 +225,30 @@
     "segment": "standard",
     "channel": "MOBILE",
     "currency": "USD",
-    "is_inflow": true
+    "is_inflow": true,
+    "session_to_txn_seconds": 281
   },
   {
     "_note": "Utility bill, recurring, authenticated. ACCEPT.",
     "transaction_id": "11111111-0000-0000-0000-000000000009",
     "sender_id": "demo_user_carol",
     "receiver_id": "merchant_utility_co",
-    "amount": 137.50,
+    "amount": 137.5,
     "transaction_type": "PAYMENT",
     "timestamp": 1747401200,
     "segment": "standard",
     "channel": "WEB",
     "currency": "USD",
     "is_authenticated": true,
-    "is_recurring": true
+    "is_recurring": true,
+    "session_to_txn_seconds": 255
   },
   {
     "_note": "Trusted agent cash-out from familiar location. ACCEPT.",
     "transaction_id": "11111111-0000-0000-0000-000000000010",
     "sender_id": "demo_user_bob",
     "receiver_id": "agent_node_trusted_001",
-    "amount": 200.00,
+    "amount": 200.0,
     "transaction_type": "CASH_OUT",
     "timestamp": 1747401300,
     "segment": "standard",
@@ -243,7 +256,8 @@
     "currency": "USD",
     "is_authenticated": true,
     "agent_id": "agent_node_trusted_001",
-    "device_is_trusted": true
+    "device_is_trusted": true,
+    "session_to_txn_seconds": 152
   },
   {
     "_note": "Subscription renewal, recurring. ACCEPT.",
@@ -257,42 +271,45 @@
     "channel": "WEB",
     "currency": "USD",
     "is_authenticated": true,
-    "is_recurring": true
+    "is_recurring": true,
+    "session_to_txn_seconds": 31
   },
   {
     "_note": "Rent transfer to known landlord, monthly. ACCEPT.",
     "transaction_id": "11111111-0000-0000-0000-000000000012",
     "sender_id": "demo_user_alice",
     "receiver_id": "landlord_smith_properties",
-    "amount": 1800.00,
+    "amount": 1800.0,
     "transaction_type": "TRANSFER",
     "timestamp": 1747401500,
     "segment": "standard",
     "channel": "WEB",
     "currency": "USD",
     "is_authenticated": true,
-    "is_recurring": true
+    "is_recurring": true,
+    "session_to_txn_seconds": 71
   },
   {
     "_note": "Mid-size unknown merchant, authenticated, normal device. REVIEW.",
     "transaction_id": "11111111-0000-0000-0000-000000000013",
     "sender_id": "demo_user_dave",
     "receiver_id": "merchant_unknown_marketplace",
-    "amount": 1200.00,
+    "amount": 1200.0,
     "transaction_type": "PAYMENT",
     "timestamp": 1747401600,
     "segment": "standard",
     "channel": "WEB",
     "currency": "USD",
     "is_authenticated": true,
-    "account_age_days": 41
+    "account_age_days": 41,
+    "session_to_txn_seconds": 13
   },
   {
     "_note": "Just-registered account immediately wiring out. DECLINE.",
     "transaction_id": "22222222-0000-0000-0000-000000000007",
     "sender_id": "demo_user_brand_new",
     "receiver_id": "mule_account_yellow",
-    "amount": 50000.00,
+    "amount": 50000.0,
     "transaction_type": "TRANSFER",
     "timestamp": 1747401700,
     "segment": "high_value",
@@ -300,6 +317,7 @@
     "currency": "USD",
     "is_authenticated": true,
     "account_age_days": 0,
-    "device_is_trusted": false
+    "device_is_trusted": false,
+    "session_to_txn_seconds": 3
   }
 ]
