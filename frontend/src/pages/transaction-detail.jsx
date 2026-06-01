@@ -560,6 +560,7 @@ function RulePanel({ rule, toast }) {
         onClick={toggle}
         aria-expanded={open}
         aria-controls="rule-panel-body"
+        data-testid="rule-panel-toggle"
         style={{
           display:'flex',
           alignItems:'center',

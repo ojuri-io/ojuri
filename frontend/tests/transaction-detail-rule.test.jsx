@@ -78,7 +78,9 @@ describe('TransactionDetail — rule snapshot panel', () => {
     expect(screen.getByTestId('rule-stage')).toHaveTextContent('PRE');
     expect(screen.getByTestId('rule-action')).toHaveTextContent('DENY');
 
-    const exprNode = screen.getByTestId('rule-expression');
+    fireEvent.click(screen.getByTestId('rule-panel-toggle'));
+
+    const exprNode = await screen.findByTestId('rule-expression');
     expect(exprNode.textContent).toContain('"ip_country"');
     expect(exprNode.textContent).toContain('100000');
   });
@@ -95,6 +97,9 @@ describe('TransactionDetail — rule snapshot panel', () => {
         refreshQueueCount={noop}
       />,
     );
+
+    const toggle = await screen.findByTestId('rule-panel-toggle');
+    fireEvent.click(toggle);
 
     const link = await screen.findByTestId('rule-edit-link');
     expect(link.getAttribute('href')).toBe('#rules');
