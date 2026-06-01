@@ -28,6 +28,18 @@ const OPTIONAL_COLS = [
   'sessionToTxnSeconds', 'deviceIsTrusted', 'isAuthenticated',
 ];
 
+function downloadTemplate() {
+  const headers = [...REQUIRED_COLS, LABEL_COLS[0], ...OPTIONAL_COLS];
+  const csv = headers.join(',') + '\n';
+  const blob = new Blob([csv], { type: 'text/csv;charset=utf-8' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = 'ojuri-training-template.csv';
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
 function fmtBytes(n) {
   if (n < 1024) return n + ' B';
   if (n < 1024 * 1024) return (n / 1024).toFixed(1) + ' KB';
@@ -178,6 +190,15 @@ function TrainingUploadPanel({ toast, onCompleted }) {
           disabled={uploading}
           style={{ fontSize: 12 }}
         />
+        <button
+          type="button"
+          data-testid="training-download-template"
+          onClick={downloadTemplate}
+          style={{ fontSize: 11 }}
+          title="Download an empty CSV with the canonical column names"
+        >
+          <Ti name="download" size={12} /> Download template
+        </button>
         {file && (
           <button onClick={reset} disabled={uploading} style={{ fontSize: 11 }}>
             <Ti name="x" size={12} /> Clear
