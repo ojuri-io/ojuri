@@ -150,6 +150,45 @@ class TestModelTrainer:
         assert 'auc_roc' in metrics
         assert 'training_time_seconds' in metrics
     
+    def test_train_continued_mode_seeds_prior_model(self, mock_config):
+        trainer = ModelTrainer(mock_config)
+
+        np.random.seed(42)
+        X_train = np.random.rand(200, 20).astype(np.float32)
+        y_train = np.random.randint(0, 2, 200).astype(np.int32)
+        X_val = np.random.rand(50, 20).astype(np.float32)
+        y_val = np.random.randint(0, 2, 50).astype(np.int32)
+
+        prior_model, _, _ = trainer.train(X_train, y_train, X_val, y_val)
+        prior_trees = prior_model.get_booster().num_boosted_rounds()
+
+        new_model, _, metrics = trainer.train(
+            X_train, y_train, X_val, y_val,
+            mode="CONTINUED",
+            prior_model=prior_model,
+            continued_trees=5,
+        )
+
+        assert metrics["training_mode"] == "CONTINUED"
+        assert metrics["continued_trees"] == 5
+        assert new_model.get_booster().num_boosted_rounds() == prior_trees + 5
+
+    def test_train_continued_without_prior_falls_back_to_fresh(self, mock_config):
+        trainer = ModelTrainer(mock_config)
+
+        np.random.seed(42)
+        X_train = np.random.rand(200, 20).astype(np.float32)
+        y_train = np.random.randint(0, 2, 200).astype(np.int32)
+        X_val = np.random.rand(50, 20).astype(np.float32)
+        y_val = np.random.randint(0, 2, 50).astype(np.int32)
+
+        _, _, metrics = trainer.train(
+            X_train, y_train, X_val, y_val,
+            mode="CONTINUED",
+            prior_model=None,
+        )
+        assert metrics["training_mode"] == "FRESH"
+
     def test_feature_importance(self, mock_config):
         """Test feature importance extraction."""
         trainer = ModelTrainer(mock_config)

@@ -64,20 +64,11 @@ class ModelTrainer:
         X_train: np.ndarray,
         y_train: np.ndarray,
         X_val: np.ndarray,
-        y_val: np.ndarray
+        y_val: np.ndarray,
+        mode: str = "FRESH",
+        prior_model: Optional[XGBClassifier] = None,
+        continued_trees: int = 50,
     ) -> Tuple[XGBClassifier, Optional[Calibrator], Dict[str, Any]]:
-        """
-        Train XGBoost model with early stopping.
-        
-        Args:
-            X_train: Training features
-            y_train: Training labels
-            X_val: Validation features
-            y_val: Validation labels
-        
-        Returns:
-            Tuple of (trained_model, metrics_dict)
-        """
         logger.info("=" * 70)
         logger.info("STARTING MODEL TRAINING")
         logger.info("=" * 70)
@@ -88,13 +79,29 @@ class ModelTrainer:
 
         start_time = time.time()
 
-        model = XGBClassifier(**self.params)
-        logger.info("Training with early stopping...")
-        model.fit(
-            X_train_inner, y_train_inner,
-            eval_set=[(X_val, y_val)],
-            verbose=False
-        )
+        effective_mode = mode if mode in ("FRESH", "CONTINUED") else "FRESH"
+        use_continued = effective_mode == "CONTINUED" and prior_model is not None
+
+        if use_continued:
+            params = {**self.params, "n_estimators": continued_trees}
+            model = XGBClassifier(**params)
+            logger.info(f"Mode=CONTINUED — seeding from prior model, adding {continued_trees} trees")
+            model.fit(
+                X_train_inner, y_train_inner,
+                eval_set=[(X_val, y_val)],
+                xgb_model=prior_model.get_booster(),
+                verbose=False,
+            )
+        else:
+            if effective_mode == "CONTINUED" and prior_model is None:
+                logger.warning("Mode=CONTINUED requested but no prior model available — falling back to FRESH")
+            model = XGBClassifier(**self.params)
+            logger.info("Mode=FRESH — training from scratch with early stopping")
+            model.fit(
+                X_train_inner, y_train_inner,
+                eval_set=[(X_val, y_val)],
+                verbose=False,
+            )
 
         training_time = time.time() - start_time
 
@@ -107,6 +114,9 @@ class ModelTrainer:
 
         metrics = self._calculate_metrics(y_val, y_pred, y_prob, training_time)
         metrics.update(calibration_metrics)
+        metrics["training_mode"] = "CONTINUED" if use_continued else "FRESH"
+        if use_continued:
+            metrics["continued_trees"] = continued_trees
         
         # Log results
         self._log_training_results(metrics)
