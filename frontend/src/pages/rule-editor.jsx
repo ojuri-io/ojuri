@@ -138,6 +138,17 @@ function RuleEditor({ toast, rules, setRules, user }) {
 
   const active = rules.find(r => r.id === activeId);
 
+  // Consumed by transaction-detail's "Edit this rule" link.
+  useEffect(() => {
+    let focusId;
+    try { focusId = sessionStorage.getItem('sentinel.rules.focusId'); } catch { /* private window */ }
+    if (focusId) {
+      try { sessionStorage.removeItem('sentinel.rules.focusId'); } catch { /* */ }
+      if (rules.some(r => r.id === focusId)) setActiveId(focusId);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   useEffect(() => {
     if (!active) return;
     setEditorJson(JSON.stringify(active.expression, null, 2));

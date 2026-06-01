@@ -6,6 +6,7 @@ import PredictService from "../services/predict.service";
 import { PredictRequestDto } from "../dtos/predict-request.dto";
 import { IDEMPOTENCY_KEY_MAX_LENGTH } from "@shared/idempotency/idempotency.service";
 import DecisionAuditService from "@shared/audit/decision-audit.service";
+import AuditQueueBackpressureError from "@shared/error/audit-queue-backpressure.error";
 import WebhookService from "@shared/webhooks/webhook.service";
 import { ErrorResponse, SuccessResponse } from "@shared/utils/response.util";
 import { metricsService } from "@shared/metrics/metrics.service";
@@ -38,7 +39,7 @@ class PredictController {
         );
     }
 
-    const idempotencyKey = headerKey || req.body?.transaction_id || null;
+    const idempotencyKey = headerKey || null;
 
     await TraceContext.runAsync(
       { traceId, transactionId: req.body.transaction_id, senderId: req.body.sender_id },
@@ -53,6 +54,15 @@ class PredictController {
           });
           sendOutcome(res, outcome, traceId);
         } catch (err) {
+          if (err instanceof AuditQueueBackpressureError) {
+            metricsService.recordRequest("POST", "/predict", httpStatus.SERVICE_UNAVAILABLE);
+            res
+              .code(httpStatus.SERVICE_UNAVAILABLE)
+              .header("X-Correlation-ID", traceId)
+              .header("Retry-After", "1")
+              .send(ErrorResponse("Audit write queue saturated — retry in a moment"));
+            return;
+          }
           log.error("predict", "Failed to process prediction request", {
             transactionId: req.body.transaction_id,
             error: err instanceof Error ? err.message : String(err),

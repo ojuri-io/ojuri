@@ -247,7 +247,7 @@ function TransactionDetail({ toast, user, nav, txn, queue, reports: _reports, re
             overrideDecision={t.overrideDecision}
             originalDecision={t.finalDecision}
             originalSource={t.decisionSource}
-            ruleName={t.preRule?.name}
+            ruleName={t.rule?.name || t.preRule?.name}
             reviewedBy={t.reviewedBy}
             reviewedAt={t.reviewedAt}
             reason={t.overrideReason}
@@ -255,7 +255,6 @@ function TransactionDetail({ toast, user, nav, txn, queue, reports: _reports, re
         )}
       </section>
 
-      {/* ML decision */}
       {!isPreRule && (
         <section className="panel" style={{marginBottom:12, padding:'16px 18px'}}>
           <div className="panel-head">
@@ -290,6 +289,8 @@ function TransactionDetail({ toast, user, nav, txn, queue, reports: _reports, re
           `context` is null and the panel shows a "still gathering"
           skeleton instead of dashes. */}
       <TransactionContext context={t.context}/>
+
+      <RulePanel rule={t.rule} toast={toast}/>
 
       {/* FIA report */}
       <section className="panel" style={{marginBottom:12, padding:'16px 18px'}}>
@@ -486,6 +487,15 @@ function ActionCard({ checked, onClick, title, sub, tone }) {
 // fields the queue depends on (e.g. `fia.narrative`, `reasonContribs`).
 function normaliseDetail(row, fromQueue) {
   const base = fromQueue ? { ...fromQueue } : {};
+  const rule = row.ruleId || row.ruleName
+    ? {
+        id: row.ruleId || null,
+        name: row.ruleName || null,
+        stage: row.ruleStage || null,
+        action: row.ruleAction || null,
+        expression: row.ruleExpression ?? null,
+      }
+    : (base.rule || base.preRule || null);
   return {
     ...base,
     auditId: row.auditId || row.id || base.auditId,
@@ -507,7 +517,8 @@ function normaliseDetail(row, fromQueue) {
     modelVersion: row.modelVersion || base.modelVersion || 'v1.1.0',
     reasonCodes: row.reasonCodes || base.reasonCodes || [],
     stage: row.stage || base.stage || 'POST_ML',
-    preRule: row.preRule || base.preRule || null,
+    rule,
+    preRule: rule || row.preRule || base.preRule || null,
     fia: row.fia || base.fia || { verdict: 'UNCERTAIN', confidence: 0, narrative: '' },
     createdAt: row.createdAt || base.createdAt || null,
     finalDecision: row.finalDecision || base.finalDecision || null,
@@ -519,6 +530,111 @@ function normaliseDetail(row, fromQueue) {
     reviewedAt: row.reviewedAt ?? base.reviewedAt ?? null,
     latencyMs: row.latencyMs ?? base.latencyMs ?? null,
   };
+}
+
+function RulePanel({ rule, toast }) {
+  const [open, setOpen] = useState(false);
+  if (!rule || (!rule.name && !rule.id)) return null;
+  const stage = rule.stage || '—';
+  const action = rule.action || '—';
+  const actionTone = action === 'DENY' ? 'danger' : action === 'REVIEW' ? 'warn' : action === 'ALLOW' ? 'success' : '';
+  const stageTone = stage === 'PRE' ? 'info' : stage === 'POST' ? '' : '';
+  const onEdit = (e) => {
+    e.stopPropagation();
+    try {
+      if (rule.id) sessionStorage.setItem('sentinel.rules.focusId', rule.id);
+    } catch { /* private window */ }
+    if (toast && rule.name) toast(`Opening rule editor · ${rule.name}`, 'info');
+  };
+  const expressionText = rule.expression == null
+    ? null
+    : (() => {
+        try { return JSON.stringify(rule.expression, null, 2); }
+        catch { return String(rule.expression); }
+      })();
+  const toggle = () => setOpen((v) => !v);
+  return (
+    <section className="panel" style={{marginBottom:12, padding:'14px 18px'}} data-testid="rule-panel">
+      <button
+        type="button"
+        onClick={toggle}
+        aria-expanded={open}
+        aria-controls="rule-panel-body"
+        style={{
+          display:'flex',
+          alignItems:'center',
+          justifyContent:'space-between',
+          gap:12,
+          width:'100%',
+          padding:0,
+          background:'transparent',
+          border:'none',
+          cursor:'pointer',
+          textAlign:'left',
+          color:'inherit',
+        }}
+      >
+        <div style={{display:'flex', alignItems:'center', gap:8, minWidth:0, flex:1}}>
+          <div style={{
+            width:24, height:24, borderRadius:6,
+            background:'var(--color-background-warn)',
+            color:'var(--color-text-warn)',
+            display:'flex', alignItems:'center', justifyContent:'center',
+            flexShrink:0,
+          }}>
+            <Ti name="shield-check" size={14}/>
+          </div>
+          <h2 style={{margin:0, fontSize:14, fontWeight:500, flexShrink:0}}>Rule</h2>
+          <span className="truncate" style={{fontSize:12, color:'var(--color-text-secondary)', minWidth:0}} data-testid="rule-name" title={rule.name || ''}>
+            · {rule.name || '(unnamed rule)'}
+          </span>
+        </div>
+        <div style={{display:'flex', alignItems:'center', gap:8, flexShrink:0}}>
+          <span className={'pill ' + stageTone} style={{padding:'3px 8px'}} data-testid="rule-stage">{stage}</span>
+          <span className={'pill ' + actionTone} style={{padding:'3px 8px'}} data-testid="rule-action">{action}</span>
+          <span style={{fontSize:11, color:'var(--color-text-info)', fontWeight:500, whiteSpace:'nowrap'}}>
+            {open ? 'Hide' : 'Show details'}
+          </span>
+          <Ti name={open ? 'chevron-up' : 'chevron-down'} size={14} style={{color:'var(--color-text-info)', flexShrink:0}}/>
+        </div>
+      </button>
+      {open && (
+        <div id="rule-panel-body" style={{marginTop:14}}>
+          <div style={{display:'flex', justifyContent:'flex-end', marginBottom:8}}>
+            <a
+              href="#rules"
+              onClick={onEdit}
+              data-testid="rule-edit-link"
+              style={{fontSize:11, color:'var(--color-text-info)', textDecoration:'none', display:'inline-flex', alignItems:'center', gap:4}}
+            >
+              <Ti name="edit" size={12}/>Edit this rule
+            </a>
+          </div>
+          {expressionText ? (
+            <pre
+              className="mono"
+              data-testid="rule-expression"
+              style={{
+                margin:0,
+                padding:'10px 12px',
+                background:'var(--color-background-secondary)',
+                borderRadius:'var(--border-radius-md)',
+                fontSize:11,
+                lineHeight:1.55,
+                overflowX:'auto',
+                whiteSpace:'pre',
+              }}
+            >{expressionText}</pre>
+          ) : (
+            <p style={{margin:0, fontSize:12, color:'var(--color-text-tertiary)'}}>
+              Rule expression was not captured at decision time. Pre-migration audit rows
+              don't carry a snapshot — view the current expression in the rule editor.
+            </p>
+          )}
+        </div>
+      )}
+    </section>
+  );
 }
 
 /**

@@ -6,19 +6,9 @@ import { createServiceLogger, TraceContext } from "@shared/utils/logger/service-
 import { metricsService } from "@shared/metrics/metrics.service";
 import { createCircuitBreaker } from "@shared/circuit-breaker/circuit-breaker";
 import type CircuitBreaker from "opossum";
+import { RedisFeatureSnapshot } from "./feature.types";
 
 const featureLogger = createServiceLogger("FeatureService");
-
-/**
- * Raw Redis hash for a sender. Keys are catalogue-feature names; the
- * Redis writer (PAA) is responsible for matching them.
- *
- * `predict.service.ts` consumes this map and hands it to the
- * catalogue-driven `buildFeatures()` to produce the ONNX input
- * tensor. This service stays narrow: fetch + circuit-break, nothing
- * else.
- */
-export type RedisFeatureSnapshot = Record<string, unknown>;
 
 /**
  * Default snapshot returned on Redis miss / breaker-open. These are

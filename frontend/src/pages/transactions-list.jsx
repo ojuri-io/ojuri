@@ -28,6 +28,13 @@ function normaliseRow(r) {
     r.championScore ?? r.score ?? (typeof r.shadowScore === 'number' ? r.shadowScore : 0);
   const decision = r.overrideDecision || r.finalDecision || r.decision || 'ACCEPT';
   const overridden = !!r.overrideDecision || !!r.overridden;
+  const isRule =
+    r.stage === 'PRE_RULE'
+    || r.decisionSource === 'PRE_RULE'
+    || r.decisionSource === 'POST_RULE'
+    || r.ruleStage === 'PRE'
+    || r.ruleStage === 'POST'
+    || !!r.ruleName;
   return {
     id: r.transactionId || r.id || '',
     auditId: r.auditId || r.id || '',
@@ -39,7 +46,8 @@ function normaliseRow(r) {
     decision,
     overridden,
     ageLabel: r.ageLabel || (r.createdAt ? new Date(r.createdAt).toLocaleString() : ''),
-    isRule: r.stage === 'PRE_RULE' || r.decisionSource === 'PRE_RULE' || r.ruleStage === 'PRE',
+    isRule,
+    ruleName: r.ruleName || null,
   };
 }
 
@@ -344,7 +352,13 @@ function TransactionsList({ toast, nav, queue: _queue }) {
               <p style={{ margin: 0, fontSize: 12, fontWeight: 500 }}>{fmtNaira(t.amount)}</p>
               <p style={{ margin: '1px 0 0', fontSize: 11, color: 'var(--color-text-secondary)' }}>{t.txnType}</p>
             </div>
-            <span className={'pill round ' + scoreClass(t)} style={{ justifySelf: 'start' }}>{t.isRule ? 'rule' : t.score.toFixed(2)}</span>
+            <span
+              className={'pill round ' + scoreClass(t)}
+              style={{ justifySelf: 'start' }}
+              title={t.isRule && t.ruleName ? `Rule: ${t.ruleName}` : undefined}
+            >
+              {t.isRule ? 'rule' : t.score.toFixed(2)}
+            </span>
             <span className={'pill ' + decisionClass(t.decision)} style={{ justifySelf: 'start', padding: '3px 8px' }}>{t.decision}</span>
             {/* `overflow: hidden` + `text-overflow: ellipsis` keeps a long
                 absolute timestamp ("Wed, May 14 22:00:00") from spilling
