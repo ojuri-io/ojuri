@@ -1,7 +1,7 @@
 import { Knex } from "knex";
-import { DB_TABLES } from "@shared/enums/db-tables.enum";
-import { TransactionType } from "@shared/enums/transaction-type.enum";
-import { SegmentThresholdSeedEntry } from "./segment-threshold-seed.types";
+import { DB_TABLES } from "../../shared/enums/db-tables.enum";
+import { TransactionType } from "../../shared/enums/transaction-type.enum";
+import { SegmentThresholdSeedEntry } from "../types/segment-threshold-seed.types";
 
 // CASH_OUT runs higher because PaySim CASH_OUT was fraud-heavy in
 // training; without raising the bar, legit ATM withdrawals see a
