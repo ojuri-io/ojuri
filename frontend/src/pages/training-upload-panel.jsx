@@ -47,6 +47,8 @@ function fmtBytes(n) {
   return (n / 1024 / 1024 / 1024).toFixed(2) + ' GB';
 }
 
+const ALL_CANONICAL = [...REQUIRED_COLS, ...LABEL_COLS, ...OPTIONAL_COLS];
+
 function TrainingUploadPanel({ toast, onCompleted }) {
   const fileRef = useRef(null);
   const [file, setFile] = useState(null);
@@ -58,6 +60,7 @@ function TrainingUploadPanel({ toast, onCompleted }) {
   const [headerMap, setHeaderMap] = useState({});
   const [columnDefaults, setColumnDefaults] = useState({});
   const [dropEmptyRows, setDropEmptyRows] = useState(true);
+  const [editingCol, setEditingCol] = useState(null);
 
   // Effective column set after applying headerMap. The mapping renames
   // a source column (left) to a canonical name (right) so a CSV with
@@ -268,56 +271,20 @@ function TrainingUploadPanel({ toast, onCompleted }) {
             </div>
           </div>
 
-          {!ready && file && (
-            <details open style={{ marginBottom: 12, fontSize: 11 }}>
+          {file && (
+            <p style={{ margin: '0 0 8px', fontSize: 11, color: 'var(--color-text-secondary)' }}>
+              Need to rename a column? <strong>Click any column header in the preview below</strong>{' '}
+              to retype it (the rename applies to every row server-side). For missing optional
+              columns, set a single default value applied to all rows.
+            </p>
+          )}
+
+          {file && OPTIONAL_COLS.some((c) => !mappedColumns.includes(c)) && (
+            <details style={{ marginBottom: 12, fontSize: 11 }}>
               <summary style={{ cursor: 'pointer', fontSize: 12, fontWeight: 500, marginBottom: 8 }}>
-                Fix columns without re-exporting · map headers or set defaults
+                Set default values for missing optional columns
               </summary>
-              {requiredMissing.length > 0 && (
-                <div style={{ marginTop: 8 }}>
-                  <div style={{ marginBottom: 6, color: 'var(--color-text-secondary)' }}>
-                    Match a source column to each missing canonical column, OR provide a default value
-                    that the same value will be written into every row.
-                  </div>
-                  {requiredMissing.map((needed) => (
-                    <div
-                      key={needed}
-                      style={{ display: 'grid', gridTemplateColumns: '160px 1fr 1fr', gap: 8, alignItems: 'center', marginBottom: 4 }}
-                    >
-                      <span className="mono" style={{ color: 'var(--color-text-danger)' }}>{needed}</span>
-                      <select
-                        data-testid={`map-${needed}`}
-                        value={Object.entries(headerMap).find(([, v]) => v === needed)?.[0] || ''}
-                        onChange={(e) => {
-                          const prev = Object.entries(headerMap).find(([, v]) => v === needed)?.[0];
-                          if (prev) setMapping(prev, '');
-                          if (e.target.value) setMapping(e.target.value, needed);
-                        }}
-                        style={{ fontSize: 11, padding: '4px 6px' }}
-                      >
-                        <option value="">— map from source column —</option>
-                        {columns
-                          .filter((c) => !mappedColumns.includes(c) || c === Object.entries(headerMap).find(([, v]) => v === needed)?.[0])
-                          .map((c) => (<option key={c} value={c}>{c}</option>))}
-                      </select>
-                      <input
-                        data-testid={`default-${needed}`}
-                        type="text"
-                        placeholder={`or default value for ${needed}`}
-                        value={columnDefaults[needed] || ''}
-                        onChange={(e) => setDefault(needed, e.target.value)}
-                        style={{ fontSize: 11, padding: '4px 6px' }}
-                      />
-                    </div>
-                  ))}
-                </div>
-              )}
-              <div style={{ marginTop: 10 }}>
-                <div style={{ marginBottom: 6, fontWeight: 500 }}>Optional defaults</div>
-                <div style={{ color: 'var(--color-text-secondary)', marginBottom: 6 }}>
-                  Fill any optional column with a single value applied to all rows (useful when the
-                  source file doesn't have it).
-                </div>
+              <div style={{ marginTop: 8 }}>
                 {OPTIONAL_COLS.filter((c) => !mappedColumns.includes(c)).map((c) => (
                   <div
                     key={c}
@@ -335,40 +302,104 @@ function TrainingUploadPanel({ toast, onCompleted }) {
                   </div>
                 ))}
               </div>
-              <label style={{ display: 'flex', gap: 6, alignItems: 'center', marginTop: 10, cursor: 'pointer' }}>
-                <input
-                  type="checkbox"
-                  checked={dropEmptyRows}
-                  onChange={(e) => setDropEmptyRows(e.target.checked)}
-                />
-                <span>Drop fully empty rows during import</span>
-              </label>
             </details>
           )}
 
+          {file && (
+            <label style={{ display: 'flex', gap: 6, alignItems: 'center', marginBottom: 12, fontSize: 11, cursor: 'pointer' }}>
+              <input
+                type="checkbox"
+                checked={dropEmptyRows}
+                onChange={(e) => setDropEmptyRows(e.target.checked)}
+              />
+              <span>Drop fully empty rows during import</span>
+            </label>
+          )}
+
           {rows.length > 0 && (
-            <div style={{ overflow: 'auto', maxHeight: 220, border: '1px solid var(--color-border)', borderRadius: 4 }}>
-              <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 11 }}>
-                <thead>
-                  <tr style={{ background: 'var(--color-background-secondary)', position: 'sticky', top: 0 }}>
-                    {columns.map((c) => (
-                      <th key={c} style={{ padding: '4px 8px', textAlign: 'left', fontWeight: 500 }}>{c}</th>
-                    ))}
-                  </tr>
-                </thead>
-                <tbody>
-                  {rows.slice(0, 10).map((r, i) => (
-                    <tr key={i} style={{ borderTop: '1px solid var(--color-border)' }}>
-                      {columns.map((c) => (
-                        <td key={c} className="mono" style={{ padding: '3px 8px', whiteSpace: 'nowrap' }}>
-                          {String(r[c] ?? '')}
-                        </td>
-                      ))}
+            <>
+              <datalist id="canonical-columns">
+                {ALL_CANONICAL.map((c) => (<option key={c} value={c} />))}
+              </datalist>
+              <div style={{ overflow: 'auto', maxHeight: 240, border: '1px solid var(--color-border)', borderRadius: 4 }}>
+                <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 11 }}>
+                  <thead>
+                    <tr style={{ background: 'var(--color-background-secondary)', position: 'sticky', top: 0 }}>
+                      {columns.map((c) => {
+                        const mapped = headerMap[c] || c;
+                        const isCanonical = ALL_CANONICAL.includes(mapped);
+                        const isRenamed = mapped !== c;
+                        const isEditing = editingCol === c;
+                        return (
+                          <th key={c} style={{ padding: '4px 8px', textAlign: 'left', fontWeight: 500, minWidth: 110 }}>
+                            {isEditing ? (
+                              <input
+                                autoFocus
+                                list="canonical-columns"
+                                defaultValue={mapped}
+                                data-testid={`header-input-${c}`}
+                                onBlur={(e) => {
+                                  const next = e.target.value.trim();
+                                  setMapping(c, next && next !== c ? next : '');
+                                  setEditingCol(null);
+                                }}
+                                onKeyDown={(e) => {
+                                  if (e.key === 'Enter') e.currentTarget.blur();
+                                  if (e.key === 'Escape') { setEditingCol(null); }
+                                }}
+                                style={{ fontSize: 11, padding: '2px 4px', width: 130 }}
+                              />
+                            ) : (
+                              <button
+                                type="button"
+                                onClick={() => setEditingCol(c)}
+                                data-testid={`header-${c}`}
+                                title={isRenamed ? `Renamed from "${c}"` : 'Click to rename'}
+                                style={{
+                                  background: 'transparent',
+                                  border: 'none',
+                                  padding: 0,
+                                  cursor: 'pointer',
+                                  fontSize: 11,
+                                  fontWeight: 500,
+                                  color: isRenamed
+                                    ? 'var(--color-text-success)'
+                                    : isCanonical
+                                    ? 'inherit'
+                                    : 'var(--color-text-secondary)',
+                                  textAlign: 'left',
+                                  display: 'flex',
+                                  flexDirection: 'column',
+                                  gap: 1,
+                                }}
+                              >
+                                <span>{mapped}</span>
+                                {isRenamed && (
+                                  <span style={{ fontSize: 9, color: 'var(--color-text-tertiary)', fontWeight: 400 }}>
+                                    ← {c}
+                                  </span>
+                                )}
+                              </button>
+                            )}
+                          </th>
+                        );
+                      })}
                     </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
+                  </thead>
+                  <tbody>
+                    {rows.slice(0, 10).map((r, i) => (
+                      <tr key={i} style={{ borderTop: '1px solid var(--color-border)' }}>
+                        {columns.map((c) => (
+                          <td key={c} className="mono" style={{ padding: '3px 8px', whiteSpace: 'nowrap' }}>
+                            {String(r[c] ?? '')}
+                          </td>
+                        ))}
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </>
           )}
 
           {uploading && (
