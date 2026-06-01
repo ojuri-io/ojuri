@@ -76,6 +76,7 @@ services:
     volumes:
       - ./models:/app/models:ro
       - ./data/training-imports:/app/data/training-imports:ro
+      - ./data/training-uploads:/app/data/training-uploads
     depends_on:
       redis:
         condition: service_healthy
@@ -141,6 +142,7 @@ services:
     volumes:
       - ./models:/app/models:ro
       - ./data/training-imports:/app/data/training-imports:ro
+      - ./data/training-uploads:/app/data/training-uploads
     depends_on:
       redis:
         condition: service_healthy
@@ -202,6 +204,7 @@ services:
     volumes:
       - ./models:/app/models:ro
       - ./data/training-imports:/app/data/training-imports:ro
+      - ./data/training-uploads:/app/data/training-uploads
     depends_on:
       redis:
         condition: service_healthy

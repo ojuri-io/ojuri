@@ -69,3 +69,5 @@ Thumbs.db
 # defaults `--out` to `reports/...`; that output is per-run debugging
 # data, not source of truth. Re-generate locally when needed.
 reports/
+data/training-uploads/chunks/
+data/training-uploads/*.csv

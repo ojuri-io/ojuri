@@ -1,11 +1,32 @@
 # Loading training data as an adopter
 
 The MLA service trains XGBoost on rows in the `transactions` table where
-`groundTruthFraud` (preferred) or `fraudLabel` is set. Three channels are
+`groundTruthFraud` (preferred) or `fraudLabel` is set. Four channels are
 supported for getting your labelled data in. Pick the one that matches your
 operational shape.
 
-## 1. Bulk backfill via the import API
+## 1. Sentinel UI upload (recommended for ad-hoc imports)
+
+Open **Training data** in the Sentinel sidebar. The page lets you:
+
+1. Attach a CSV — the browser parses the first 50 rows locally so you see
+   the exact columns and a sample of data before sending anything.
+2. Column coverage is rendered: required columns (green ✓ or red ✗), label
+   column (`groundTruthFraud` or `fraudLabel` — at least one must be
+   present), and any optional columns that were detected.
+3. Click **Upload and queue** — the file streams to the server in 5 MB
+   chunks via `PUT /v1/admin/training/upload/:uploadId/chunk`. A progress
+   bar updates per chunk so you can see exactly how far through you are.
+4. On completion, the server reassembles the chunks, validates the total
+   byte count (and SHA-256 if you provided one), then enqueues an import
+   job pointing at the assembled file. The jobs table on the same page
+   polls every 4s so you see status transition QUEUED → RUNNING → COMPLETED.
+
+Size cap defaults to **5 GB per upload**; chunk size and cap are env
+configurable (`TRAINING_UPLOAD_CHUNK_SIZE`, `TRAINING_UPLOAD_MAX_BYTES`).
+Sessions abandon themselves after 1 hour of no activity.
+
+## 2. Bulk backfill via the import API (server-side path)
 
 For one-time loads of historical labelled data (typically 100k–10M rows).
 
@@ -69,7 +90,7 @@ that need it should download to a host-local path under
 
 Booleans accept `true/false`, `1/0`, `yes/no` (case-insensitive).
 
-## 2. Direct Postgres COPY (technical adopters)
+## 3. Direct Postgres COPY (technical adopters)
 
 If you control the Postgres host and prefer not to go through the API:
 
@@ -84,7 +105,7 @@ psql "$DB_URL" -c "\copy \"transactions\"( \
 Fastest path. No staging table, no validation — bad rows kill the COPY,
 fix the CSV and retry.
 
-## 3. Ongoing labels via webhook (not bulk)
+## 4. Ongoing labels via webhook (not bulk)
 
 For chargebacks / reviewer overrides as they happen:
 

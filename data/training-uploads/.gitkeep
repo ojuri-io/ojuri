@@ -1,0 +1,4 @@
+Writable volume for browser uploads. The Sentinel "Training data" page
+streams chunks via PUT /v1/admin/training/upload/:id/chunk; the server
+assembles them here, then enqueues an import job pointing at the
+assembled file. Cleaned up on completion. Do not check in CSVs.

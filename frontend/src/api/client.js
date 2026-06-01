@@ -915,3 +915,32 @@ export const getTrainingImport = (jobId) =>
       }).then(unwrap),
     () => null,
   );
+
+export const initTrainingUpload = ({ filename, expectedBytes, expectedSha256 }) =>
+  fetch('/v1/admin/training/upload/init', {
+    method: 'POST',
+    headers: adminHeaders(),
+    body: JSON.stringify({ filename, expectedBytes, expectedSha256 }),
+  }).then(unwrap);
+
+export const putTrainingUploadChunk = ({ uploadId, offset, bytes }) =>
+  fetch(
+    `/v1/admin/training/upload/${encodeURIComponent(uploadId)}/chunk?offset=${encodeURIComponent(offset)}`,
+    {
+      method: 'PUT',
+      headers: { ...adminHeaders({ body: false }), 'Content-Type': 'application/octet-stream' },
+      body: bytes,
+    },
+  ).then(unwrap);
+
+export const completeTrainingUpload = (uploadId) =>
+  fetch(`/v1/admin/training/upload/${encodeURIComponent(uploadId)}/complete`, {
+    method: 'POST',
+    headers: adminHeaders({ body: false }),
+  }).then(unwrap);
+
+export const abandonTrainingUpload = (uploadId) =>
+  fetch(`/v1/admin/training/upload/${encodeURIComponent(uploadId)}`, {
+    method: 'DELETE',
+    headers: adminHeaders({ body: false }),
+  }).then(unwrap);

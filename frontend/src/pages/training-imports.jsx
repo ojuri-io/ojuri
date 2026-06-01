@@ -9,6 +9,7 @@ import {
   listTrainingImports,
   createTrainingImport,
 } from '../api/client.js';
+import TrainingUploadPanel from './training-upload-panel.jsx';
 
 const REFRESH_MS = 4000;
 
@@ -26,6 +27,7 @@ function TrainingImports({ toast, user }) {
   const [source, setSource] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const [expandedJobId, setExpandedJobId] = useState(null);
+  const [advancedOpen, setAdvancedOpen] = useState(false);
 
   const canWrite = hasPermission(user, 'training:write');
 
@@ -69,37 +71,58 @@ function TrainingImports({ toast, user }) {
         }
       />
 
+      {canWrite && <TrainingUploadPanel toast={toast} onCompleted={refresh} />}
+
       {canWrite && (
-        <section className="panel" style={{ marginBottom: 12, padding: '16px 18px' }}>
-          <h2 style={{ margin: '0 0 8px', fontSize: 14, fontWeight: 500 }}>Submit new import</h2>
-          <p style={{ margin: '0 0 12px', fontSize: 12, color: 'var(--color-text-secondary)' }}>
-            Drop the labelled CSV in <code className="mono">data/training-imports/</code> on the host,
-            then submit{' '}
-            <code className="mono">file:///app/data/training-imports/&lt;your-file&gt;.csv</code>{' '}
-            (the directory is volume-mounted into the RDA container).{' '}
-            <code className="mono">s3://bucket/key.csv</code> is scaffolded but not yet implemented
-            (returns 501). See <code className="mono">docs/ADOPTER_TRAINING.md</code> for the CSV
-            contract.
-          </p>
-          <div style={{ display: 'flex', gap: 8 }}>
-            <input
-              data-testid="training-source-input"
-              type="text"
-              value={source}
-              onChange={(e) => setSource(e.target.value)}
-              placeholder="file:///app/data/training-imports/labels.csv"
-              style={{ flex: 1, padding: '6px 10px', fontSize: 12, fontFamily: 'var(--font-mono)' }}
-              disabled={submitting}
-            />
-            <button
-              data-testid="training-submit"
-              onClick={submit}
-              disabled={submitting || !source.trim()}
-            >
-              <Ti name="upload" size={14} />
-              Queue import
-            </button>
-          </div>
+        <section className="panel" style={{ marginBottom: 12, padding: '14px 18px' }}>
+          <button
+            type="button"
+            onClick={() => setAdvancedOpen((v) => !v)}
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'space-between',
+              width: '100%',
+              padding: 0,
+              background: 'transparent',
+              border: 'none',
+              cursor: 'pointer',
+              textAlign: 'left',
+              color: 'inherit',
+            }}
+            aria-expanded={advancedOpen}
+          >
+            <h2 style={{ margin: 0, fontSize: 13, fontWeight: 500 }}>Advanced · server-side path</h2>
+            <Ti name={advancedOpen ? 'chevron-up' : 'chevron-down'} size={14} style={{ color: 'var(--color-text-info)' }} />
+          </button>
+          {advancedOpen && (
+            <div style={{ marginTop: 10 }}>
+              <p style={{ margin: '0 0 10px', fontSize: 11, color: 'var(--color-text-secondary)' }}>
+                If the CSV is already on the RDA host (e.g. dropped into{' '}
+                <code className="mono">data/training-imports/</code>), submit its path directly. Skips
+                the browser upload. <code className="mono">s3://</code> sources return 501 today.
+              </p>
+              <div style={{ display: 'flex', gap: 8 }}>
+                <input
+                  data-testid="training-source-input"
+                  type="text"
+                  value={source}
+                  onChange={(e) => setSource(e.target.value)}
+                  placeholder="file:///app/data/training-imports/labels.csv"
+                  style={{ flex: 1, padding: '6px 10px', fontSize: 12, fontFamily: 'var(--font-mono)' }}
+                  disabled={submitting}
+                />
+                <button
+                  data-testid="training-submit"
+                  onClick={submit}
+                  disabled={submitting || !source.trim()}
+                >
+                  <Ti name="terminal" size={14} />
+                  Queue path
+                </button>
+              </div>
+            </div>
+          )}
         </section>
       )}
 
