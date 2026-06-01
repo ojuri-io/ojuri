@@ -317,7 +317,7 @@ class MLAService:
 
             # Step 3: Train new model
             logger.info("Step 3/7: Training XGBoost model...")
-            new_model, training_metrics = self.trainer.train(
+            new_model, _calibrator, training_metrics = self.trainer.train(
                 X_train, y_train, X_val, y_val
             )
 

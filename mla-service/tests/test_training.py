@@ -136,7 +136,7 @@ class TestModelTrainer:
         X_val = np.random.rand(50, 20).astype(np.float32)
         y_val = np.random.randint(0, 2, 50).astype(np.int32)
         
-        model, metrics = trainer.train(X_train, y_train, X_val, y_val)
+        model, _calibrator, metrics = trainer.train(X_train, y_train, X_val, y_val)
         
         # Check model is trained
         assert model is not None
@@ -160,7 +160,7 @@ class TestModelTrainer:
         X_val = np.random.rand(50, 10).astype(np.float32)
         y_val = np.random.randint(0, 2, 50).astype(np.int32)
         
-        model, _ = trainer.train(X_train, y_train, X_val, y_val)
+        model, _, _ = trainer.train(X_train, y_train, X_val, y_val)
         
         importance = trainer.get_feature_importance(model, top_n=5)
         

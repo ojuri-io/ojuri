@@ -4,14 +4,16 @@ XGBoost model training with cross-validation.
 
 import numpy as np
 from xgboost import XGBClassifier
-from sklearn.model_selection import cross_val_score
+from sklearn.model_selection import cross_val_score, train_test_split
 from sklearn.metrics import (
-    f1_score, precision_score, recall_score, 
+    f1_score, precision_score, recall_score,
     roc_auc_score, confusion_matrix, classification_report
 )
-from typing import Tuple, Dict, Any
+from typing import Tuple, Dict, Any, Optional
 import logging
 import time
+
+from src.training.calibration import Calibrator, brier_score
 
 logger = logging.getLogger(__name__)
 
@@ -63,7 +65,7 @@ class ModelTrainer:
         y_train: np.ndarray,
         X_val: np.ndarray,
         y_val: np.ndarray
-    ) -> Tuple[XGBClassifier, Dict[str, Any]]:
+    ) -> Tuple[XGBClassifier, Optional[Calibrator], Dict[str, Any]]:
         """
         Train XGBoost model with early stopping.
         
@@ -79,33 +81,32 @@ class ModelTrainer:
         logger.info("=" * 70)
         logger.info("STARTING MODEL TRAINING")
         logger.info("=" * 70)
-        logger.info(f"Training samples: {len(X_train):,}")
+        X_train_inner, X_cal, y_train_inner, y_cal = self._split_for_calibration(X_train, y_train)
+        logger.info(f"Training samples: {len(X_train_inner):,} (fit) + {len(X_cal):,} (calibration)")
         logger.info(f"Validation samples: {len(X_val):,}")
         logger.info(f"Features: {X_train.shape[1]}")
-        
+
         start_time = time.time()
-        
-        # Create model
+
         model = XGBClassifier(**self.params)
-        
-        # Train with early stopping
         logger.info("Training with early stopping...")
-        
         model.fit(
-            X_train, y_train,
+            X_train_inner, y_train_inner,
             eval_set=[(X_val, y_val)],
             verbose=False
         )
-        
+
         training_time = time.time() - start_time
-        
-        # Calculate metrics on validation set
+
+        calibrator, calibration_metrics = self._calibrate(model, X_cal, y_cal, X_val, y_val)
+
         logger.info("Calculating validation metrics...")
-        
         y_pred = model.predict(X_val)
-        y_prob = model.predict_proba(X_val)[:, 1]
-        
+        y_prob_raw = model.predict_proba(X_val)[:, 1]
+        y_prob = calibrator.transform(y_prob_raw) if calibrator else y_prob_raw
+
         metrics = self._calculate_metrics(y_val, y_pred, y_prob, training_time)
+        metrics.update(calibration_metrics)
         
         # Log results
         self._log_training_results(metrics)
@@ -126,8 +127,57 @@ class ModelTrainer:
         logger.info("=" * 70)
         logger.info("✅ TRAINING COMPLETE")
         logger.info("=" * 70)
-        
-        return model, metrics
+
+        return model, calibrator, metrics
+
+    def _split_for_calibration(
+        self,
+        X_train: np.ndarray,
+        y_train: np.ndarray,
+        calibration_fraction: float = 0.10,
+    ) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+        if len(X_train) < 500:
+            empty_X = np.empty((0, X_train.shape[1]), dtype=X_train.dtype)
+            empty_y = np.empty((0,), dtype=y_train.dtype)
+            return X_train, empty_X, y_train, empty_y
+        stratify = y_train if len(np.unique(y_train)) > 1 else None
+        return train_test_split(
+            X_train,
+            y_train,
+            test_size=calibration_fraction,
+            random_state=42,
+            stratify=stratify,
+        )
+
+    def _calibrate(
+        self,
+        model: XGBClassifier,
+        X_cal: np.ndarray,
+        y_cal: np.ndarray,
+        X_val: np.ndarray,
+        y_val: np.ndarray,
+    ) -> Tuple[Optional[Calibrator], Dict[str, Any]]:
+        if len(X_cal) == 0:
+            logger.info("Skipping calibration — calibration split is empty")
+            return None, {}
+
+        scores_cal = model.predict_proba(X_cal)[:, 1]
+        calibrator = Calibrator().fit(scores_cal, y_cal)
+
+        scores_val_raw = model.predict_proba(X_val)[:, 1]
+        scores_val_calibrated = calibrator.transform(scores_val_raw)
+        brier_before = brier_score(y_val, scores_val_raw)
+        brier_after = brier_score(y_val, scores_val_calibrated)
+
+        logger.info(
+            "Calibration: Brier %.4f → %.4f (delta %.4f)",
+            brier_before, brier_after, brier_before - brier_after,
+        )
+
+        return calibrator, {
+            "brier_score": float(brier_after),
+            "brier_score_uncalibrated": float(brier_before),
+        }
     
     def _calculate_metrics(
         self,

@@ -82,7 +82,7 @@ def train_initial_model(num_samples: int = None, skip_registry: bool = False):
     logger.info("")
     logger.info("[3/5] Training XGBoost model...")
     trainer = ModelTrainer(config)
-    model, metrics = trainer.train(X_train, y_train, X_val, y_val)
+    model, calibrator, metrics = trainer.train(X_train, y_train, X_val, y_val)
     
     logger.info(f"  Training complete!")
     logger.info(f"  F1-Score: {metrics['f1_score']:.4f}")
@@ -117,6 +117,18 @@ def train_initial_model(num_samples: int = None, skip_registry: bool = False):
         model_info = converter.get_model_info(onnx_path)
         logger.info(f"  ONNX model saved: {onnx_path}")
         logger.info(f"  Size: {model_info.get('size_mb', 0):.2f} MB")
+
+    if calibrator is not None and calibrator.fitted:
+        calibrator_path = os.path.join(output_dir, 'fraud_model_v1.0_calibrator.npz')
+        calibrator.save(calibrator_path)
+        metrics['calibrator_path'] = calibrator_path
+        logger.info(f"  Calibrator saved: {calibrator_path}")
+        if 'brier_score' in metrics and 'brier_score_uncalibrated' in metrics:
+            logger.info(
+                "  Brier score: %.4f (uncalibrated %.4f)",
+                metrics['brier_score'],
+                metrics['brier_score_uncalibrated'],
+            )
     
     # Step 5: Materialise into the filesystem registry (optional).
     # Writes models/versions/v1.0/{model.onnx,model.pkl,scaler.npz,meta.json}
