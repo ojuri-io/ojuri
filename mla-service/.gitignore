@@ -39,6 +39,8 @@ env/
 models/*.onnx
 models/*.pkl
 models/*.npz
+models/*.json
+models/versions/
 !models/.gitkeep
 
 # Data cache
