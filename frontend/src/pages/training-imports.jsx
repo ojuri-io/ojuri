@@ -73,10 +73,13 @@ function TrainingImports({ toast, user }) {
         <section className="panel" style={{ marginBottom: 12, padding: '16px 18px' }}>
           <h2 style={{ margin: '0 0 8px', fontSize: 14, fontWeight: 500 }}>Submit new import</h2>
           <p style={{ margin: '0 0 12px', fontSize: 12, color: 'var(--color-text-secondary)' }}>
-            Source URL of the labelled CSV. <code className="mono">file:///abs/path/to/labels.csv</code>{' '}
-            runs server-side. <code className="mono">s3://bucket/key.csv</code> is scaffolded but not yet
-            implemented (returns 501). See <code className="mono">docs/ADOPTER_TRAINING.md</code> for the
-            CSV contract.
+            Drop the labelled CSV in <code className="mono">data/training-imports/</code> on the host,
+            then submit{' '}
+            <code className="mono">file:///app/data/training-imports/&lt;your-file&gt;.csv</code>{' '}
+            (the directory is volume-mounted into the RDA container).{' '}
+            <code className="mono">s3://bucket/key.csv</code> is scaffolded but not yet implemented
+            (returns 501). See <code className="mono">docs/ADOPTER_TRAINING.md</code> for the CSV
+            contract.
           </p>
           <div style={{ display: 'flex', gap: 8 }}>
             <input
@@ -84,7 +87,7 @@ function TrainingImports({ toast, user }) {
               type="text"
               value={source}
               onChange={(e) => setSource(e.target.value)}
-              placeholder="file:///path/to/labels.csv"
+              placeholder="file:///app/data/training-imports/labels.csv"
               style={{ flex: 1, padding: '6px 10px', fontSize: 12, fontFamily: 'var(--font-mono)' }}
               disabled={submitting}
             />

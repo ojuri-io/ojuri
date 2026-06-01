@@ -1,0 +1,4 @@
+Drop labelled CSVs here. From inside the running stack the file is
+visible at /app/data/training-imports/<name>.csv. Submit via the
+Sentinel "Training data" page with source:
+  file:///app/data/training-imports/<name>.csv

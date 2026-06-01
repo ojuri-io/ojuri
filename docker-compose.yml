@@ -75,6 +75,7 @@ services:
       - "host.docker.internal:host-gateway"
     volumes:
       - ./models:/app/models:ro
+      - ./data/training-imports:/app/data/training-imports:ro
     depends_on:
       redis:
         condition: service_healthy
@@ -139,6 +140,7 @@ services:
       - "host.docker.internal:host-gateway"
     volumes:
       - ./models:/app/models:ro
+      - ./data/training-imports:/app/data/training-imports:ro
     depends_on:
       redis:
         condition: service_healthy
@@ -199,6 +201,7 @@ services:
       - "host.docker.internal:host-gateway"
     volumes:
       - ./models:/app/models:ro
+      - ./data/training-imports:/app/data/training-imports:ro
     depends_on:
       redis:
         condition: service_healthy
