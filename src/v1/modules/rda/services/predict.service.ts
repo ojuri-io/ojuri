@@ -316,6 +316,16 @@ class PredictService {
       timestamp: request.timestamp,
       segment: request.segment,
       tenant_id: tenantId ?? undefined,
+      ip_country: request.ip_country,
+      transaction_country: request.transaction_country,
+      destination_country: request.destination_country,
+      ip_is_vpn: request.ip_is_vpn,
+      device_is_trusted: request.device_is_trusted,
+      is_authenticated: request.is_authenticated,
+      session_to_txn_seconds: request.session_to_txn_seconds,
+      account_age_days: request.account_age_days,
+      channel: request.channel,
+      currency: request.currency,
       features,
     };
   }
