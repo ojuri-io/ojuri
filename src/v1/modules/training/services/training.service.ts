@@ -53,7 +53,10 @@ class TrainingService {
     }
 
     const knex = TrainingJob.knex();
-    const groundTruthSource = `training_import:${jobId}`;
+    // varchar(32) on transactions.groundTruthSource — the full job id
+    // would overflow. Keep the per-job provenance on the trainingJob
+    // row (promotedAt / promotedBy) rather than on every transaction.
+    const groundTruthSource = "training_import";
 
     const result = await knex.raw(
       `
