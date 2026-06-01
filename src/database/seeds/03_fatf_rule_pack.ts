@@ -1,6 +1,8 @@
 import { Knex } from "knex";
-import { TransactionType } from "@shared/enums/transaction-type.enum";
-import { FatfRule } from "./fatf-rule-pack-seed.types";
+import { TransactionType } from "../../shared/enums/transaction-type.enum";
+import { RuleAction } from "../../shared/enums/rule-action.enum";
+import { RuleStage } from "../../shared/enums/rule-stage.enum";
+import { FatfRule } from "../types/fatf-rule-pack-seed.types";
 
 const HIGH_RISK_DESTINATION_COUNTRIES: string[] = ["IR", "KP", "MM", "SY", "BY"];
 
@@ -15,9 +17,9 @@ export const FATF_RULES: FatfRule[] = [
     name: "fatf: structuring under cash-reporting threshold",
     description:
       "CASH_OUT sized just under the cash transaction reporting threshold. Defaults are tuned for the Nigerian ₦5M CTR (NFIU). Edit bounds for your jurisdiction.",
-    stage: "PRE",
+    stage: RuleStage.PRE,
     priority: 110,
-    action: "REVIEW",
+    action: RuleAction.REVIEW,
     expression: {
       and: [
         { "==": [{ var: "transaction_type" }, TransactionType.CASH_OUT] },
@@ -30,9 +32,9 @@ export const FATF_RULES: FatfRule[] = [
     name: "fatf: VPN with significant amount",
     description:
       "VPN session on a non-trivial transaction. Default significance threshold tuned for Nigerian retail; edit per market.",
-    stage: "PRE",
+    stage: RuleStage.PRE,
     priority: 115,
-    action: "REVIEW",
+    action: RuleAction.REVIEW,
     expression: {
       and: [
         { "==": [{ var: "ip_is_vpn" }, true] },
@@ -44,9 +46,9 @@ export const FATF_RULES: FatfRule[] = [
     name: "fatf: TRANSFER to FATF high-risk corridor",
     description:
       "Outbound TRANSFER to a FATF black/grey-list jurisdiction. List is global; extend with your own country risk additions.",
-    stage: "PRE",
+    stage: RuleStage.PRE,
     priority: 120,
-    action: "REVIEW",
+    action: RuleAction.REVIEW,
     expression: {
       and: [
         { "==": [{ var: "transaction_type" }, TransactionType.TRANSFER] },
@@ -58,9 +60,9 @@ export const FATF_RULES: FatfRule[] = [
     name: "fatf: account-takeover signature",
     description:
       "Rushed session (≤10s), high amount, IP country differs from transaction country. ATO-shaped behaviour; deny outright.",
-    stage: "PRE",
+    stage: RuleStage.PRE,
     priority: 130,
-    action: "DENY",
+    action: RuleAction.DENY,
     expression: {
       and: [
         { ">=": [{ var: "amount" }, ATO_HIGH_AMOUNT] },
@@ -73,9 +75,9 @@ export const FATF_RULES: FatfRule[] = [
     name: "fatf: untrusted device with significant amount",
     description:
       "Untrusted device on a non-trivial amount. Default threshold tuned for Nigerian retail; raise for higher-value markets.",
-    stage: "POST",
+    stage: RuleStage.POST,
     priority: 140,
-    action: "REVIEW",
+    action: RuleAction.REVIEW,
     expression: {
       and: [
         { "==": [{ var: "device_is_trusted" }, false] },

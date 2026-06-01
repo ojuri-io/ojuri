@@ -1,4 +1,4 @@
-import { RuleAction, RuleExpression, RuleStage } from "@shared/rules/rule.types";
+import { RuleAction, RuleExpression, RuleStage } from "../../shared/rules/rule.types";
 
 export interface FatfRule {
   name: string;
