@@ -24,18 +24,19 @@ def load_drift_config(engine: Engine) -> Dict[str, Any]:
         row = conn.execute(
             text(
                 'SELECT "driftF1Threshold", "driftPsiThreshold", "driftWindowSize", '
-                '"autoRetrainEnabled", "updatedBy", "updatedAt" '
+                '"autoRetrainEnabled", "trainingMode", "continuedTreesPerRound", '
+                '"updatedBy", "updatedAt" '
                 'FROM "mlaSettings" WHERE id = 1'
             )
         ).mappings().first()
     if not row:
-        # The migration seeds id=1, so this should never happen — but
-        # return env defaults rather than 500 so the page still loads.
         return {
             "driftF1Threshold": 0.92,
             "driftPsiThreshold": 0.25,
             "driftWindowSize": 1000,
             "autoRetrainEnabled": True,
+            "trainingMode": "FRESH",
+            "continuedTreesPerRound": 50,
             "updatedBy": None,
             "updatedAt": None,
         }
@@ -44,6 +45,8 @@ def load_drift_config(engine: Engine) -> Dict[str, Any]:
         "driftPsiThreshold": float(row["driftPsiThreshold"]),
         "driftWindowSize": int(row["driftWindowSize"]),
         "autoRetrainEnabled": bool(row["autoRetrainEnabled"]),
+        "trainingMode": row["trainingMode"],
+        "continuedTreesPerRound": int(row["continuedTreesPerRound"]),
         "updatedBy": row["updatedBy"],
         "updatedAt": row["updatedAt"].isoformat() if row["updatedAt"] else None,
     }
@@ -55,6 +58,8 @@ def save_drift_config(
     psi: float,
     window: int,
     auto_retrain: bool,
+    training_mode: str,
+    continued_trees: int,
     updated_by: Optional[str],
 ) -> Dict[str, Any]:
     """Patch the singleton row in place. Returns the post-update view."""
@@ -66,11 +71,16 @@ def save_drift_config(
                 '  "driftPsiThreshold" = :psi, '
                 '  "driftWindowSize" = :window, '
                 '  "autoRetrainEnabled" = :auto, '
+                '  "trainingMode" = :mode, '
+                '  "continuedTreesPerRound" = :trees, '
                 '  "updatedBy" = :who, '
                 '  "updatedAt" = NOW() '
                 'WHERE id = 1'
             ),
-            {"f1": f1, "psi": psi, "window": window, "auto": auto_retrain, "who": updated_by},
+            {
+                "f1": f1, "psi": psi, "window": window, "auto": auto_retrain,
+                "mode": training_mode, "trees": continued_trees, "who": updated_by,
+            },
         )
     return load_drift_config(engine)
 

@@ -317,8 +317,12 @@ class MLAService:
 
             # Step 3: Train new model
             logger.info("Step 3/7: Training XGBoost model...")
+            mode, continued_trees = self._load_training_mode()
             new_model, _calibrator, training_metrics = self.trainer.train(
-                X_train, y_train, X_val, y_val
+                X_train, y_train, X_val, y_val,
+                mode=mode,
+                prior_model=self.current_model,
+                continued_trees=continued_trees,
             )
 
             # Step 4: Validate against current model (if exists)
@@ -488,6 +492,16 @@ class MLAService:
         if self._db_engine is None:
             self._db_engine = self.data_loader.engine
         return self._db_engine
+
+    def _load_training_mode(self) -> tuple:
+        try:
+            from src.api.settings_repo import load_drift_config
+            cfg = load_drift_config(self.db_engine)
+            mode = cfg["trainingMode"] if cfg["trainingMode"] in ("FRESH", "CONTINUED") else "FRESH"
+            return (mode, int(cfg["continuedTreesPerRound"]))
+        except Exception as exc:
+            logger.warning(f"Could not load mlaSettings.trainingMode, defaulting to FRESH: {exc}")
+            return ("FRESH", 50)
 
     def effective_drift_config(self) -> Dict[str, Any]:
         """Current values the DriftDetector is using right now —

@@ -29,7 +29,10 @@ const BOUNDS = {
   driftF1Threshold:   { min: 0.5,  max: 0.99,    step: 0.01,  label: 'F1 threshold' },
   driftPsiThreshold:  { min: 0.05, max: 0.5,     step: 0.01,  label: 'PSI threshold' },
   driftWindowSize:    { min: 100,  max: 100_000, step: 100,   label: 'Window size' },
+  continuedTreesPerRound: { min: 10, max: 500, step: 10, label: 'Trees per CONTINUED round' },
 };
+
+const TRAINING_MODES = ['FRESH', 'CONTINUED'];
 
 export default function Settings({ toast, user }) {
   const canWriteSettings = hasPerm(user, 'settings:write');
@@ -150,6 +153,8 @@ function DriftCard({ toast, canWrite }) {
         driftPsiThreshold: data.driftPsiThreshold,
         driftWindowSize: data.driftWindowSize,
         autoRetrainEnabled: data.autoRetrainEnabled,
+        trainingMode: data.trainingMode ?? 'FRESH',
+        continuedTreesPerRound: data.continuedTreesPerRound ?? 50,
       });
     } else {
       setServer(null);
@@ -166,13 +171,18 @@ function DriftCard({ toast, canWrite }) {
     Number(draft.driftPsiThreshold) >= BOUNDS.driftPsiThreshold.min &&
     Number(draft.driftPsiThreshold) <= BOUNDS.driftPsiThreshold.max &&
     Number(draft.driftWindowSize) >= BOUNDS.driftWindowSize.min &&
-    Number(draft.driftWindowSize) <= BOUNDS.driftWindowSize.max;
+    Number(draft.driftWindowSize) <= BOUNDS.driftWindowSize.max &&
+    TRAINING_MODES.includes(draft.trainingMode) &&
+    Number(draft.continuedTreesPerRound) >= BOUNDS.continuedTreesPerRound.min &&
+    Number(draft.continuedTreesPerRound) <= BOUNDS.continuedTreesPerRound.max;
   const dirty =
     server &&
     (Number(draft.driftF1Threshold) !== server.driftF1Threshold ||
       Number(draft.driftPsiThreshold) !== server.driftPsiThreshold ||
       Number(draft.driftWindowSize) !== server.driftWindowSize ||
-      !!draft.autoRetrainEnabled !== !!server.autoRetrainEnabled);
+      !!draft.autoRetrainEnabled !== !!server.autoRetrainEnabled ||
+      draft.trainingMode !== (server.trainingMode ?? 'FRESH') ||
+      Number(draft.continuedTreesPerRound) !== (server.continuedTreesPerRound ?? 50));
 
   const save = async () => {
     if (!draftValid || !dirty) return;
@@ -183,6 +193,8 @@ function DriftCard({ toast, canWrite }) {
         driftPsiThreshold: Number(draft.driftPsiThreshold),
         driftWindowSize: Number(draft.driftWindowSize),
         autoRetrainEnabled: !!draft.autoRetrainEnabled,
+        trainingMode: draft.trainingMode,
+        continuedTreesPerRound: Number(draft.continuedTreesPerRound),
       });
       toast && toast('Drift config updated');
       await refresh();
@@ -207,6 +219,9 @@ function DriftCard({ toast, canWrite }) {
         </p>
         <p style={{ marginTop: 6 }}>
           <b>Auto-retrain</b> — when off, drift detection still runs and logs reasons but doesn't kick off training. Use this for a maintenance window where you don't want a model swap mid-incident.
+        </p>
+        <p style={{ marginTop: 6 }}>
+          <b>Training mode</b> — <code>FRESH</code> retrains from scratch every time (current behaviour, expensive but unbiased). <code>CONTINUED</code> seeds the new XGBoost run from the current production model and adds <i>Trees/round</i> more trees on top — cheaper and incremental, but risks compounding bias if the new data is skewed. The A/B gate still rejects models that don't beat production.
         </p>
       </Help>
 
@@ -250,6 +265,27 @@ function DriftCard({ toast, canWrite }) {
               />
               Auto-retrain enabled
             </label>
+            <label style={{ display: 'inline-flex', flexDirection: 'column', gap: 4, fontSize: 12, color: 'var(--color-text-secondary)' }}>
+              Training mode
+              <select
+                disabled={!canWrite || saving}
+                value={draft.trainingMode ?? 'FRESH'}
+                onChange={(e) => setDraft({ ...draft, trainingMode: e.target.value })}
+                style={{ padding: '4px 6px', borderRadius: 4, border: '1px solid var(--color-border)', background: 'var(--color-input-bg, #fff)' }}
+              >
+                {TRAINING_MODES.map((m) => (
+                  <option key={m} value={m}>{m}</option>
+                ))}
+              </select>
+            </label>
+            <Field
+              label="Trees/round (10–500, CONTINUED only)"
+              value={draft.continuedTreesPerRound}
+              onChange={(v) => setDraft({ ...draft, continuedTreesPerRound: v })}
+              step={BOUNDS.continuedTreesPerRound.step}
+              bounds={BOUNDS.continuedTreesPerRound}
+              disabled={!canWrite || saving || draft.trainingMode !== 'CONTINUED'}
+            />
             <button
               className="btn-primary"
               disabled={!canWrite || !draftValid || !dirty || saving}
@@ -265,6 +301,8 @@ function DriftCard({ toast, canWrite }) {
             <Stat label="Effective F1" value={server.effective?.driftF1Threshold ?? '—'} />
             <Stat label="Effective PSI" value={server.effective?.driftPsiThreshold ?? '—'} />
             <Stat label="Effective window" value={server.effective?.driftWindowSize ?? '—'} />
+            <Stat label="Training mode" value={server.trainingMode ?? 'FRESH'} />
+            <Stat label="Trees/round" value={server.continuedTreesPerRound ?? 50} />
             <Stat label="Last drift check" value={fmtTime(server.last_drift_check_at)} />
             <Stat label="Last drift detected" value={fmtTime(server.last_drift_detected_at)} />
             <Stat label="Last retraining done" value={fmtTime(server.last_retraining_completed_at)} />

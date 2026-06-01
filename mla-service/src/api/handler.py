@@ -43,7 +43,10 @@ DRIFT_BOUNDS = {
     "driftF1Threshold": (0.5, 0.99),
     "driftPsiThreshold": (0.05, 0.5),
     "driftWindowSize": (100, 100_000),
+    "continuedTreesPerRound": (10, 500),
 }
+
+VALID_TRAINING_MODES = ("FRESH", "CONTINUED")
 
 
 class MLAHttpHandler(BaseHTTPRequestHandler):
@@ -109,25 +112,38 @@ class MLAHttpHandler(BaseHTTPRequestHandler):
         try:
             subj = self._require_perm("mla:configure")
             body = self._read_json_body()
-            f1 = float(body.get("driftF1Threshold"))
-            psi = float(body.get("driftPsiThreshold"))
-            window = int(body.get("driftWindowSize"))
-            auto = bool(body.get("autoRetrainEnabled", True))
+            current = load_drift_config(self.service.db_engine)
+            f1 = float(body.get("driftF1Threshold", current["driftF1Threshold"]))
+            psi = float(body.get("driftPsiThreshold", current["driftPsiThreshold"]))
+            window = int(body.get("driftWindowSize", current["driftWindowSize"]))
+            auto = bool(body.get("autoRetrainEnabled", current["autoRetrainEnabled"]))
+            mode = str(body.get("trainingMode", current["trainingMode"])).upper()
+            trees = int(body.get("continuedTreesPerRound", current["continuedTreesPerRound"]))
         except AuthError as err:
             return self._respond(err.status, {"error": err.message})
         except (TypeError, ValueError) as err:
             return self._respond(400, {"error": f"invalid payload: {err}"})
 
-        # Clamp validation
-        for k, v in (("driftF1Threshold", f1), ("driftPsiThreshold", psi), ("driftWindowSize", window)):
+        for k, v in (
+            ("driftF1Threshold", f1),
+            ("driftPsiThreshold", psi),
+            ("driftWindowSize", window),
+            ("continuedTreesPerRound", trees),
+        ):
             lo, hi = DRIFT_BOUNDS[k]
             if v < lo or v > hi:
                 return self._respond(422, {"error": f"{k} must be between {lo} and {hi}"})
 
+        if mode not in VALID_TRAINING_MODES:
+            return self._respond(
+                422,
+                {"error": f"trainingMode must be one of {list(VALID_TRAINING_MODES)}"},
+            )
+
         try:
-            updated = save_drift_config(self.service.db_engine, f1, psi, window, auto, subj.username)
-            # Hot-apply to the running DriftDetector — operator wants
-            # to see the change take effect without a restart.
+            updated = save_drift_config(
+                self.service.db_engine, f1, psi, window, auto, mode, trees, subj.username,
+            )
             self.service.apply_drift_config(updated)
             return self._respond(200, {"status": True, "data": updated})
         except Exception as err:
