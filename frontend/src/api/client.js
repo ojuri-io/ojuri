@@ -870,11 +870,25 @@ export const getDriftConfig = () =>
     () => null,
   );
 
-export const updateDriftConfig = ({ driftF1Threshold, driftPsiThreshold, driftWindowSize, autoRetrainEnabled }) =>
+export const updateDriftConfig = ({
+  driftF1Threshold,
+  driftPsiThreshold,
+  driftWindowSize,
+  autoRetrainEnabled,
+  trainingMode,
+  continuedTreesPerRound,
+}) =>
   fetch('/mla/v1/admin/drift-config', {
     method: 'PUT',
     headers: adminHeaders(),
-    body: JSON.stringify({ driftF1Threshold, driftPsiThreshold, driftWindowSize, autoRetrainEnabled }),
+    body: JSON.stringify({
+      driftF1Threshold,
+      driftPsiThreshold,
+      driftWindowSize,
+      autoRetrainEnabled,
+      trainingMode,
+      continuedTreesPerRound,
+    }),
   }).then(unwrap);
 
 export const triggerManualRetrain = () =>
