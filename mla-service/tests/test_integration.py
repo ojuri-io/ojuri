@@ -49,7 +49,7 @@ class TestIntegration:
         
         # Train
         trainer = ModelTrainer(config)
-        model, metrics = trainer.train(X_train, y_train, X_val, y_val)
+        model, _calibrator, metrics = trainer.train(X_train, y_train, X_val, y_val)
         
         assert metrics['f1_score'] > 0
         assert metrics['auc_roc'] > 0.5
@@ -142,7 +142,7 @@ class TestIntegration:
             X_train, X_val, X_test, y_train, y_val, y_test = preprocessor.preprocess(X, y)
             
             trainer = ModelTrainer(config)
-            model, training_metrics = trainer.train(X_train, y_train, X_val, y_val)
+            model, _calibrator, training_metrics = trainer.train(X_train, y_train, X_val, y_val)
             
             assert model is not None
             assert training_metrics['f1_score'] > 0

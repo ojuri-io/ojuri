@@ -222,7 +222,7 @@ def train_with_real_datasets(
     logger.info("-" * 50)
     
     trainer = ModelTrainer(config)
-    model, metrics = trainer.train(X_train, y_train, X_val, y_val)
+    model, _calibrator, metrics = trainer.train(X_train, y_train, X_val, y_val)
     
     logger.info("")
     logger.info("Training complete!")
