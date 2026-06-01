@@ -1,9 +1,10 @@
 import { DB_TABLES } from "@shared/enums/db-tables.enum";
 import { Model, ModelObject } from "objection";
+import { TrainingTransformSpec } from "../services/training.types";
 
 export class TrainingJob extends Model {
   static override tableName = DB_TABLES.TRAINING_JOBS;
-  static override jsonAttributes = ["errors"];
+  static override jsonAttributes = ["errors", "transformSpec"];
 
   id!: string;
   source!: string;
@@ -14,6 +15,7 @@ export class TrainingJob extends Model {
   errors!: { row: number; message: string }[] | null;
   tenantId!: string | null;
   createdBy!: string;
+  transformSpec!: TrainingTransformSpec | null;
   createdAt!: Date;
   startedAt!: Date | null;
   completedAt!: Date | null;

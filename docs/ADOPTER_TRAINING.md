@@ -26,6 +26,25 @@ Size cap defaults to **5 GB per upload**; chunk size and cap are env
 configurable (`TRAINING_UPLOAD_CHUNK_SIZE`, `TRAINING_UPLOAD_MAX_BYTES`).
 Sessions abandon themselves after 1 hour of no activity.
 
+### Fixing column issues without re-exporting
+
+If the preview shows missing required columns, expand **"Fix columns
+without re-exporting"** under the column-coverage row. The panel lets
+you either:
+
+- **Map a source column** to the canonical name. Example: your CSV has
+  `txn_id` but the API expects `transactionId` — select `txn_id` from
+  the dropdown next to `transactionId`. The whole file is renamed on
+  the server during parse.
+- **Provide a default value** that's written into every row. Example:
+  the CSV lacks `currency` — type `NGN` and every row gets `NGN`.
+
+A toggle for **Drop fully empty rows** is on by default. The full
+transform spec is sent on `POST /v1/admin/training/upload/:id/complete`
+as `{ "transformSpec": { headerMap, columnDefaults, dropEmptyRows } }`
+and persists on the `trainingJobs.transformSpec` column so you can see
+exactly what transforms were applied to a historical import.
+
 ## 2. Bulk backfill via the import API (server-side path)
 
 For one-time loads of historical labelled data (typically 100k–10M rows).

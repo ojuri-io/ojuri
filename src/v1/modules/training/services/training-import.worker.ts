@@ -10,7 +10,7 @@ import TrainingSourceUnsupportedError from "@shared/error/training-source-unsupp
 import { TrainingJob } from "../model/training-job.model";
 import TrainingJobRepo from "../repositories/training-job.repo";
 import { parseCsvHeader, parseCsvRow } from "./csv-row.parser";
-import { ParsedTransactionRow, TrainingRowError } from "./training.types";
+import { ParsedTransactionRow, TrainingRowError, TrainingTransformSpec } from "./training.types";
 
 const log = createServiceLogger("TrainingImportWorker");
 
@@ -63,6 +63,7 @@ class TrainingImportWorker {
       const { rowsRead, rowsStaged, rowsRejected, errors } = await this.streamCsvIntoStaging(
         job.id,
         filePath,
+        job.transformSpec,
       );
       await this.repo.markCompleted(job.id, { rowsRead, rowsStaged, rowsRejected }, errors);
     } catch (err) {
@@ -72,7 +73,11 @@ class TrainingImportWorker {
     }
   }
 
-  private async streamCsvIntoStaging(jobId: string, filePath: string): Promise<{
+  private async streamCsvIntoStaging(
+    jobId: string,
+    filePath: string,
+    spec: TrainingTransformSpec | null,
+  ): Promise<{
     rowsRead: number;
     rowsStaged: number;
     rowsRejected: number;
@@ -95,7 +100,7 @@ class TrainingImportWorker {
       lineNumber++;
       if (!line.trim()) continue;
       if (header === null) {
-        const parsed = parseCsvHeader(line);
+        const parsed = parseCsvHeader(line, spec);
         if (parsed.missing.length > 0) {
           throw new Error(`CSV missing required columns: ${parsed.missing.join(", ")}`);
         }
@@ -103,7 +108,7 @@ class TrainingImportWorker {
         continue;
       }
       rowsRead++;
-      const parsed = parseCsvRow(header, line);
+      const parsed = parseCsvRow(header, line, spec);
       if (parsed.error || !parsed.row) {
         rowsRejected++;
         if (errors.length < 100) errors.push({ row: lineNumber, message: parsed.error ?? "unknown" });

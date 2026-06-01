@@ -43,9 +43,19 @@ function TrainingUploadPanel({ toast, onCompleted }) {
   const [previewError, setPreviewError] = useState(null);
   const [uploading, setUploading] = useState(false);
   const [progress, setProgress] = useState(0);
+  const [headerMap, setHeaderMap] = useState({});
+  const [columnDefaults, setColumnDefaults] = useState({});
+  const [dropEmptyRows, setDropEmptyRows] = useState(true);
 
-  const requiredMissing = file ? REQUIRED_COLS.filter((c) => !columns.includes(c)) : [];
-  const hasLabel = file && LABEL_COLS.some((c) => columns.includes(c));
+  // Effective column set after applying headerMap. The mapping renames
+  // a source column (left) to a canonical name (right) so a CSV with
+  // `txn_id` can satisfy the `transactionId` requirement.
+  const mappedColumns = columns.map((c) => headerMap[c] || c);
+  const allKnownCanonical = new Set([...mappedColumns, ...Object.keys(columnDefaults)]);
+  const requiredMissing = file
+    ? REQUIRED_COLS.filter((c) => !allKnownCanonical.has(c))
+    : [];
+  const hasLabel = file && LABEL_COLS.some((c) => allKnownCanonical.has(c));
   const ready = file && requiredMissing.length === 0 && hasLabel;
 
   const reset = () => {
@@ -54,7 +64,36 @@ function TrainingUploadPanel({ toast, onCompleted }) {
     setRows([]);
     setPreviewError(null);
     setProgress(0);
+    setHeaderMap({});
+    setColumnDefaults({});
+    setDropEmptyRows(true);
     if (fileRef.current) fileRef.current.value = '';
+  };
+
+  const setMapping = (sourceCol, canonicalCol) => {
+    setHeaderMap((prev) => {
+      const next = { ...prev };
+      if (canonicalCol) next[sourceCol] = canonicalCol;
+      else delete next[sourceCol];
+      return next;
+    });
+  };
+
+  const setDefault = (col, value) => {
+    setColumnDefaults((prev) => {
+      const next = { ...prev };
+      if (value && value.trim()) next[col] = value.trim();
+      else delete next[col];
+      return next;
+    });
+  };
+
+  const buildSpec = () => {
+    const spec = {};
+    if (Object.keys(headerMap).length > 0) spec.headerMap = headerMap;
+    if (Object.keys(columnDefaults).length > 0) spec.columnDefaults = columnDefaults;
+    spec.dropEmptyRows = dropEmptyRows;
+    return spec;
   };
 
   const onPick = (e) => {
@@ -108,7 +147,7 @@ function TrainingUploadPanel({ toast, onCompleted }) {
         offset = end;
         setProgress(Math.round((offset / file.size) * 100));
       }
-      await completeTrainingUpload(init.uploadId);
+      await completeTrainingUpload(init.uploadId, buildSpec());
       toast(`Uploaded ${file.name} · queued for import`, 'success');
       reset();
       onCompleted?.();
@@ -169,16 +208,16 @@ function TrainingUploadPanel({ toast, onCompleted }) {
                   style={{
                     padding: '2px 7px',
                     marginRight: 4,
-                    background: columns.includes(c)
+                    background: allKnownCanonical.has(c)
                       ? 'var(--color-background-success)'
                       : 'var(--color-background-danger)',
-                    color: columns.includes(c)
+                    color: allKnownCanonical.has(c)
                       ? 'var(--color-text-success)'
                       : 'var(--color-text-danger)',
                   }}
                   data-testid={`col-${c}`}
                 >
-                  {columns.includes(c) ? '✓' : '✗'} {c}
+                  {allKnownCanonical.has(c) ? '✓' : '✗'} {c}
                 </span>
               ))}
             </div>
@@ -191,22 +230,100 @@ function TrainingUploadPanel({ toast, onCompleted }) {
                   style={{
                     padding: '2px 7px',
                     marginRight: 4,
-                    background: columns.includes(c)
+                    background: allKnownCanonical.has(c)
                       ? 'var(--color-background-success)'
                       : 'var(--color-background-secondary)',
                   }}
                 >
-                  {columns.includes(c) ? '✓' : '○'} {c}
+                  {allKnownCanonical.has(c) ? '✓' : '○'} {c}
                 </span>
               ))}
             </div>
             <div>
               <strong>Optional present:</strong>{' '}
-              {OPTIONAL_COLS.filter((c) => columns.includes(c)).map((c) => (
+              {OPTIONAL_COLS.filter((c) => allKnownCanonical.has(c)).map((c) => (
                 <span key={c} className="pill" style={{ padding: '2px 7px', marginRight: 4 }}>{c}</span>
               )) || <em style={{ color: 'var(--color-text-tertiary)' }}>none</em>}
             </div>
           </div>
+
+          {!ready && file && (
+            <details open style={{ marginBottom: 12, fontSize: 11 }}>
+              <summary style={{ cursor: 'pointer', fontSize: 12, fontWeight: 500, marginBottom: 8 }}>
+                Fix columns without re-exporting · map headers or set defaults
+              </summary>
+              {requiredMissing.length > 0 && (
+                <div style={{ marginTop: 8 }}>
+                  <div style={{ marginBottom: 6, color: 'var(--color-text-secondary)' }}>
+                    Match a source column to each missing canonical column, OR provide a default value
+                    that the same value will be written into every row.
+                  </div>
+                  {requiredMissing.map((needed) => (
+                    <div
+                      key={needed}
+                      style={{ display: 'grid', gridTemplateColumns: '160px 1fr 1fr', gap: 8, alignItems: 'center', marginBottom: 4 }}
+                    >
+                      <span className="mono" style={{ color: 'var(--color-text-danger)' }}>{needed}</span>
+                      <select
+                        data-testid={`map-${needed}`}
+                        value={Object.entries(headerMap).find(([, v]) => v === needed)?.[0] || ''}
+                        onChange={(e) => {
+                          const prev = Object.entries(headerMap).find(([, v]) => v === needed)?.[0];
+                          if (prev) setMapping(prev, '');
+                          if (e.target.value) setMapping(e.target.value, needed);
+                        }}
+                        style={{ fontSize: 11, padding: '4px 6px' }}
+                      >
+                        <option value="">— map from source column —</option>
+                        {columns
+                          .filter((c) => !mappedColumns.includes(c) || c === Object.entries(headerMap).find(([, v]) => v === needed)?.[0])
+                          .map((c) => (<option key={c} value={c}>{c}</option>))}
+                      </select>
+                      <input
+                        data-testid={`default-${needed}`}
+                        type="text"
+                        placeholder={`or default value for ${needed}`}
+                        value={columnDefaults[needed] || ''}
+                        onChange={(e) => setDefault(needed, e.target.value)}
+                        style={{ fontSize: 11, padding: '4px 6px' }}
+                      />
+                    </div>
+                  ))}
+                </div>
+              )}
+              <div style={{ marginTop: 10 }}>
+                <div style={{ marginBottom: 6, fontWeight: 500 }}>Optional defaults</div>
+                <div style={{ color: 'var(--color-text-secondary)', marginBottom: 6 }}>
+                  Fill any optional column with a single value applied to all rows (useful when the
+                  source file doesn't have it).
+                </div>
+                {OPTIONAL_COLS.filter((c) => !mappedColumns.includes(c)).map((c) => (
+                  <div
+                    key={c}
+                    style={{ display: 'grid', gridTemplateColumns: '160px 1fr', gap: 8, alignItems: 'center', marginBottom: 4 }}
+                  >
+                    <span className="mono">{c}</span>
+                    <input
+                      data-testid={`default-opt-${c}`}
+                      type="text"
+                      placeholder={`default for ${c}`}
+                      value={columnDefaults[c] || ''}
+                      onChange={(e) => setDefault(c, e.target.value)}
+                      style={{ fontSize: 11, padding: '4px 6px' }}
+                    />
+                  </div>
+                ))}
+              </div>
+              <label style={{ display: 'flex', gap: 6, alignItems: 'center', marginTop: 10, cursor: 'pointer' }}>
+                <input
+                  type="checkbox"
+                  checked={dropEmptyRows}
+                  onChange={(e) => setDropEmptyRows(e.target.checked)}
+                />
+                <span>Drop fully empty rows during import</span>
+              </label>
+            </details>
+          )}
 
           {rows.length > 0 && (
             <div style={{ overflow: 'auto', maxHeight: 220, border: '1px solid var(--color-border)', borderRadius: 4 }}>

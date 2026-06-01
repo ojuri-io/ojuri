@@ -13,6 +13,7 @@ import TrainingUploadFactory from "../factories/training-upload.factory";
 import { TrainingUpload } from "../model/training-upload.model";
 import {
   ChunkWriteInput,
+  CompleteUploadInput,
   CompleteUploadResult,
   InitUploadInput,
 } from "./training-upload.types";
@@ -68,10 +69,14 @@ class TrainingUploadService {
     return this.getById(upload.id);
   }
 
-  async complete(uploadId: string, createdBy: string): Promise<CompleteUploadResult> {
-    const upload = await this.getById(uploadId);
+  async complete(input: CompleteUploadInput): Promise<CompleteUploadResult> {
+    const upload = await this.getById(input.uploadId);
     if (upload.status !== TrainingUploadStatus.IN_PROGRESS) {
-      return { uploadId, jobId: upload.jobId ?? "", filePath: this.assembledPathFor(upload) };
+      return {
+        uploadId: input.uploadId,
+        jobId: upload.jobId ?? "",
+        filePath: this.assembledPathFor(upload),
+      };
     }
     const expectedBytes = Number(upload.expectedBytes);
     const bytesReceived = Number(upload.bytesReceived);
@@ -92,7 +97,8 @@ class TrainingUploadService {
     const job = await this.trainingService.enqueue({
       source: `file://${assembledPath}`,
       tenantId: upload.tenantId,
-      createdBy,
+      createdBy: input.createdBy,
+      transformSpec: input.transformSpec ?? null,
     });
     await this.repo.markComplete(upload.id, job.id);
 

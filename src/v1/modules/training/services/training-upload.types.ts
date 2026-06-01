@@ -32,3 +32,9 @@ export interface CompleteUploadResult {
   jobId: string;
   filePath: string;
 }
+
+export interface CompleteUploadInput {
+  uploadId: string;
+  createdBy: string;
+  transformSpec?: import("./training.types").TrainingTransformSpec | null;
+}

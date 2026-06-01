@@ -933,10 +933,11 @@ export const putTrainingUploadChunk = ({ uploadId, offset, bytes }) =>
     },
   ).then(unwrap);
 
-export const completeTrainingUpload = (uploadId) =>
+export const completeTrainingUpload = (uploadId, transformSpec) =>
   fetch(`/v1/admin/training/upload/${encodeURIComponent(uploadId)}/complete`, {
     method: 'POST',
-    headers: adminHeaders({ body: false }),
+    headers: adminHeaders(),
+    body: JSON.stringify({ transformSpec: transformSpec ?? null }),
   }).then(unwrap);
 
 export const abandonTrainingUpload = (uploadId) =>

@@ -69,11 +69,18 @@ class TrainingUploadController {
   };
 
   complete = async (
-    req: FastifyRequest<{ Params: { uploadId: string } }>,
+    req: FastifyRequest<{
+      Params: { uploadId: string };
+      Body?: { transformSpec?: import("../services/training.types").TrainingTransformSpec | null };
+    }>,
     res: FastifyReply,
   ): Promise<void> => {
     const createdBy = req.auth?.username ?? req.apiKey?.id ?? "unknown";
-    const { uploadId, jobId } = await this.service.complete(req.params.uploadId, createdBy);
+    const { uploadId, jobId } = await this.service.complete({
+      uploadId: req.params.uploadId,
+      createdBy,
+      transformSpec: req.body?.transformSpec ?? null,
+    });
     const upload = await this.service.getById(uploadId);
     const body: CompleteUploadResponseDto = {
       uploadId,

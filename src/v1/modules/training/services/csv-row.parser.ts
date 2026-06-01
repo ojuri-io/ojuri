@@ -1,4 +1,4 @@
-import { ParsedTransactionRow } from "./training.types";
+import { ParsedTransactionRow, TrainingTransformSpec } from "./training.types";
 
 const REQUIRED_COLUMNS = [
   "transactionId",
@@ -14,13 +14,30 @@ export interface CsvRowParseResult {
   error: string | null;
 }
 
-export function parseCsvHeader(headerLine: string): { columns: string[]; missing: string[] } {
-  const columns = splitCsv(headerLine).map((c) => c.trim());
-  const missing = REQUIRED_COLUMNS.filter((req) => !columns.includes(req));
+// Applies headerMap to the CSV's column list. Source columns named on the
+// left of the map (the file's actual headers) are renamed to the right
+// (the canonical name the parser expects).
+export function applyHeaderMap(columns: string[], spec?: TrainingTransformSpec | null): string[] {
+  const map = spec?.headerMap ?? {};
+  return columns.map((c) => map[c] ?? c);
+}
+
+export function parseCsvHeader(
+  headerLine: string,
+  spec?: TrainingTransformSpec | null,
+): { columns: string[]; missing: string[] } {
+  const raw = splitCsv(headerLine).map((c) => c.trim());
+  const columns = applyHeaderMap(raw, spec);
+  const filledByDefaults = new Set(Object.keys(spec?.columnDefaults ?? {}));
+  const missing = REQUIRED_COLUMNS.filter((req) => !columns.includes(req) && !filledByDefaults.has(req));
   return { columns, missing };
 }
 
-export function parseCsvRow(columns: string[], line: string): CsvRowParseResult {
+export function parseCsvRow(
+  columns: string[],
+  line: string,
+  spec?: TrainingTransformSpec | null,
+): CsvRowParseResult {
   const values = splitCsv(line);
   if (values.length !== columns.length) {
     return { row: null, error: `column count mismatch: got ${values.length}, expected ${columns.length}` };
@@ -28,6 +45,15 @@ export function parseCsvRow(columns: string[], line: string): CsvRowParseResult 
   const map: Record<string, string> = {};
   for (let i = 0; i < columns.length; i++) {
     map[columns[i]!] = (values[i] ?? "").trim();
+  }
+  if (spec?.columnDefaults) {
+    for (const [col, def] of Object.entries(spec.columnDefaults)) {
+      if (!map[col]) map[col] = def;
+    }
+  }
+  if (spec?.dropEmptyRows) {
+    const nonEmpty = Object.values(map).some((v) => v && v.length > 0);
+    if (!nonEmpty) return { row: null, error: "row is empty" };
   }
   for (const req of REQUIRED_COLUMNS) {
     if (!map[req]) return { row: null, error: `missing required column: ${req}` };

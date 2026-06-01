@@ -18,6 +18,12 @@ export interface TrainingRowError {
   message: string;
 }
 
+export interface TrainingTransformSpec {
+  headerMap?: Record<string, string>;
+  columnDefaults?: Record<string, string>;
+  dropEmptyRows?: boolean;
+}
+
 export interface ParsedTransactionRow {
   transactionId: string;
   senderId: string;
