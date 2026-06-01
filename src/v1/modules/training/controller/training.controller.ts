@@ -33,6 +33,23 @@ class TrainingController {
     const job = await this.service.getById(req.params.jobId);
     res.send(SuccessResponse("Training import status", toResponse(job)));
   };
+
+  listImports = async (
+    req: FastifyRequest<{ Querystring: { limit?: string; offset?: string } }>,
+    res: FastifyReply,
+  ): Promise<void> => {
+    const limit = Number.parseInt(req.query.limit ?? "25", 10) || 25;
+    const offset = Number.parseInt(req.query.offset ?? "0", 10) || 0;
+    const { rows, total } = await this.service.list({ limit, offset });
+    res.send(
+      SuccessResponse("Training imports", {
+        rows: rows.map(toResponse),
+        total,
+        limit,
+        offset,
+      }),
+    );
+  };
 }
 
 function toResponse(job: TrainingJob): TrainingImportJobResponseDto {

@@ -15,6 +15,13 @@ const trainingRoute: FastifyPluginAsync = async (fastify) => {
 
   fastify.route({
     method: "GET",
+    url: "/admin/training/imports",
+    preHandler: [requireAuth("training:read")],
+    handler: controller.listImports,
+  });
+
+  fastify.route({
+    method: "GET",
     url: "/admin/training/import/:jobId",
     preHandler: [requireAuth("training:read")],
     handler: controller.getImport,

@@ -30,6 +30,17 @@ class TrainingService {
     if (!row) throw new TrainingJobNotFoundError(id);
     return row;
   }
+
+  async list(opts: { limit: number; offset: number }): Promise<{ rows: TrainingJob[]; total: number }> {
+    const baseQuery = TrainingJob.query();
+    const total = (await baseQuery.clone().clearOrder().resultSize()) as unknown as number;
+    const rows = await baseQuery
+      .clone()
+      .orderBy("createdAt", "desc")
+      .limit(Math.min(Math.max(opts.limit, 1), 200))
+      .offset(Math.max(opts.offset, 0));
+    return { rows, total: Number(total) || 0 };
+  }
 }
 
 export default TrainingService;

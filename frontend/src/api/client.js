@@ -888,3 +888,30 @@ export const listRetrainRuns = () =>
     () => fetch('/mla/v1/admin/retrain-runs', { headers: adminHeaders() }).then(unwrap),
     () => [],
   );
+
+// ──────── Adopter training-data import ────────
+export const listTrainingImports = ({ limit = 25, offset = 0 } = {}) => {
+  const qs = new URLSearchParams();
+  qs.set('limit', String(limit));
+  qs.set('offset', String(offset));
+  return safe(
+    () => fetch(`/v1/admin/training/imports?${qs.toString()}`, { headers: adminHeaders() }).then(unwrap),
+    () => ({ rows: [], total: 0, limit, offset }),
+  );
+};
+
+export const createTrainingImport = (source) =>
+  fetch('/v1/admin/training/import', {
+    method: 'POST',
+    headers: adminHeaders(),
+    body: JSON.stringify({ source }),
+  }).then(unwrap);
+
+export const getTrainingImport = (jobId) =>
+  safe(
+    () =>
+      fetch(`/v1/admin/training/import/${encodeURIComponent(jobId)}`, {
+        headers: adminHeaders(),
+      }).then(unwrap),
+    () => null,
+  );

@@ -25,6 +25,7 @@ import {
   CircleHelp,
   Copy,
   Cpu,
+  Database,
   Download,
   EllipsisVertical,
   Eye,
@@ -121,6 +122,7 @@ const ICON_MAP = {
   history: History,
   'info-circle': Info,
   'layout-dashboard': LayoutDashboard,
+  'database-import': Database,
   'list-details': ListChecks,
   'list-numbers': ListOrdered,
   'loader-2': Loader2,
@@ -381,6 +383,7 @@ export function Sidebar({ active, onNav, queueCount, user, mobileOpen, onClose }
       items: [
         { id: 'rules', label: 'Rules', icon: 'shield-check', perm: 'rules:read' },
         { id: 'features', label: 'Features', icon: 'list-numbers', perm: 'models:read' },
+        { id: 'training', label: 'Training data', icon: 'database-import', perm: 'training:read' },
         { id: 'settings', label: 'Settings', icon: 'settings', perm: 'settings:read' },
         {
           id: 'integ',
