@@ -8,15 +8,15 @@
 // 4. On Upload click: POST /init → PUT /chunk × N (sequential) →
 //    POST /complete → toast + caller refreshes the jobs list.
 
-import { useState, useRef } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import Papa from 'papaparse';
 import { Ti } from '../components/shell.jsx';
 import {
-  initTrainingUpload,
-  putTrainingUploadChunk,
-  completeTrainingUpload,
-  abandonTrainingUpload,
-} from '../api/client.js';
+  getState as getUploadState,
+  subscribe as subscribeUpload,
+  start as startUpload,
+  reset as resetUpload,
+} from '../state/training-upload-runner.js';
 
 const PREVIEW_ROWS = 50;
 const REQUIRED_COLS = [
@@ -55,8 +55,10 @@ function TrainingUploadPanel({ toast, onCompleted }) {
   const [columns, setColumns] = useState([]);
   const [rows, setRows] = useState([]);
   const [previewError, setPreviewError] = useState(null);
-  const [uploading, setUploading] = useState(false);
-  const [progress, setProgress] = useState(0);
+  const [runner, setRunner] = useState(getUploadState);
+  useEffect(() => subscribeUpload(setRunner), []);
+  const uploading = runner.status === 'uploading' || runner.status === 'completing';
+  const progress = runner.progress;
   const [headerMap, setHeaderMap] = useState({});
   const [columnDefaults, setColumnDefaults] = useState({});
   const [dropEmptyRows, setDropEmptyRows] = useState(true);
@@ -78,10 +80,10 @@ function TrainingUploadPanel({ toast, onCompleted }) {
     setColumns([]);
     setRows([]);
     setPreviewError(null);
-    setProgress(0);
     setHeaderMap({});
     setColumnDefaults({});
     setDropEmptyRows(true);
+    resetUpload();
     if (fileRef.current) fileRef.current.value = '';
   };
 
@@ -136,42 +138,18 @@ function TrainingUploadPanel({ toast, onCompleted }) {
     });
   };
 
-  const upload = async () => {
+  const upload = () => {
     if (!file || !ready || uploading) return;
-    setUploading(true);
-    setProgress(0);
-    let init;
-    try {
-      init = await initTrainingUpload({
-        filename: file.name,
-        expectedBytes: file.size,
-      });
-    } catch (err) {
-      toast(`Init failed · ${String(err?.message || err)}`, 'danger');
-      setUploading(false);
-      return;
-    }
-    const chunkSize = init.chunkSize || 5 * 1024 * 1024;
-    let offset = 0;
-    try {
-      while (offset < file.size) {
-        const end = Math.min(offset + chunkSize, file.size);
-        const blob = file.slice(offset, end);
-        const bytes = await blob.arrayBuffer();
-        await putTrainingUploadChunk({ uploadId: init.uploadId, offset, bytes });
-        offset = end;
-        setProgress(Math.round((offset / file.size) * 100));
-      }
-      await completeTrainingUpload(init.uploadId, buildSpec());
-      toast(`Uploaded ${file.name} · queued for import`, 'success');
-      reset();
-      onCompleted?.();
-    } catch (err) {
-      toast(`Upload failed · ${String(err?.message || err)}`, 'danger');
-      try { await abandonTrainingUpload(init.uploadId); } catch { /* best-effort */ }
-    } finally {
-      setUploading(false);
-    }
+    startUpload({
+      file,
+      spec: buildSpec(),
+      onSuccess: () => {
+        toast(`Uploaded ${file.name} · queued for import`, 'success');
+        reset();
+        onCompleted?.();
+      },
+      onError: (msg) => toast(`Upload failed · ${msg}`, 'danger'),
+    });
   };
 
   return (
@@ -182,6 +160,21 @@ function TrainingUploadPanel({ toast, onCompleted }) {
         verify the columns before sending it. The file uploads in {fmtBytes(5 * 1024 * 1024)} chunks
         — close the tab safely if anything looks off.
       </p>
+
+      {uploading && !file && (
+        <div
+          data-testid="training-upload-resumed"
+          style={{
+            marginBottom: 12, padding: '8px 10px', borderRadius: 4,
+            background: 'var(--color-background-info)', color: 'var(--color-text-info)', fontSize: 12,
+          }}
+        >
+          Upload of <strong className="mono">{runner.filename}</strong> is still running in the background — {progress}%.
+          <div style={{ height: 6, background: 'var(--color-background-secondary)', borderRadius: 3, marginTop: 6, overflow: 'hidden' }}>
+            <div style={{ height: '100%', width: `${progress}%`, background: 'var(--color-text-info)', transition: 'width 200ms ease' }} />
+          </div>
+        </div>
+      )}
 
       <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginBottom: 12 }}>
         <input

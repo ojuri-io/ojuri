@@ -2,6 +2,10 @@
 
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import {
+  getState as getUploadRunnerState,
+  subscribe as subscribeUploadRunner,
+} from '../state/training-upload-runner.js';
+import {
   Activity,
   ArrowDownNarrowWide,
   ArrowLeft,
@@ -513,6 +517,29 @@ function initials(user) {
   return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
 }
 
+function TrainingUploadPill() {
+  const [runner, setRunner] = useState(getUploadRunnerState);
+  useEffect(() => subscribeUploadRunner(setRunner), []);
+  if (runner.status !== 'uploading' && runner.status !== 'completing') return null;
+  const label = runner.status === 'completing' ? 'Finalising…' : `Uploading ${runner.progress}%`;
+  return (
+    <a
+      href="#training-imports"
+      data-testid="topbar-upload-pill"
+      title={`${runner.filename} · ${runner.progress}% — click to view`}
+      style={{
+        display: 'inline-flex', alignItems: 'center', gap: 6,
+        padding: '4px 10px', borderRadius: 999, fontSize: 11,
+        background: 'var(--color-background-info)', color: 'var(--color-text-info)',
+        textDecoration: 'none', whiteSpace: 'nowrap', marginRight: 8,
+      }}
+    >
+      <Ti name="upload" size={12} />
+      <span>{label}</span>
+    </a>
+  );
+}
+
 // ──────── Topbar ────────
 // Global app chrome — date stamp on the left, bell + user menu on the right.
 // Lives in every authenticated page; do not put page-scoped controls here.
@@ -594,6 +621,7 @@ export function Topbar({
         {dateLabel && <span className="topbar-date">{dateLabel}</span>}
       </div>
       <div className="topbar-actions">
+        <TrainingUploadPill />
         <div className="topbar-pop-anchor" ref={bellRef}>
           <button
             type="button"
