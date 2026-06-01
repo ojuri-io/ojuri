@@ -45,6 +45,20 @@ export interface RuleContext {
   segment?: string;
   tenant_id?: string;
 
+  // Geography + auth + device signals propagated from PredictRequestDto.
+  // Rules engine has line-of-sight to all of these without going through
+  // Redis/PAA.
+  ip_country?: string;
+  transaction_country?: string;
+  destination_country?: string;
+  ip_is_vpn?: boolean;
+  device_is_trusted?: boolean;
+  is_authenticated?: boolean;
+  session_to_txn_seconds?: number;
+  account_age_days?: number;
+  channel?: string;
+  currency?: string;
+
   // Available only on POST-stage evaluation
   ml_score?: number;
   ml_decision?: Decision.ACCEPT | Decision.DECLINE;
