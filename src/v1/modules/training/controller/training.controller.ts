@@ -50,6 +50,21 @@ class TrainingController {
       }),
     );
   };
+
+  promoteImport = async (
+    req: FastifyRequest<{ Params: { jobId: string } }>,
+    res: FastifyReply,
+  ): Promise<void> => {
+    const promotedBy = req.auth?.username ?? req.apiKey?.id ?? "unknown";
+    const { promotedRows } = await this.service.promote(req.params.jobId, promotedBy);
+    const job = await this.service.getById(req.params.jobId);
+    res.send(
+      SuccessResponse("Training import promoted to transactions", {
+        ...toResponse(job),
+        promotedRows,
+      }),
+    );
+  };
 }
 
 function toResponse(job: TrainingJob): TrainingImportJobResponseDto {
@@ -64,6 +79,9 @@ function toResponse(job: TrainingJob): TrainingImportJobResponseDto {
     createdAt: job.createdAt.toISOString(),
     startedAt: job.startedAt ? job.startedAt.toISOString() : null,
     completedAt: job.completedAt ? job.completedAt.toISOString() : null,
+    promotedAt: job.promotedAt ? job.promotedAt.toISOString() : null,
+    promotedBy: job.promotedBy ?? null,
+    promotedRows: job.promotedRows ?? null,
   };
 }
 

@@ -8,6 +8,8 @@ import { Ti, PageHead, hasPermission } from '../components/shell.jsx';
 import {
   listTrainingImports,
   createTrainingImport,
+  promoteTrainingImport,
+  triggerManualRetrain,
 } from '../api/client.js';
 import TrainingUploadPanel from './training-upload-panel.jsx';
 
@@ -28,6 +30,33 @@ function TrainingImports({ toast, user }) {
   const [submitting, setSubmitting] = useState(false);
   const [expandedJobId, setExpandedJobId] = useState(null);
   const [advancedOpen, setAdvancedOpen] = useState(false);
+  const [promotingId, setPromotingId] = useState(null);
+  const [retrainingId, setRetrainingId] = useState(null);
+
+  const onPromote = async (jobId) => {
+    setPromotingId(jobId);
+    try {
+      const res = await promoteTrainingImport(jobId);
+      toast(`Promoted ${res?.promotedRows ?? 0} rows into the training set`, 'success');
+      refresh();
+    } catch (err) {
+      toast(`Promote failed · ${String(err?.message || err)}`, 'danger');
+    } finally {
+      setPromotingId(null);
+    }
+  };
+
+  const onRetrain = async (jobId) => {
+    setRetrainingId(jobId);
+    try {
+      await triggerManualRetrain();
+      toast('Retrain triggered · McNemar guard will decide deployment', 'success');
+    } catch (err) {
+      toast(`Retrain failed to start · ${String(err?.message || err)}`, 'danger');
+    } finally {
+      setRetrainingId(null);
+    }
+  };
 
   const canWrite = hasPermission(user, 'training:write');
 
@@ -169,6 +198,13 @@ function TrainingImports({ toast, user }) {
                 <div><strong>Job id:</strong> <code className="mono">{job.jobId}</code></div>
                 {job.startedAt && <div><strong>Started:</strong> {new Date(job.startedAt).toLocaleString()}</div>}
                 {job.completedAt && <div><strong>Completed:</strong> {new Date(job.completedAt).toLocaleString()}</div>}
+                {job.promotedAt && (
+                  <div style={{ color: 'var(--color-text-success)' }}>
+                    <strong>Promoted:</strong> {new Date(job.promotedAt).toLocaleString()}
+                    {job.promotedRows != null && ` · ${job.promotedRows} rows into transactions`}
+                    {job.promotedBy && ` · by ${job.promotedBy}`}
+                  </div>
+                )}
                 {Array.isArray(job.errors) && job.errors.length > 0 && (
                   <details open style={{ marginTop: 8 }}>
                     <summary style={{ cursor: 'pointer', color: 'var(--color-text-danger)' }}>
@@ -183,6 +219,32 @@ function TrainingImports({ toast, user }) {
                       )}
                     </ul>
                   </details>
+                )}
+
+                {canWrite && job.status === 'COMPLETED' && (
+                  <div style={{ marginTop: 12, display: 'flex', gap: 8, alignItems: 'center' }}>
+                    {!job.promotedAt ? (
+                      <button
+                        data-testid={`promote-${job.jobId}`}
+                        disabled={promotingId === job.jobId}
+                        onClick={() => onPromote(job.jobId)}
+                        title="Insert staged rows into the transactions table so MLA picks them up on its next train"
+                      >
+                        <Ti name="check" size={12} />
+                        {promotingId === job.jobId ? 'Promoting…' : 'Promote to training set'}
+                      </button>
+                    ) : (
+                      <button
+                        data-testid={`retrain-${job.jobId}`}
+                        disabled={retrainingId === job.jobId}
+                        onClick={() => onRetrain(job.jobId)}
+                        title="Trigger MLA retrain. McNemar's test gates the model swap as usual."
+                      >
+                        <Ti name="cpu" size={12} />
+                        {retrainingId === job.jobId ? 'Triggering…' : 'Retrain now'}
+                      </button>
+                    )}
+                  </div>
                 )}
               </div>
             )}

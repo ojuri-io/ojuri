@@ -38,6 +38,13 @@ const trainingRoute: FastifyPluginAsync = async (fastify) => {
 
   fastify.route({
     method: "POST",
+    url: "/admin/training/import/:jobId/promote",
+    preHandler: [requireAuth("training:write")],
+    handler: controller.promoteImport,
+  });
+
+  fastify.route({
+    method: "POST",
     url: "/admin/training/upload/init",
     preHandler: [requireAuth("training:write")],
     handler: upload.init,

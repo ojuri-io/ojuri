@@ -945,3 +945,9 @@ export const abandonTrainingUpload = (uploadId) =>
     method: 'DELETE',
     headers: adminHeaders({ body: false }),
   }).then(unwrap);
+
+export const promoteTrainingImport = (jobId) =>
+  fetch(`/v1/admin/training/import/${encodeURIComponent(jobId)}/promote`, {
+    method: 'POST',
+    headers: adminHeaders({ body: false }),
+  }).then(unwrap);

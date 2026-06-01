@@ -15,4 +15,7 @@ export interface TrainingImportJobResponseDto {
   createdAt: string;
   startedAt: string | null;
   completedAt: string | null;
+  promotedAt: string | null;
+  promotedBy: string | null;
+  promotedRows: number | null;
 }

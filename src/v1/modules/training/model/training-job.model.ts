@@ -19,6 +19,9 @@ export class TrainingJob extends Model {
   createdAt!: Date;
   startedAt!: Date | null;
   completedAt!: Date | null;
+  promotedAt!: Date | null;
+  promotedBy!: string | null;
+  promotedRows!: number | null;
   updatedAt!: Date;
 }
 
