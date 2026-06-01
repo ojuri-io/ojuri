@@ -888,3 +888,66 @@ export const listRetrainRuns = () =>
     () => fetch('/mla/v1/admin/retrain-runs', { headers: adminHeaders() }).then(unwrap),
     () => [],
   );
+
+// ──────── Adopter training-data import ────────
+export const listTrainingImports = ({ limit = 25, offset = 0 } = {}) => {
+  const qs = new URLSearchParams();
+  qs.set('limit', String(limit));
+  qs.set('offset', String(offset));
+  return safe(
+    () => fetch(`/v1/admin/training/imports?${qs.toString()}`, { headers: adminHeaders() }).then(unwrap),
+    () => ({ rows: [], total: 0, limit, offset }),
+  );
+};
+
+export const createTrainingImport = (source) =>
+  fetch('/v1/admin/training/import', {
+    method: 'POST',
+    headers: adminHeaders(),
+    body: JSON.stringify({ source }),
+  }).then(unwrap);
+
+export const getTrainingImport = (jobId) =>
+  safe(
+    () =>
+      fetch(`/v1/admin/training/import/${encodeURIComponent(jobId)}`, {
+        headers: adminHeaders(),
+      }).then(unwrap),
+    () => null,
+  );
+
+export const initTrainingUpload = ({ filename, expectedBytes, expectedSha256 }) =>
+  fetch('/v1/admin/training/upload/init', {
+    method: 'POST',
+    headers: adminHeaders(),
+    body: JSON.stringify({ filename, expectedBytes, expectedSha256 }),
+  }).then(unwrap);
+
+export const putTrainingUploadChunk = ({ uploadId, offset, bytes }) =>
+  fetch(
+    `/v1/admin/training/upload/${encodeURIComponent(uploadId)}/chunk?offset=${encodeURIComponent(offset)}`,
+    {
+      method: 'PUT',
+      headers: { ...adminHeaders({ body: false }), 'Content-Type': 'application/octet-stream' },
+      body: bytes,
+    },
+  ).then(unwrap);
+
+export const completeTrainingUpload = (uploadId, transformSpec) =>
+  fetch(`/v1/admin/training/upload/${encodeURIComponent(uploadId)}/complete`, {
+    method: 'POST',
+    headers: adminHeaders(),
+    body: JSON.stringify({ transformSpec: transformSpec ?? null }),
+  }).then(unwrap);
+
+export const abandonTrainingUpload = (uploadId) =>
+  fetch(`/v1/admin/training/upload/${encodeURIComponent(uploadId)}`, {
+    method: 'DELETE',
+    headers: adminHeaders({ body: false }),
+  }).then(unwrap);
+
+export const promoteTrainingImport = (jobId) =>
+  fetch(`/v1/admin/training/import/${encodeURIComponent(jobId)}/promote`, {
+    method: 'POST',
+    headers: adminHeaders({ body: false }),
+  }).then(unwrap);

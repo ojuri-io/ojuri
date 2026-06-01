@@ -9,6 +9,8 @@ services:
       - "80:80"
     volumes:
       - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     depends_on:
       - rda-1
       - rda-2
@@ -75,6 +77,8 @@ services:
       - "host.docker.internal:host-gateway"
     volumes:
       - ./models:/app/models:ro
+      - ./data/training-imports:/app/data/training-imports:ro
+      - ./data/training-uploads:/app/data/training-uploads
     depends_on:
       redis:
         condition: service_healthy
@@ -139,6 +143,8 @@ services:
       - "host.docker.internal:host-gateway"
     volumes:
       - ./models:/app/models:ro
+      - ./data/training-imports:/app/data/training-imports:ro
+      - ./data/training-uploads:/app/data/training-uploads
     depends_on:
       redis:
         condition: service_healthy
@@ -199,6 +205,8 @@ services:
       - "host.docker.internal:host-gateway"
     volumes:
       - ./models:/app/models:ro
+      - ./data/training-imports:/app/data/training-imports:ro
+      - ./data/training-uploads:/app/data/training-uploads
     depends_on:
       redis:
         condition: service_healthy

@@ -36,6 +36,7 @@ import ServiceHealth from './pages/service-health.jsx';
 import Integrations from './pages/integrations.jsx';
 import Users from './pages/users.jsx';
 import Roles from './pages/roles.jsx';
+import TrainingImports from './pages/training-imports.jsx';
 
 function loadRoute() {
   const h = (location.hash || '').replace('#', '') || 'dash';
@@ -57,6 +58,7 @@ function loadRoute() {
     'integ',
     'users',
     'roles',
+    'training',
   ];
   return { page: valid.includes(h) ? h : 'dash', txn: null };
 }
@@ -374,6 +376,9 @@ function AuthenticatedApp({ user, onLogout }) {
   } else if (page === 'roles') {
     PageBody = <Roles toast={toast} user={user} />;
     screenLabel = '13 Roles';
+  } else if (page === 'training') {
+    PageBody = <TrainingImports toast={toast} user={user} />;
+    screenLabel = '14 Training data';
   }
 
   // Bell notifications are sourced from the same state the dashboard

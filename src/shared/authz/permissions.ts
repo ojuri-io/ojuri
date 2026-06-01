@@ -76,6 +76,10 @@ export const PERMISSIONS = [
   { code: "settings:write", description: "Update runtime settings (fraud threshold)" },
   { code: "mla:configure", description: "Update MLA drift config and trigger manual retrains" },
 
+  // Training data ingest
+  { code: "training:read", description: "View training-data import jobs and their status" },
+  { code: "training:write", description: "Submit and manage training-data import jobs" },
+
   // Cross-tenant scoping — required to issue API keys, register webhooks,
   // or create users for a tenant other than the caller's own. Without
   // this permission, the tenantId in the request body is ignored and the
