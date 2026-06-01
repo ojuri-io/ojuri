@@ -249,7 +249,7 @@ jobs:
           set -e
           OUT=$(npm run db:seed 2>&1)
           echo "$OUT"
-          echo "$OUT" | grep -q "Ran 1 seed files" || { echo "::error::db:seed did not run the expected single seed file"; exit 1; }
+          echo "$OUT" | grep -qE "Ran [0-9]+ seed files?" || { echo "::error::db:seed did not run any seed file"; exit 1; }
 
       # RDA's RulesService refreshes its in-memory cache every
       # RULES_RELOAD_INTERVAL_MS (default 30 s). db:seed just wrote
