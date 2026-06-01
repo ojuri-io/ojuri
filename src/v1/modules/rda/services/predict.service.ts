@@ -139,7 +139,7 @@ class PredictService {
     startTime: number,
   ): Promise<PredictResponseDto> {
     const { request, tenantId } = invocation;
-    const modelMeta = this.resolveModel(request.segment);
+    const modelMeta = this.resolveModel(request.segment ?? request.transaction_type);
     const features = await this.loadFeatures(request);
 
     const preHit = this.evaluatePreRules(request, tenantId, features.snapshot);
