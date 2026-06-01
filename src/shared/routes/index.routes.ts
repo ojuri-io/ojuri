@@ -7,6 +7,7 @@ import adminRoute from "../../v1/modules/admin/routes/admin.route";
 import authRoute from "../../v1/modules/auth/routes/auth.route";
 import statsRoute from "../../v1/modules/stats/routes/stats.route";
 import notificationsRoute from "../../v1/modules/notifications/routes/notifications.route";
+import trainingRoute from "../../v1/modules/training/routes/training.route";
 
 export default {
   app: appRoute,
@@ -18,4 +19,5 @@ export default {
   auth: authRoute,
   stats: statsRoute,
   notifications: notificationsRoute,
+  training: trainingRoute,
 };

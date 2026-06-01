@@ -24,6 +24,7 @@ import RuntimeSettingsService from "@shared/settings/runtime-settings.service";
 import { startWebhookWorker, stopWebhookWorker } from "./shared/webhooks/webhook-worker";
 import { loadCatalog } from "./shared/features/feature-catalog";
 import AuditWriteQueue from "@shared/audit/audit-write-queue";
+import TrainingImportWorker from "./v1/modules/training/services/training-import.worker";
 
 const app = new App();
 
@@ -72,6 +73,7 @@ async function start() {
   );
 
   startWebhookWorker();
+  container.resolve(TrainingImportWorker).start();
 
   container.resolve(AuditWriteQueue).start();
 
@@ -144,6 +146,11 @@ async function gracefulShutdown(signal: string): Promise<void> {
   } catch (err) {
     logger.warn({ err }, "Audit write queue drain raised during shutdown");
   }
+  try {
+    container.resolve(TrainingImportWorker).stop();
+  } catch (err) {
+    logger.warn({ err }, "Training import worker stop raised during shutdown");
+  }
   app.close();
   process.exit(0);
 }
@@ -152,6 +159,7 @@ process
   .on("uncaughtException", (err) => {
     logger.error({ err });
     stopWebhookWorker();
+  try { container.resolve(TrainingImportWorker).stop(); } catch { /* container may be torn down */ }
     app.close();
     process.exit(1);
   })

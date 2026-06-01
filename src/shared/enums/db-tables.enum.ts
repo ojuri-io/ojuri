@@ -23,4 +23,6 @@ export enum DB_TABLES {
   RUNTIME_SETTINGS = "runtimeSettings",
   MLA_SETTINGS = "mlaSettings",
   RETRAIN_RUNS = "retrainRuns",
+  TRAINING_JOBS = "trainingJobs",
+  TRANSACTIONS_STAGING = "transactionsStaging",
 }

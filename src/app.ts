@@ -29,6 +29,7 @@ class App {
     this.fastify.register(routes.admin, { prefix: RouteVersion.v1 });
     this.fastify.register(routes.stats, { prefix: RouteVersion.v1 });
     this.fastify.register(routes.notifications, { prefix: RouteVersion.v1 });
+    this.fastify.register(routes.training, { prefix: RouteVersion.v1 });
   }
 
   public getInstance() {
