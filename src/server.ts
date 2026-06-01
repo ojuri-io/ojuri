@@ -23,6 +23,7 @@ import RulesService from "@shared/rules/rules.service";
 import RuntimeSettingsService from "@shared/settings/runtime-settings.service";
 import { startWebhookWorker, stopWebhookWorker } from "./shared/webhooks/webhook-worker";
 import { loadCatalog } from "./shared/features/feature-catalog";
+import AuditWriteQueue from "@shared/audit/audit-write-queue";
 
 const app = new App();
 
@@ -71,6 +72,8 @@ async function start() {
   );
 
   startWebhookWorker();
+
+  container.resolve(AuditWriteQueue).start();
 
   const address = await app.listen(appConfig.server.port);
   logger.info(`${appConfig.app.name} started on ${address}`);
@@ -136,6 +139,11 @@ async function gracefulShutdown(signal: string): Promise<void> {
     logger.warn({ err }, "Kafka producer disconnect raised during shutdown");
   }
   stopWebhookWorker();
+  try {
+    await container.resolve(AuditWriteQueue).stop();
+  } catch (err) {
+    logger.warn({ err }, "Audit write queue drain raised during shutdown");
+  }
   app.close();
   process.exit(0);
 }

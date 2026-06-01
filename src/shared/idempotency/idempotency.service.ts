@@ -169,6 +169,19 @@ class IdempotencyService {
     return createHash("sha256").update(JSON.stringify(body ?? null)).digest("hex");
   }
 
+  // Lightweight per-(tenant, transaction_id) dedup. Used when no
+  // Idempotency-Key header is set. Returns true if this is the first
+  // sighting (caller should proceed), false if a previous predict
+  // already reserved it (caller returns 409). TTL matches the
+  // idempotency response cache so a transaction_id can't be replayed
+  // for the same window.
+  async reserveTransactionId(tenantId: string, transactionId: string): Promise<boolean> {
+    const key = `ojuri:idem:txn:${tenantId}:${transactionId}`;
+    const ttlSec = Math.max(60, Math.floor(IDEMPOTENCY_TTL_MS / 1000));
+    const set = await this.redis.get().set(key, "1", "EX", ttlSec, "NX");
+    return set === "OK";
+  }
+
   private async enforceTenantCap(tenantId: string): Promise<void> {
     const client = this.redis.get();
     const tenantSet = tenantSetKey(tenantId);

@@ -1,50 +1,15 @@
+import { randomUUID } from "crypto";
 import { singleton } from "tsyringe";
 import { createServiceLogger } from "@shared/utils/logger/service-logger";
-import { ReasonCode } from "@shared/onnx/reason-codes";
 import { metricsService } from "@shared/metrics/metrics.service";
 import DecisionAuditRepo, { AuditListFilters } from "./repositories/decision-audit.repo";
 import { DecisionAudit } from "./model/decision-audit.model";
+import AuditWriteQueue from "./audit-write-queue";
+import { DecisionAuditRecord, DecisionAuditRecordResult } from "./decision-audit.types";
+
+export type { DecisionAuditRecord, DecisionAuditRecordResult };
 
 const log = createServiceLogger("DecisionAudit");
-
-export interface DecisionAuditRecord {
-  transactionId: string;
-  tenantId?: string | null;
-  apiKeyId?: string | null;
-  correlationId?: string | null;
-  idempotencyKey?: string | null;
-
-  senderId: string;
-  receiverId?: string | null;
-  amount: number;
-  transactionType?: string | null;
-  segment?: string | null;
-
-  championModelVersion: string;
-  shadowModelVersion?: string | null;
-  championScore: number;
-  shadowScore?: number | null;
-  threshold: number;
-
-  mlDecision: "ACCEPT" | "DECLINE";
-  finalDecision: "ACCEPT" | "DECLINE" | "REVIEW";
-  decisionSource: "ML" | "PRE_RULE" | "POST_RULE";
-
-  ruleId?: string | null;
-  ruleName?: string | null;
-  ruleStage?: "PRE" | "POST" | null;
-
-  reasonCodes?: ReasonCode[] | null;
-  featuresSnapshot?: Record<string, number> | null;
-  featuresDefault?: boolean;
-
-  latencyMs: number;
-}
-
-export type DecisionAuditRecordResult =
-  | { kind: "ok"; id: string }
-  | { kind: "duplicate" }
-  | { kind: "failed" };
 
 // Postgres unique-violation SQLSTATE. Surfaced on Objection / pg errors
 // as `err.code`; we narrow to this specific value so generic failures
@@ -54,7 +19,21 @@ const PG_UNIQUE_VIOLATION = "23505";
 
 @singleton()
 class DecisionAuditService {
-  constructor(private readonly repo: DecisionAuditRepo) {}
+  constructor(
+    private readonly repo: DecisionAuditRepo,
+    private readonly queue: AuditWriteQueue,
+  ) {}
+
+  // Hot-path entry: enqueue the audit row to a background buffer and
+  // return the id the caller will surface in the response + Kafka event.
+  // Throws BackpressureError if the queue is full — the route handler
+  // maps that to HTTP 503 so Postgres outages don't silently corrupt
+  // the decisioning path.
+  enqueue(rec: DecisionAuditRecord): string {
+    const id = randomUUID();
+    this.queue.enqueue({ ...rec, id });
+    return id;
+  }
 
   async record(rec: DecisionAuditRecord): Promise<DecisionAuditRecordResult> {
     try {
@@ -84,6 +63,8 @@ class DecisionAuditService {
         ruleId: rec.ruleId ?? null,
         ruleName: rec.ruleName ?? null,
         ruleStage: rec.ruleStage ?? null,
+        ruleExpression: rec.ruleExpression ?? null,
+        ruleAction: rec.ruleAction ?? null,
 
         reasonCodes: rec.reasonCodes ?? null,
         featuresSnapshot: rec.featuresSnapshot ?? null,

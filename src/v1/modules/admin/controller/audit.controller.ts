@@ -87,6 +87,8 @@ class AuditController {
           ruleId: r.ruleId,
           ruleName: r.ruleName,
           ruleStage: r.ruleStage,
+          ruleAction: r.ruleAction,
+          ruleExpression: r.ruleExpression,
           reasonCodes: r.reasonCodes,
           reviewedBy: r.reviewedBy,
           reviewedAt: r.reviewedAt,

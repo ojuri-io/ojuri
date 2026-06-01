@@ -1,5 +1,8 @@
-export type RuleStage = "PRE" | "POST";
-export type RuleAction = "ALLOW" | "DENY" | "REVIEW" | "NONE";
+import { Decision } from "@shared/enums/decision.enum";
+import { RuleAction } from "@shared/enums/rule-action.enum";
+import { RuleStage } from "@shared/enums/rule-stage.enum";
+
+export { RuleAction, RuleStage };
 
 export interface RuleRecord {
   id: string;
@@ -44,7 +47,7 @@ export interface RuleContext {
 
   // Available only on POST-stage evaluation
   ml_score?: number;
-  ml_decision?: "ACCEPT" | "DECLINE";
+  ml_decision?: Decision.ACCEPT | Decision.DECLINE;
 
   // Numeric features made available by name for convenience
   features?: Record<string, number>;

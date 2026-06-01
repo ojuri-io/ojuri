@@ -1,11 +1,12 @@
 import { DB_TABLES } from "@shared/enums/db-tables.enum";
 import { Model, ModelObject } from "objection";
 import { ReasonCode } from "@shared/onnx/reason-codes";
+import { RuleExpression } from "@shared/rules/rule.types";
 
 export class DecisionAudit extends Model {
   static override tableName = DB_TABLES.DECISION_AUDIT_LOG;
 
-  static override jsonAttributes = ["reasonCodes", "featuresSnapshot"];
+  static override jsonAttributes = ["reasonCodes", "featuresSnapshot", "ruleExpression"];
 
   id!: string;
   transactionId!: string;
@@ -33,6 +34,8 @@ export class DecisionAudit extends Model {
   ruleId!: string | null;
   ruleName!: string | null;
   ruleStage!: string | null;
+  ruleExpression!: RuleExpression | null;
+  ruleAction!: string | null;
 
   reasonCodes!: ReasonCode[] | null;
   featuresSnapshot!: Record<string, number> | null;
