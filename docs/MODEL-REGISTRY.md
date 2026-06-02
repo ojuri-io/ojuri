@@ -42,16 +42,19 @@ register ───► │ CANDIDATE│ ─────────────�
 
 Per request, the effective threshold is the first defined of:
 
-1. `segmentThresholds.threshold` for `(segment, championVersion)`.
+1. `segmentThresholds.threshold` for `(segment, championVersion)`. The lookup key is `request.segment ?? request.transaction_type` — callers that don't pass an explicit `segment` field still get transaction-type-aware thresholds.
 2. `modelVersions.defaultThreshold` for the champion.
-3. `FRAUD_THRESHOLD` env var (only used before any model is registered).
+3. `runtimeSettings.fraud_threshold` — operator-tunable at runtime via the Sentinel Settings page or `PUT /v1/admin/settings/runtime/fraud_threshold`. This row is seeded from `FRAUD_THRESHOLD` on first migration.
+4. `FRAUD_THRESHOLD` env var as the boot-time fallback when the runtime row hasn't been seeded yet.
+
+Canonical reference: `docs/PREDICT-API.md` § "Threshold resolution".
 
 So:
 
 - A fresh deployment uses `FRAUD_THRESHOLD` as the global threshold.
-- Registering and activating a model takes over with that model's
-  `defaultThreshold`.
-- Setting a per-segment threshold overrides further, for that segment only.
+- Registering and activating a model takes over with that model's `defaultThreshold` (if set on the row).
+- Seeded per-segment defaults (see [Per-segment thresholds](#per-segment-thresholds) below) cover every PaySim `transaction_type` out of the box once a model is ACTIVE.
+- Setting a per-segment threshold via `POST /v1/admin/segment-thresholds` overrides further, for that segment only.
 
 ## Registering a model
 
@@ -141,6 +144,33 @@ ORDER BY 1;
 `"p2p_transfer"`). Adopters use it to tighten or relax the model on
 slices where the business risk profile differs from the global average.
 
+When the caller does **not** pass a `segment`, the resolver falls back
+to the request's `transaction_type` so `transaction_type=CASH_OUT`
+hits the same row as `segment=CASH_OUT`. This lets adopters get
+PaySim-segment-aware thresholds without changing their client code.
+
+### Seeded defaults
+
+`src/database/seeds/02_segment_thresholds.ts` ships these defaults,
+which apply automatically against whichever model is ACTIVE at seed
+time. PaySim CASH_OUT was fraud-heavy in training, so its threshold
+rides higher than the others; without that, legitimate ATM withdrawals
+saw a 4–6% false-positive rate in the reference benchmark.
+
+| Segment | Default threshold |
+|---|---|
+| `CASH_OUT` | 0.70 |
+| `TRANSFER` | 0.30 |
+| `PAYMENT` | 0.50 |
+| `DEBIT` | 0.50 |
+| `CASH_IN` | 0.50 |
+
+The seed is idempotent (`ON CONFLICT DO UPDATE`) and a no-op when no
+ACTIVE model row exists yet — re-run `npm run db:seed` after registering
+your first model.
+
+### Adding or updating a segment
+
 ```bash
 curl -X POST http://localhost:3000/v1/admin/segment-thresholds \
   -H "Authorization: Bearer $TOKEN" \
@@ -149,6 +179,9 @@ curl -X POST http://localhost:3000/v1/admin/segment-thresholds \
 ```
 
 `(segment, modelVersion)` is unique; re-posting upserts the threshold.
+You can override any seeded default the same way — pick the same
+segment name (`CASH_OUT`, etc.) and point it at the model version you
+want to retune.
 
 ## Deleting versions
 

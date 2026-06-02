@@ -149,12 +149,20 @@ under `src/shared/` so they can be reused by PAA or future workers.
 - **Rules engine (`src/shared/rules/`)** — JSON-Logic-style evaluator (no
   arithmetic, just predicates / combinators / `in` / `var`). Rules are
   hot-reloaded from Postgres every `RULES_RELOAD_INTERVAL_MS` (30 s default).
-  `stage` is `PRE` (short-circuits ML) or `POST` (overrides ML).
+  `stage` is `PRE` (short-circuits ML) or `POST` (overrides ML). Two seeds
+  ship by default: `01_demo_rules.ts` (PRE rules used by the demo dataset)
+  and `03_fatf_rule_pack.ts` (FATF: structuring, VPN+amount, high-risk
+  corridor TRANSFER, ATO signature, untrusted device + amount — NGN-tuned
+  defaults that adopters should review per-market).
 - **Model registry (`src/shared/models/model-registry.service.ts`)** — stores
   `modelVersions` and `segmentThresholds`; resolves `(segment) → (champion,
   shadow, threshold)` for each request. Status transitions: CANDIDATE →
   SHADOW → ACTIVE → RETIRED. The ONNX session itself is still loaded by
-  `OnnxService`; the registry is metadata + threshold routing only.
+  `OnnxService`; the registry is metadata + threshold routing only. Per-
+  transaction-type threshold defaults (CASH_OUT=0.70, TRANSFER=0.30,
+  PAYMENT=0.50, DEBIT=0.50, CASH_IN=0.50) are seeded via
+  `02_segment_thresholds.ts` once an ACTIVE model is registered. Lookup
+  uses `request.segment ?? request.transaction_type`.
 - **Decision audit log (`src/shared/audit/`)** — every `/v1/predict` writes a
   row to `decisionAuditLog` with model versions, scores, threshold, rule hit,
   reason codes, feature snapshot, and reviewer fields. Audit-log failures
@@ -171,6 +179,29 @@ under `src/shared/` so they can be reused by PAA or future workers.
   `/v1/predict` is keyed against `(tenantId, key, requestHash)`. Replay
   returns the cached response with `Idempotency-Replay: true`. Body
   divergence on the same key returns 422.
+- **Training-data ingest (`src/v1/modules/training/`)** — adopter CSVs
+  enter the system through either `POST /v1/admin/training/import`
+  (file:// source for ops-driven imports) or the Sentinel chunked-upload
+  protocol (`upload/init`, `chunk`, `complete`, `abandon`). Rows land in
+  `transactionsStaging` keyed by `jobId`. `POST /v1/admin/training/import/
+  :jobId/promote` upserts them into `transactions` with
+  `groundTruthSource = 'training_import'`, then `POST /mla/v1/admin/retrain`
+  kicks off a retrain. New tables: `trainingJobs`, `trainingUploads`,
+  `transactionsStaging`. See `docs/ADOPTER_TRAINING.md`.
+- **Score calibration (MLA, `mla-service/src/training/calibration.py`)** —
+  XGBoost saturates near 0.0/1.0; we fit
+  `sklearn.IsotonicRegression` on a held-out 10% calibration split and
+  persist the calibrator alongside the model. `meta.json` and
+  `modelVersions.brierScore` track the calibrated Brier; uncalibrated
+  is logged for the regression comparison. Calibration is loaded on
+  every retrain; RDA still reads only the ONNX score (the calibration
+  bakes into the deployed booster's score distribution).
+- **Configurable training mode (`mlaSettings.trainingMode`)** — operators
+  pick `FRESH` (current behaviour, train from scratch) or `CONTINUED`
+  (seed from current production model via XGBoost `xgb_model=`, add
+  `continuedTreesPerRound` trees). Setting persists via
+  `PUT /mla/v1/admin/drift-config`. MLA reads it at retrain start;
+  in-flight runs keep their loaded mode.
 
 FIA gained an HTTP API on `:9094`: `POST /v1/reports` (on-demand reports
 for any transaction, idempotent by `transactionId`), `POST /v1/reports/:id/messages`
