@@ -597,18 +597,54 @@ workstation with the infra in Docker on the same host. They are
 orientation values, not SLA targets — re-measure on your own hardware
 before relying on them.
 
+### Benchmarking traps to avoid
+
+Two layers of the deployed stack produce confidently-wrong fast
+numbers if you don't account for them. Spend ten minutes reading this
+before you cite a p99.
+
+1. **NGINX rate limit.** `nginx/nginx.conf` declares
+   `limit_req zone=api_limit:10m rate=100r/s burst=50` on `/v1/predict`.
+   From a single benchmark host (one source IP), anything above
+   ~150 RPS is rejected with HTTP 503 — NGINX returns the response
+   without forwarding upstream (`rt=0.000 uct="-"` in the access log).
+   A naïve high-RPS bench measures NGINX's reject latency, not the
+   decision path. Either raise / remove the limit for the bench window,
+   or source the load from multiple IPs.
+2. **Idempotency duplicate short-circuit.** When a request's
+   `transaction_id` matches one already reserved,
+   `PredictService.executePrediction` returns `{ kind: "duplicate" }`
+   and the controller responds 409 without running the model. A bench
+   that posts a single body to every request measures the
+   duplicate-rejection path, which is much faster than the real predict
+   pipeline. Mint a unique `transaction_id` per request.
+
+To measure honestly: unique IDs, multi-IP source or temporarily raised
+limit, assert every response is HTTP 200 before computing percentiles.
+
+### Measured values
+
 | Path | Metric | Value |
 |---|---|---|
 | ONNX inference, batch = 1 (CPUExecutionProvider) | p50 / p99 | 0.010 ms / 0.049 ms |
 | ONNX inference, batch = 128 | throughput | ~1.18 M predictions/s |
-| RDA `POST /v1/predict`, single client (3,000 trials) | p50 / p99 / mean | 1.24 ms / 4.06 ms / 1.36 ms |
-| RDA throughput at peak (16 concurrent connections) | req/s | ~3,146 |
-| RDA at saturation (64 concurrent connections) | p99 / req/s | 297 ms / ~1,832 |
+| RDA `POST /v1/predict`, single client (3,000 trials), **uncontended** | p50 / p99 / mean | 1.24 ms / 4.06 ms / 1.36 ms |
+| RDA `POST /v1/predict`, 16 concurrent, 5,000 trials, **direct to one replica, unique IDs, all 200 OK** | mean / p50 / p95 / p99 / p999 / RPS | 35 ms / 43 ms / 140 ms / **295 ms** / 3.3 s / ~237 |
+| RDA per-stage means at 16 concurrent (from `predict_stage_duration_ms{stage}`) | feature_load / inference / others | 19 ms / 16 ms / <1 ms |
 | MLA retrain on IEEE-CIS (683,852 train + 5-fold CV + SMOTE) | wall time | 27.67 s |
 | Deployed IEEE-CIS XGBoost on held-out test (118,108 rows) | F1 / AUC-ROC / Precision / Recall | 0.554 / 0.911 / 0.841 / 0.414 |
 | Phi-3-mini load on Apple MPS, fp16 | wall time | ~46 s |
 | Phi-3-mini first generation (one-time MPS kernel compile) | wall time | ~6–10 min |
 | Phi-3-mini steady-state generation | wall time | ~40–90 s/report |
+
+The single-client and 16-concurrent numbers describe two different
+regimes. Uncontended, the request hot path completes in ~4 ms p99 —
+ONNX inference + Redis hgetall + a Fastify pass. Under concurrent load
+the Node event loop becomes the binding constraint: `feature_load` and
+`inference` stage means both jump by an order of magnitude because
+their async resolutions queue behind whatever is currently CPU-bound
+on the main thread. Closing that gap is open performance work — see
+the `perf/` branches as they land.
 
 Two artefacts ship in `models/` and have very different signals.
 `models/fraud_model.onnx` is the legacy PaySim-trained model — its F1 ≈
