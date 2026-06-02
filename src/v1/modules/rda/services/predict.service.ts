@@ -139,10 +139,18 @@ class PredictService {
     startTime: number,
   ): Promise<PredictResponseDto> {
     const { request, tenantId } = invocation;
+    let t0 = performance.now();
     const modelMeta = this.resolveModel(request.segment ?? request.transaction_type);
-    const features = await this.loadFeatures(request);
+    metricsService.recordPredictStage("resolve_model", performance.now() - t0);
 
+    t0 = performance.now();
+    const features = await this.loadFeatures(request);
+    metricsService.recordPredictStage("feature_load", performance.now() - t0);
+
+    t0 = performance.now();
     const preHit = this.evaluatePreRules(request, tenantId, features.snapshot);
+    metricsService.recordPredictStage("pre_rules", performance.now() - t0);
+
     if (this.isHardRuleDecision(preHit)) {
       const ctx = PredictDecisionContextFactory.fromPreRule({
         invocation,
@@ -160,9 +168,17 @@ class PredictService {
       return this.finalize(ctx);
     }
 
+    t0 = performance.now();
     const ml = await this.runInference(features.enrichedVector, modelMeta.threshold);
+    metricsService.recordPredictStage("inference", performance.now() - t0);
+
+    t0 = performance.now();
     const reasonCodes = explain(features.enrichedVector);
+    metricsService.recordPredictStage("reason_codes", performance.now() - t0);
+
+    t0 = performance.now();
     const verdict = this.evaluatePostRules(request, tenantId, features.snapshot, ml);
+    metricsService.recordPredictStage("post_rules", performance.now() - t0);
 
     const ctx = PredictDecisionContextFactory.fromMlDecision({
       invocation,
@@ -247,7 +263,10 @@ class PredictService {
     const latencyMs = Date.now() - ctx.startTime;
     metricsService.recordDecision(ctx.finalDecision);
 
+    const t0 = performance.now();
     const auditId = this.persistAudit(ctx, latencyMs);
+    metricsService.recordPredictStage("audit_enqueue", performance.now() - t0);
+
     this.dispatchAsyncEffects(ctx, auditId);
 
     return PredictResponseFactory.create(ctx, auditId, latencyMs);

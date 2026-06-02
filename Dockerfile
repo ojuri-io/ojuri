@@ -56,6 +56,12 @@ USER nodejs
 ENV NODE_ENV=production
 ENV PORT=3000
 ENV LOG_LEVEL=info
+# libuv dispatches every async `ort.InferenceSession.run` through its
+# worker pool. With the default of 4 workers the pool becomes the next
+# bottleneck once we run an N>=4 ONNX session pool. Bump to 16 so the
+# session pool, not libuv, decides parallelism. Compose / k8s can
+# override at deploy time if a host has tighter limits.
+ENV UV_THREADPOOL_SIZE=16
 
 # Expose port
 EXPOSE 3000
