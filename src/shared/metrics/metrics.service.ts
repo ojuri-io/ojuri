@@ -29,6 +29,11 @@ class MetricsService {
   // Model metrics
   private modelInferenceLatency!: Histogram<string>;
   private modelLoadTime!: Gauge<string>;
+  private onnxSessionPoolSize!: Gauge<string>;
+
+  // Per-stage predict latency. Lets the operator drill into where /predict
+  // spends its time when the end-to-end histogram shows a long tail.
+  private predictStageLatency!: Histogram<string>;
 
   // Kafka metrics
   private kafkaPublishCounter!: Counter<string>;
@@ -125,9 +130,23 @@ class MetricsService {
       registers: [this.registry],
     });
 
+    this.predictStageLatency = new Histogram({
+      name: "predict_stage_duration_ms",
+      help: "Per-stage latency inside the /v1/predict hot path",
+      labelNames: ["stage"],
+      buckets: [1, 2, 5, 10, 20, 50, 100, 200, 500, 1000],
+      registers: [this.registry],
+    });
+
     this.modelLoadTime = new Gauge({
       name: "onnx_model_load_time_ms",
       help: "Time to load ONNX model in milliseconds",
+      registers: [this.registry],
+    });
+
+    this.onnxSessionPoolSize = new Gauge({
+      name: "onnx_session_pool_size",
+      help: "Number of ONNX InferenceSession instances in the inference pool",
       registers: [this.registry],
     });
 
@@ -266,6 +285,10 @@ class MetricsService {
   /**
    * Record model inference latency
    */
+  recordPredictStage(stage: string, durationMs: number) {
+    this.predictStageLatency.observe({ stage }, durationMs);
+  }
+
   recordModelInferenceLatency(durationMs: number) {
     this.modelInferenceLatency.observe(durationMs);
   }
@@ -273,6 +296,10 @@ class MetricsService {
   /**
    * Record model load time
    */
+  recordOnnxPoolSize(size: number) {
+    this.onnxSessionPoolSize.set(size);
+  }
+
   recordModelLoadTime(durationMs: number) {
     this.modelLoadTime.set(durationMs);
   }

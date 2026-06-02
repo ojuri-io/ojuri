@@ -25,20 +25,32 @@ const onnxLogger = createServiceLogger("OnnxService");
  */
 @singleton()
 class OnnxService {
-  private session: ort.InferenceSession | null = null;
+  // Pool of identical ONNX InferenceSession instances. onnxruntime-node
+  // serializes concurrent `session.run` calls at the session level, so a
+  // single shared session caps inference parallelism at one in-flight call
+  // regardless of CPU count. Pooling N sessions and round-robin'ing across
+  // them removes that ceiling. The model is loaded into each session, so
+  // total memory cost scales linearly with pool size — bound the pool
+  // (default ceil(cpus/2), capped at 8) and document the tradeoff for
+  // operators deploying multi-GB models.
+  private sessions: ort.InferenceSession[] = [];
+  private nextSessionIndex = 0;
   private modelPath: string;
   private inferenceCircuitBreaker!: CircuitBreaker<any[], any>;
   private isModelLoaded: boolean = false;
-  // Calibration check at load time: same-input determinism and
-  // clearly-legit-vs-clearly-fraud discrimination. Goes false if the
-  // deployed model is constant or behaving like the demo heuristic,
-  // and that propagates to /readyz so orchestrators can drain traffic.
   private isCalibrationHealthy: boolean = false;
   private unsubscribeActiveChange: (() => void) | null = null;
 
   constructor() {
     this.modelPath = path.resolve(appConfig.onnx.modelPath);
     this.setupCircuitBreaker();
+  }
+
+  private nextSession(): ort.InferenceSession {
+    const len = this.sessions.length;
+    const idx = this.nextSessionIndex % len;
+    this.nextSessionIndex = (this.nextSessionIndex + 1) % len;
+    return this.sessions[idx]!;
   }
 
   private setupCircuitBreaker(): void {
@@ -103,9 +115,9 @@ class OnnxService {
    * DOWN until a working model replaces the bad one.
    */
   private async runCalibrationProbe(): Promise<void> {
-    if (!this.session || !this.isModelLoaded) {
+    if (this.sessions.length === 0 || !this.isModelLoaded) {
       this.isCalibrationHealthy = false;
-      onnxLogger.error("calibrationProbe", "No ONNX session loaded — skipping probe (service will report NOT ready)", {});
+      onnxLogger.error("calibrationProbe", "No ONNX sessions loaded — skipping probe (service will report NOT ready)", {});
       return;
     }
 
@@ -219,13 +231,6 @@ class OnnxService {
 
     try {
       if (!fs.existsSync(this.modelPath)) {
-        // No placeholder, no mock fallback. The previous behaviour
-        // created an empty placeholder and silently flipped into
-        // mockInference — which is exactly the silent-failure mode
-        // we removed in the open-source-readiness pass. Without a
-        // real model file, OnnxService stays uninitialised, the
-        // calibration probe records "no session", and /readyz reports
-        // onnx-model: DOWN with an actionable error in the logs.
         onnxLogger.error(
           "loadModel",
           "Model file not found — train a model with " +
@@ -234,29 +239,48 @@ class OnnxService {
             "RDA will not accept traffic until /readyz reports onnx-model: UP.",
           { modelPath: this.modelPath }
         );
-        this.session = null;
+        this.sessions = [];
         this.isModelLoaded = false;
         return;
       }
 
-      // Configure session options for optimal performance
+      // Per-session intra-op thread count is deliberately constrained so a
+      // pool of N sessions does not oversubscribe the host's CPUs. For the
+      // 122 KB XGBoost model we ship by default, tree traversal is
+      // inherently single-threaded, so 1 thread per session is optimal.
       const sessionOptions: ort.InferenceSession.SessionOptions = {
         executionProviders: ["cpu"],
         graphOptimizationLevel: "all",
         enableCpuMemArena: true,
         enableMemPattern: true,
         executionMode: "sequential",
+        intraOpNumThreads: appConfig.onnx.intraOpNumThreads,
       };
 
-      this.session = await ort.InferenceSession.create(this.modelPath, sessionOptions);
+      const poolSize = appConfig.onnx.sessionPoolSize;
+      const newSessions = await Promise.all(
+        Array.from({ length: poolSize }, () =>
+          ort.InferenceSession.create(this.modelPath, sessionOptions),
+        ),
+      );
+
+      // Atomic swap so an in-flight predict either sees the old pool or
+      // the new pool, never a partially-initialised array. The previous
+      // sessions become unreachable and are GC'd once their in-flight
+      // calls drain.
+      this.sessions = newSessions;
+      this.nextSessionIndex = 0;
       this.isModelLoaded = true;
 
       const loadTime = Date.now() - startTime;
       metricsService.recordModelLoadTime(loadTime);
+      metricsService.recordOnnxPoolSize(poolSize);
 
       onnxLogger.success("loadModel", "ONNX model loaded successfully", {
         loadTime,
         modelPath: this.modelPath,
+        poolSize,
+        intraOpNumThreads: appConfig.onnx.intraOpNumThreads,
       });
     } catch (err) {
       onnxLogger.error("loadModel", "Failed to load ONNX model", {
@@ -407,17 +431,8 @@ class OnnxService {
     const traceId = TraceContext.getTraceId();
 
     try {
-      if (!this.session || !this.isModelLoaded) {
-        // Mockinference was deleted in the open-source-readiness pass:
-        // it was a demo heuristic (0.1 + small_random) that produced
-        // plausible-looking but meaningless scores when the real model
-        // wasn't loaded, hiding production silent-failure bugs behind
-        // health checks that read green. Now we throw, the circuit
-        // breaker catches it and returns the existing fail-closed 1.0,
-        // every predict declines, and /readyz already reports DOWN via
-        // the calibration probe. Loud failure is the only safe failure
-        // mode for a fraud system.
-        throw new Error("ONNX session not loaded — predict cannot proceed");
+      if (this.sessions.length === 0 || !this.isModelLoaded) {
+        throw new Error("ONNX sessions not loaded — predict cannot proceed");
       }
 
       // Pad-to-fit if the loaded model expects more dimensions than
@@ -435,9 +450,12 @@ class OnnxService {
       // Create input tensor
       const inputTensor = new ort.Tensor("float32", inputArray, [1, inputArray.length]);
 
-      // Run inference
+      // Run inference. The pool selector spreads concurrent calls across
+      // sessions so onnxruntime-node's per-session execution lock does not
+      // serialize the request hot path.
       const feeds = { input: inputTensor };
-      const results = await this.session.run(feeds);
+      const session = this.nextSession();
+      const results = await session.run(feeds);
 
       // XGBoost-via-onnxmltools emits `probabilities` shape [N, 2] as
       // [P(legit), P(fraud)] — we need index 1. Legacy single-output
@@ -491,7 +509,7 @@ class OnnxService {
    * "fix me" signal from the health probe.
    */
   isReady(): boolean {
-    return this.session !== null && this.isCalibrationHealthy;
+    return this.sessions.length > 0 && this.isCalibrationHealthy;
   }
 
   /**

@@ -63,7 +63,7 @@ describe("OnnxService.isReady() and the calibration probe", () => {
     // ONNX runtime check but are useless. Captures the synthetic-CSV
     // failure mode from §6e.
     const constantSession = makeStubSession(() => 0.5);
-    (svc as unknown as { session: SessionStub; isModelLoaded: boolean }).session = constantSession;
+    (svc as unknown as { sessions: SessionStub[]; isModelLoaded: boolean }).sessions = [constantSession];
     (svc as unknown as { isModelLoaded: boolean }).isModelLoaded = true;
 
     // runCalibrationProbe is private — exercise it via the same path
@@ -82,7 +82,7 @@ describe("OnnxService.isReady() and the calibration probe", () => {
         return { probabilities: { data: new Float32Array([1 - r, r]), dims: [1, 2] } };
       },
     };
-    (svc as unknown as { session: SessionStub; isModelLoaded: boolean }).session = randomSession;
+    (svc as unknown as { sessions: SessionStub[]; isModelLoaded: boolean }).sessions = [randomSession];
     (svc as unknown as { isModelLoaded: boolean }).isModelLoaded = true;
 
     await (svc as unknown as { runCalibrationProbe: () => Promise<void> }).runCalibrationProbe();
@@ -102,7 +102,7 @@ describe("OnnxService.isReady() and the calibration probe", () => {
       const fraudSignal = (isYoung ? 0.4 : 0) + (isVpn ? 0.4 : 0) + (isUnauth ? 0.2 : 0);
       return fraudSignal;
     });
-    (svc as unknown as { session: SessionStub; isModelLoaded: boolean }).session = realisticSession;
+    (svc as unknown as { sessions: SessionStub[]; isModelLoaded: boolean }).sessions = [realisticSession];
     (svc as unknown as { isModelLoaded: boolean }).isModelLoaded = true;
 
     await (svc as unknown as { runCalibrationProbe: () => Promise<void> }).runCalibrationProbe();

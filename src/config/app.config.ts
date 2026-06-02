@@ -1,4 +1,21 @@
+import os from "os";
 import { getEnv } from "./env.config";
+
+function resolveOnnxPoolSize(): number {
+  const raw = Number(process.env.ONNX_SESSION_POOL_SIZE);
+  if (Number.isFinite(raw) && raw >= 1) return Math.min(Math.floor(raw), 16);
+  const cores = os.cpus().length || 1;
+  return Math.max(1, Math.min(8, Math.ceil(cores / 2)));
+}
+
+function resolveOnnxIntraOpThreads(poolSize: number): number {
+  const raw = Number(process.env.ONNX_INTRA_OP_THREADS);
+  if (Number.isFinite(raw) && raw >= 1) return Math.min(Math.floor(raw), 16);
+  const cores = os.cpus().length || 1;
+  return Math.max(1, Math.floor(cores / poolSize));
+}
+
+const ONNX_POOL_SIZE = resolveOnnxPoolSize();
 
 const appConfig = {
   app: {
@@ -30,6 +47,8 @@ const appConfig = {
   onnx: {
     modelPath: process.env.MODEL_PATH || "./models/fraud_model.onnx",
     modelPollInterval: Number(process.env.MODEL_POLL_INTERVAL) || 300000,
+    sessionPoolSize: ONNX_POOL_SIZE,
+    intraOpNumThreads: resolveOnnxIntraOpThreads(ONNX_POOL_SIZE),
   },
   fraud: {
     threshold: Number(process.env.FRAUD_THRESHOLD) || 0.65,

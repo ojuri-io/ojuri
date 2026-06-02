@@ -38,7 +38,7 @@ describe("OnnxService output-index handling", () => {
         },
       }),
     };
-    (svc as unknown as { session: unknown }).session = stub;
+    (svc as unknown as { sessions: unknown[] }).sessions = [stub];
 
     const probability = await svc.predict(new Float32Array(64));
     expect(probability).toBeCloseTo(0.09, 5);
@@ -53,7 +53,7 @@ describe("OnnxService output-index handling", () => {
         },
       }),
     };
-    (svc as unknown as { session: unknown }).session = stub;
+    (svc as unknown as { sessions: unknown[] }).sessions = [stub];
 
     const probability = await svc.predict(new Float32Array(64));
     expect(probability).toBeCloseTo(0.97, 5);
@@ -70,7 +70,7 @@ describe("OnnxService output-index handling", () => {
         },
       }),
     };
-    (svc as unknown as { session: unknown }).session = stub;
+    (svc as unknown as { sessions: unknown[] }).sessions = [stub];
 
     const probability = await svc.predict(new Float32Array(64));
     expect(probability).toBeCloseTo(0.42, 5);
