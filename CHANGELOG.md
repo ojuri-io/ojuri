@@ -9,6 +9,46 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Adopter training-data ingest.** Operators can now upload labelled
+  transaction CSVs through the Sentinel "Training imports" page or via
+  the file-based API. Upload protocol is chunked (5 MB chunks, SHA-256
+  verify on assemble) so multi-hundred-thousand-row files survive
+  network blips: `POST /v1/admin/training/upload/init` →
+  `PUT /v1/admin/training/upload/:id/chunk` × N →
+  `POST /v1/admin/training/upload/:id/complete` →
+  `POST /v1/admin/training/import/:jobId/promote` →
+  `POST /mla/v1/admin/retrain`. Column renames and default values are
+  applied in the UI (no need to re-export the CSV); a downloadable
+  template surfaces the canonical headers. New tables: `trainingJobs`,
+  `trainingUploads`, `transactionsStaging`. See `docs/ADOPTER_TRAINING.md`.
+- **Per-segment fraud-threshold defaults** seeded for every
+  PaySim transaction type in
+  `src/database/seeds/02_segment_thresholds.ts`: CASH_OUT=0.70,
+  TRANSFER=0.30, PAYMENT=0.50, DEBIT=0.50, CASH_IN=0.50. Resolution
+  uses `request.segment ?? request.transaction_type` so adopters get
+  segment-aware thresholds with no UI work.
+- **FATF default rule pack** under `src/database/seeds/03_fatf_rule_pack.ts`:
+  five rules covering structuring (CASH_OUT under the cash-reporting
+  threshold), VPN+significant-amount, outbound TRANSFER to FATF
+  high-risk corridors, account-takeover signature
+  (rushed session + cross-country IP + high amount), and untrusted
+  device + significant amount. Defaults are NGN-tuned; edit per-market.
+- **MLA isotonic calibration** wraps the post-XGBoost score with
+  `sklearn.IsotonicRegression`, fitted on a held-out 10% split. The
+  Brier score (calibrated and uncalibrated) is recorded in
+  `meta.json` and persisted to the `modelVersions.brierScore` column
+  so adopters can spot saturation regressions across versions.
+- **User-controlled training mode.** New `mlaSettings.trainingMode`
+  (`FRESH` | `CONTINUED`) and `mlaSettings.continuedTreesPerRound`
+  let operators choose between full retraining (current behaviour)
+  and incremental boosting on top of the current production model
+  (XGBoost `xgb_model=`). Surfaced as a dropdown on the Settings
+  page; `PUT /mla/v1/admin/drift-config` accepts the two new fields.
+- **Rule visibility in audit and predict response.** Every
+  `/v1/predict` response now carries a `rule` object when a PRE or
+  POST rule fired (`{ id, name, stage, action, expression }`), and
+  the decision-audit row stores the rule expression so the Sentinel
+  detail page can render exactly which rule caused a DECLINE.
 - **Curated demo dataset and one-shot loader.** A 20-row
   `data/demo/sample-transactions.json` hand-built to exercise all three
   decision buckets, plus `npm run demo:load` (extends `scripts/seed-load.ts`
@@ -31,6 +71,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **NGINX `/mla/` proxy hardened for Linux hosts.** The new `location
+  /mla/` block defers `host.docker.internal` resolution to request time
+  (variable in `proxy_pass` + embedded resolver), and the `nginx`
+  service in `docker-compose.yml` now declares
+  `extra_hosts: host.docker.internal:host-gateway`. Without this, nginx
+  hard-fails at startup on Linux CI runners and the Sentinel
+  "Retrain now" / drift-config calls return 502.
+- **Predict service refactored** into named stages
+  (`resolveModel`, `loadFeatures`, `evaluatePreRules`, `runInference`,
+  `evaluatePostRules`, `finalize`) backed by factories
+  (`DecisionAuditFactory`, `PredictDecisionContextFactory`,
+  `TransactionEventFactory`, `PredictResponseFactory`). No behavioural
+  change; the request hot path is now legible from a single 40-line
+  method.
 - Tighter TypeScript strict-family coverage. RDA gained
   `noImplicitAny`, `strictPropertyInitialization`,
   `noUncheckedIndexedAccess`, and `noImplicitOverride`. PAA (already on

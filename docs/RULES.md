@@ -76,6 +76,42 @@ Variables you can reference in `{ "var": "..." }`:
 - POST-stage only: `ml_score` (float in `[0,1]`), `ml_decision`
   (`"ACCEPT"` / `"DECLINE"`).
 
+## Default rule packs
+
+`npm run db:seed` installs two packs out of the box. Both are
+idempotent — they skip rules whose `name` already exists, so adopters
+can edit, disable, or delete them post-seed without re-introducing the
+defaults on the next seed run.
+
+### Pack 1: demo rules (`01_demo_rules.ts`)
+
+Four PRE-stage rules keyed on `amount` / `transaction_type` / `segment`
+so the `data/demo/sample-transactions.json` dataset produces a visible
+mix of ACCEPT / REVIEW / DECLINE on a fresh deploy with no PAA cache.
+Adopters running on real data will typically want to delete these.
+
+### Pack 2: FATF default pack (`03_fatf_rule_pack.ts`)
+
+Five rules grounded in FATF money-laundering and account-takeover
+typologies. **Default thresholds are tuned for the Nigerian retail
+market (NGN, ₦5M cash-transaction-reporting threshold). Edit per
+market.**
+
+| Name | Stage | Action | What it catches |
+|---|---|---|---|
+| `fatf: structuring under cash-reporting threshold` | PRE | REVIEW | `CASH_OUT` sized between ₦4.5M and ₦4.999M — just under the NFIU cash-transaction-reporting line, a classic structuring signal. |
+| `fatf: VPN with significant amount` | PRE | REVIEW | `ip_is_vpn=true` AND `amount ≥ ₦100k`. VPN alone isn't a fraud signal, but VPN+meaningful-money is. |
+| `fatf: TRANSFER to FATF high-risk corridor` | PRE | REVIEW | Outbound `TRANSFER` whose `destination_country` is on the FATF black/grey list (`IR`, `KP`, `MM`, `SY`, `BY`). Extend with your own country-risk additions. |
+| `fatf: account-takeover signature` | PRE | DENY | Rushed session (`session_to_txn_seconds ≤ 10`) AND large amount (`≥ ₦1M`) AND IP country ≠ transaction country. Deny outright — this combination is rarely benign. |
+| `fatf: untrusted device with significant amount` | POST | REVIEW | `device_is_trusted=false` AND `amount ≥ ₦200k`. Runs after ML so a borderline-fraud score combined with an untrusted device is escalated. |
+
+Adopters in other markets should review the amount thresholds in
+`src/database/seeds/03_fatf_rule_pack.ts` and either edit the file
+before seeding, or update the rules post-seed via
+`PATCH /v1/admin/rules/:id`. The high-risk corridor list is
+deliberately conservative — extend it with your own AML risk
+classifications.
+
 ## Examples
 
 ### Instant blocklist

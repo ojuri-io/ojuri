@@ -167,12 +167,15 @@ models/
   "feature_input_dimension": 64,
   "f1_score": 0.554,
   "auc_roc": 0.911,
+  "brier_score": 0.0421,
+  "brier_score_uncalibrated": 0.0683,
   "training_data_size": 30000,
+  "training_mode": "FRESH",
   "uploaded_at": "2026-05-13T14:22:01Z"
 }
 ```
 
-`sha256` is the digest of the on-disk `model.onnx`. `feature_schema_version` comes from `load_catalog().schema_version` — see [`FEATURES.md`](./FEATURES.md) for how it's computed.
+`sha256` is the digest of the on-disk `model.onnx`. `feature_schema_version` comes from `load_catalog().schema_version` — see [`FEATURES.md`](./FEATURES.md) for how it's computed. `brier_score` is the *calibrated* probabilistic loss (see [Score calibration](#score-calibration) below); `brier_score_uncalibrated` is the same loss measured against the raw XGBoost output so adopters can see the calibration delta. `training_mode` records which branch ran (FRESH vs CONTINUED).
 
 ### Verifying activation
 
@@ -317,6 +320,8 @@ This is the long-running production form. MLA:
 
 PSI buckets reference: `0–0.10` = no shift, `0.10–0.25` = moderate shift, `>0.25` = significant shift. Adjust based on your traffic pattern — a system that processes 10 req/s reacts very differently from one at 1000 req/s with a 1000-event window.
 
+Defaults can be overridden at runtime through the Sentinel Settings page, which calls `PUT /mla/v1/admin/drift-config`. The PUT body accepts every field listed above plus `autoRetrainEnabled` (kill-switch for the retrain loop) and the training-mode fields documented under [Training mode](#training-mode-fresh--continued) below.
+
 `stats` exposes the live counters:
 
 ```bash
@@ -333,6 +338,64 @@ curl http://localhost:9095/stats | jq
 #   ...
 # }
 ```
+
+---
+
+## Score calibration
+
+XGBoost trained on imbalanced binary data tends to saturate near 0.0 and 1.0 — its raw probabilities are good for *ranking* but poor as *calibrated probabilities*. We address this with isotonic regression:
+
+1. `DataPreprocessor.preprocess` reserves a 10% calibration split out of training data (in addition to validation and test).
+2. After the XGBoost booster fits, `Calibrator.fit(scores_cal, y_cal)` learns a monotone mapping from raw score to empirical fraud rate using `sklearn.isotonic.IsotonicRegression(out_of_bounds="clip")`.
+3. Validation metrics are computed against the *calibrated* scores. Brier score (mean squared error against labels) is recorded both calibrated and uncalibrated so an operator can see the lift.
+
+| Output | Where it lives | Notes |
+|---|---|---|
+| `model.onnx` | `mla-service/models/versions/<ver>/` | The XGBoost booster, unchanged. RDA inferences this. |
+| `model.json` | same dir | XGBoost native dump for A/B in the next retrain. |
+| `model_calibrator.npz` | same dir | Two float arrays: `x_thresholds` + `y_thresholds` from IsotonicRegression. |
+| `meta.json` → `brier_score` | same dir | Calibrated Brier, also persisted to `modelVersions.brierScore` for the registry list. |
+| `meta.json` → `brier_score_uncalibrated` | same dir | Raw Brier — gap to calibrated tells you how saturated the booster was. |
+
+**Open question for adopters:** RDA today reads the raw ONNX score and compares against the active threshold; it does *not* apply the calibrator at inference time. The threshold itself is operator-tunable, so the calibration is effectively a *training-time* signal that surfaces saturation regressions across versions rather than a *runtime* transform. Wire the calibrator into the predict path if you want true probabilities downstream (e.g. for an expected-loss policy).
+
+---
+
+## Training mode (FRESH vs CONTINUED)
+
+The same drift-triggered pipeline can either rebuild the model from scratch or extend the existing booster with additional trees. The choice is one row in `mlaSettings` and applies to the next retrain.
+
+| Mode | Behaviour | When to use |
+|---|---|---|
+| `FRESH` (default) | `XGBClassifier(**params).fit(...)` — full retrain from a fresh booster. | Default. The training data is your ground truth and you want each model to stand on its own. Expensive but unbiased. |
+| `CONTINUED` | `XGBClassifier(n_estimators=continuedTreesPerRound, **params).fit(..., xgb_model=prior_booster)`. New trees graft onto the prior model and learn from its residuals. | Small bursts of new labels, deliberate incremental learning, or when full retraining is too slow. Risks compounding bias if the new data is skewed; the A/B gate still rejects models that don't beat the incumbent. |
+
+If `CONTINUED` is selected but no prior model is on disk (cold start), the trainer logs a warning and falls back to `FRESH` for that run.
+
+Config knobs:
+
+| Field | Type | Bounds | Default |
+|---|---|---|---|
+| `mlaSettings.trainingMode` | `varchar(16)` CHECK in (`FRESH`, `CONTINUED`) | enum | `FRESH` |
+| `mlaSettings.continuedTreesPerRound` | `int` CHECK between 10 and 500 | 10–500 | 50 |
+
+Set via the Sentinel Settings page (the "Training mode" dropdown under the Drift detection card) or directly:
+
+```bash
+curl -X PUT http://localhost/mla/v1/admin/drift-config \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer $JWT" \
+  -d '{
+    "driftF1Threshold": 0.92,
+    "driftPsiThreshold": 0.25,
+    "driftWindowSize": 1000,
+    "autoRetrainEnabled": true,
+    "trainingMode": "CONTINUED",
+    "continuedTreesPerRound": 75
+  }'
+```
+
+The chosen mode is also recorded in `training_metrics["training_mode"]` and persisted to `retrainRuns.metrics` so retrain history shows which mode produced each model.
 
 ---
 
