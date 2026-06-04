@@ -14,6 +14,7 @@ module.exports = {
   },
   rootDir: "./",
   testEnvironment: "node",
+  testPathIgnorePatterns: ["/node_modules/", "/dist/"],
   transform: {
     "^.+\\.(ts|tsx)$": "ts-jest",
   },

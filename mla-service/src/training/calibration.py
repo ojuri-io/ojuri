@@ -59,6 +59,9 @@ class Calibrator:
         iso.X_min_ = float(iso.X_thresholds_.min())
         iso.X_max_ = float(iso.X_thresholds_.max())
         iso.increasing_ = bool(data["increasing"][0])
+        # sklearn's transform() reads f_ (an interp1d built at fit time);
+        # restoring only thresholds is not enough.
+        iso._build_f(iso.X_thresholds_, iso.y_thresholds_)
         calibrator = cls()
         calibrator._iso = iso
         return calibrator
