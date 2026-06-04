@@ -93,7 +93,6 @@ services:
     deploy:
       resources:
         limits:
-          cpus: "4"
           memory: 4G
 
   rda-2:
@@ -160,7 +159,6 @@ services:
     deploy:
       resources:
         limits:
-          cpus: "4"
           memory: 4G
 
   rda-3:
@@ -223,7 +221,6 @@ services:
     deploy:
       resources:
         limits:
-          cpus: "4"
           memory: 4G
 
   # ============================================
