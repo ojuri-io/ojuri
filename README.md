@@ -45,10 +45,16 @@ SMOTE-balanced XGBoost retraining, McNemar significance check before promotion,
 and a replay CLI that runs candidates against the live audit log.
 
 **Real-time latency budget.** ONNX inference on the deployed XGBoost model
-measures p99 ≈ 49 µs (batch=1); end-to-end `POST /v1/predict` measures p99 ≈
-4 ms on a single developer workstation. Circuit breakers around Redis and ONNX
-keep the path degrading instead of failing — predictions still succeed against
-default features when Redis is down.
+measures p99 ≈ 49 µs (batch=1); end-to-end `POST /v1/predict` measures
+p99 ≈ 4 ms uncontended on a single developer workstation. Under
+concurrent load the path is currently event-loop-bound; see
+[`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md#performance-characteristics)
+for the loaded stress profile and benchmarking guidance (the shipped
+NGINX rate limit and idempotency duplicate short-circuit both produce
+misleading numbers in naïve tests — read the caveats before measuring).
+Circuit breakers around Redis and ONNX keep the path degrading instead
+of failing — predictions still succeed against default features when
+Redis is down.
 
 **Operator dashboard included.** Sentinel (Vite + React) ships under
 `frontend/`: live decisions, review queue with overrides, rule editor, model
