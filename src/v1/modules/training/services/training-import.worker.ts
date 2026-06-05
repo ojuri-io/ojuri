@@ -61,7 +61,7 @@ class TrainingImportWorker {
 
   async drain(): Promise<void> {
     if (this.inFlight) return;
-    const job = await this.repo.findOneQueued();
+    const job = await this.repo.claimNextQueued();
     if (!job) return;
     this.inFlight = true;
     try {
@@ -72,7 +72,6 @@ class TrainingImportWorker {
   }
 
   async runJob(job: TrainingJob): Promise<void> {
-    await this.repo.markRunning(job.id);
     try {
       const kind = sourceKind(job.source);
       if (kind === TrainingSourceKind.S3) {
