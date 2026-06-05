@@ -35,7 +35,7 @@
     "lint:fix": "eslint . --ext .ts --fix",
     "knex": "ts-node -r dotenv/config ./node_modules/knex/bin/cli.js",
     "db:migrate:make": "npm run knex -- migrate:make",
-    "db:migrate": "npm run knex -- migrate:latest",
+    "db:migrate": "npm run knex -- migrate:latest && npm run knex -- seed:run",
     "db:migrate:rollback": "npm run knex -- migrate:rollback",
     "db:seed": "npm run knex -- seed:run",
     "seed:load": "ts-node -r dotenv/config scripts/seed-load.ts",

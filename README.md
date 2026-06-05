@@ -236,7 +236,7 @@ The response shape (from `PredictResponseDto`):
     { "code": "AMOUNT_HIGH",  "description": "Transaction amount relative to typical range", "contribution":  0.27, "value": 1500.0 },
     { "code": "VELOCITY_24H", "description": "Transactions in the last 24 hours above baseline", "contribution": -0.05, "value": 4.0 }
   ],
-  "model_version": "default",
+  "model_version": "v1.0",
   "threshold": 0.65,
   "audit_id": "f3d7c0bc-…",
   "latency_ms": 3,
