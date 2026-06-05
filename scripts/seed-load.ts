@@ -53,7 +53,7 @@ function parseArgs(argv: string[]): CliArgs {
   // connect ECONNREFUSED ::1:3000" on every request. Operators can still
   // pass `--url http://localhost:3000` if their host actually serves IPv6.
   const out: CliArgs = {
-    url: "http://127.0.0.1:3000",
+    url: "http://127.0.0.1",
     count: 100,
     concurrency: 8,
     fraudRatio: 0.02,
