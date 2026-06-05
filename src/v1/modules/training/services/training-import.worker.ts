@@ -17,17 +17,36 @@ const log = createServiceLogger("TrainingImportWorker");
 const POLL_INTERVAL_MS = Number(process.env.TRAINING_WORKER_POLL_MS) || 2000;
 const STAGING_BATCH_SIZE = 1000;
 
+function isMissingRelationError(err: unknown): boolean {
+  // Postgres "undefined_table" (42P01) surfaces as a DBError whose
+  // message ends with `relation "X" does not exist`. We hit it when
+  // RDA boots before `npm run db:migrate` — the same condition that
+  // RuntimeSettings / ModelRegistry / Rules already log at WARN.
+  const msg = String((err as { message?: string })?.message ?? err);
+  return msg.includes("does not exist");
+}
+
 @injectable()
 class TrainingImportWorker {
   private timer: NodeJS.Timeout | null = null;
   private inFlight = false;
+  private missingSchemaWarned = false;
 
   constructor(private readonly repo: TrainingJobRepo) {}
 
   start(): void {
     if (this.timer) return;
     this.timer = setInterval(() => {
-      this.drain().catch((err) => log.error("drain", "drain failed", { err: String(err) }));
+      this.drain().catch((err) => {
+        if (isMissingRelationError(err)) {
+          if (!this.missingSchemaWarned) {
+            log.warn("drain", "trainingJobs table not found - skipping poll until migrations run");
+            this.missingSchemaWarned = true;
+          }
+          return;
+        }
+        log.error("drain", "drain failed", { err: String(err) });
+      });
     }, POLL_INTERVAL_MS);
     if (this.timer.unref) this.timer.unref();
     log.success("start", "Training import worker started", { pollMs: POLL_INTERVAL_MS });
@@ -42,7 +61,7 @@ class TrainingImportWorker {
 
   async drain(): Promise<void> {
     if (this.inFlight) return;
-    const job = await this.repo.findOneQueued();
+    const job = await this.repo.claimNextQueued();
     if (!job) return;
     this.inFlight = true;
     try {
@@ -53,7 +72,6 @@ class TrainingImportWorker {
   }
 
   async runJob(job: TrainingJob): Promise<void> {
-    await this.repo.markRunning(job.id);
     try {
       const kind = sourceKind(job.source);
       if (kind === TrainingSourceKind.S3) {
