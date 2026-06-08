@@ -9,6 +9,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **PAA durable edge + node state in Postgres.** New `transactionEdges`
+  table (Knex migration `20260608000001`) holds the directed-edge
+  list; `graphMetadata` finally gets the `firstSeen` / `lastSeen` /
+  `transactionCount` / `totalAmount` / `inDegree` / `outDegree`
+  columns populated alongside the existing pagerank / community /
+  clustering outputs. On boot, PAA hydrates the in-memory
+  `graphology` instance from these tables first and only tails
+  transactions newer than the latest persisted edge timestamp. Rings
+  whose seed edges fall outside the 30 d / 100 k row replay window
+  stop being forgotten across restarts.
+- **PAA singleton runtime guard.** New `paa_group_members` Prometheus
+  gauge that must stay at 1; PAA logs ERROR if a second consumer
+  joins the `pattern-analysis` group. Backstops the compose change
+  for ops scenarios (rolling restart overlap, accidental scale-up,
+  helm-chart drift) where the in-memory graph would otherwise be
+  fragmented across replicas.
+- **Triangle-close recompute trigger.** When a new edge closes a
+  directed 3-cycle (`A → B`, `B → C` already exists, `C → A` already
+  exists), PAA fires `computeNetworkMetrics()` on the next event
+  instead of waiting up to 5 minutes for the scheduled tick. Burst
+  rings whose edges land in a tight window stop being invisible
+  during the gap. Throttled by `TRIANGLE_RECOMPUTE_MIN_INTERVAL_MS`
+  (default `10000`) so a flurry of ring-forming events doesn't
+  thrash the recompute path.
+- **PAA sizing guidance** in `paa-service/README.md`. Covers what a
+  node represents, what actually happens at the `MAX_GRAPH_NODES`
+  cap (silent crash loop when no nodes are stale enough to evict),
+  and the two binding ceilings (~500 TPS CPU, ~1M nodes memory) with
+  a profile-by-profile sizing table from demo through Tier-1.
+
 - **Adopter training-data ingest.** Operators can now upload labelled
   transaction CSVs through the Sentinel "Training imports" page or via
   the file-based API. Upload protocol is chunked (5 MB chunks, SHA-256
@@ -71,6 +101,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **PAA is now a singleton by design.** `paa-2` removed from
+  `docker-compose.yml`; `deploy.replicas: 1` pins the remaining
+  `paa-1` service; Prometheus scrape config and CI log-dump list
+  trimmed accordingly. Reason: PAA holds the transaction graph and
+  velocity windows in process memory, and Kafka partition assignment
+  splits the event stream across replicas — running two means each
+  computes PageRank / Louvain on a partial graph and any ring whose
+  members hash to different partitions becomes invisible. Adopters
+  running >500 TPS will eventually want the externalized-graph
+  deployment profile (separate work) instead of scaling PAA.
+- **PAA `graphMetadata` populated on every event for both sender and
+  receiver.** Previously the trigger was `processedCount % 100 === 0`
+  and only the sender was snapshotted, which dropped 99 % of writes
+  and left pure-receiver nodes (mules, drain points) missing from
+  the table entirely. The flush path also switched from a per-row
+  upsert loop to a single bulk `INSERT … ON CONFLICT … MERGE` per
+  batch.
+- **PAA `pruneOldNodes` switched to event-time clock and an hourly
+  schedule.** Was wall-clock (mis-classifying historical replays as
+  recent) and only cap-driven (so the prune effectively never fired
+  in practice). Now tracks the max observed event timestamp and runs
+  on a 1 h interval in addition to the existing cap path; the cap
+  path still drops the oldest 10 % as a relief valve, but the
+  scheduled path drops everything past the 30 d cutoff.
 - **NGINX `/mla/` proxy hardened for Linux hosts.** The new `location
   /mla/` block defers `host.docker.internal` resolution to request time
   (variable in `proxy_pass` + embedded resolver), and the `nginx`
