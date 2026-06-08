@@ -42,6 +42,135 @@ Grouped by what an adopter would be unblocking. Within each group items
 are roughly priority-ordered; rearrange via PR or issue discussion if
 your deployment needs something else first.
 
+### Scaling beyond the singleton
+
+The current PAA design holds the transaction graph and velocity
+windows in process memory. It works comfortably for adopters under
+~500 TPS sustained and ~1M active users in any 30-day window (see
+`paa-service/README.md` § Sizing). Past that, several things bind in
+order: event-loop saturation, Louvain compute time, then memory.
+The items below are the realistic path for adopters targeting
+Tier-1 mobile-money / large-bank volumes (>5M active users, multi-
+thousand-TPS streams).
+
+- **Externalised graph deployment profile.** Move the edge + node
+  structure out of `graphology` into a server-side graph store
+  (RedisGraph, Memgraph, or Neo4j with GDS). PAA becomes a set of
+  stateless writers partitioned by Kafka key; a separate scheduled
+  worker runs PageRank / Louvain server-side and writes results
+  back into the same Redis hash RDA reads from today. Singleton
+  consistency goes away — replaced by the graph store's
+  transactional guarantees. Operational cost rises (one more
+  stateful service) in exchange for linear ingestion scaling and
+  graphs that fit beyond a single host's RAM.
+- **Hot / cold split.** Cheaper middle ground for adopters who
+  don't want to operate a graph DB. Keep PAA's in-memory graph
+  bounded to the last 24–48 h of activity (small, fast,
+  triangle-close detection stays real-time), and run a nightly
+  batch job over the full transactions history to detect long-
+  running rings and write community membership to a slow-changing
+  Redis cache. RDA reads both; the model sees short-term + long-
+  term signals. Trade: sub-hour ring detection on cross-day rings
+  is lost, but those are the ones a nightly batch catches anyway.
+- **Streaming / incremental community detection.** Replace
+  `graphology-communities-louvain` (full recompute every tick) with
+  a Louvain variant that warm-starts from the previous partition
+  or a streaming algorithm (DynaMo, Streaming Louvain). At million-
+  node scale, warm-starting cuts recompute from minutes to seconds.
+  No maintained JavaScript implementation exists today — needs
+  either a custom port or a worker-process call into a Python /
+  Rust library. The current full-recompute design is the
+  conservative choice but explicitly capped: PageRank ~`O(iters ×
+  (V + E))`, Louvain empirical `O(V log V)` — both run cold every
+  trigger.
+- **Approximate / local centrality.** For per-event ring scoring,
+  personalised PageRank seeded from the dirty edge converges in a
+  bounded neighbourhood — `O(local degree)` instead of `O(V + E)`.
+  Pairs naturally with the existing triangle-close trigger:
+  recompute centrality only for nodes touched by the new edge,
+  cheap enough to fire on every event without the
+  `TRIANGLE_RECOMPUTE_MIN_INTERVAL_MS` throttle.
+- **Configurable velocity history cap.** The
+  `MAX_TRANSACTIONS_PER_USER = 1000` constant in
+  `paa-service/src/services/velocity.service.ts` is currently
+  hard-coded. Surface as `VELOCITY_MAX_RECORDS_PER_USER` env var so
+  adopters with very high-throughput super-agents (running orders
+  of magnitude over the cap per day) can shrink the per-user
+  history to control memory.
+
+### Graph and feature pipeline correctness
+
+Open improvements to the analytics layer that don't strictly need
+high TPS to matter. They're called out separately so adopters
+running smaller deployments can pull them forward when they hit a
+specific gap.
+
+- **Derived community features replace raw `community_id`.**
+  Vanilla Louvain integer labels are non-deterministic across
+  runs, so the raw ID flowing through the ONNX input vector as an
+  ordinal numeric (catalogue index 22, `dtype: uint8`) is at best
+  noise and at worst misleading the model. Replace with
+  `graph_community_size`, `graph_community_decline_rate`, and
+  `graph_community_intra_share` — all stable under relabeling and
+  far more predictive. Requires a model retrain when the catalogue
+  schema bumps, so bundle with whatever drives the next MLA
+  training run.
+- **Middle-node snapshot refresh on triangle close.** When a new
+  edge closes a 3-cycle and triggers a recompute, the sender and
+  receiver of that event get their post-compute snapshots written
+  to Postgres in the same handler — but the third "middle" node of
+  the cycle does not. Its snapshot in `graphMetadata` lags by one
+  outgoing event. Active ring members refresh on their next
+  transaction; pure pass-through nodes can stay stale indefinitely.
+  Cheap fix: surface the middle nodes from `closesDirectedTriangle`
+  and queue them alongside.
+- **Edge weight decay.** Edge `weight` and `totalAmount` only
+  accumulate, never decay. A relationship that was active a year
+  ago but quiet since has the same graph signal as a current one.
+  Add age-weighted decay (half-life ~30 d) so the centrality
+  scores reflect *current* network structure, not lifetime
+  history.
+- **Surface `transactionTypes` as features.** The per-edge
+  `Set<string>` is captured but never read downstream. Promote to
+  features like `pair_has_cashout`, `pair_channel_diversity` so
+  ring signatures (e.g., "every leg is CASH_OUT") become learnable.
+- **Minimum community size and quality gates for Louvain.** Tiny
+  isolated pairs become their own community, indistinguishable
+  from genuinely-meaningful clusters in the integer label. Apply a
+  minimum-size threshold (e.g., communities <3 nodes get assigned
+  community 0 = "no meaningful community"), and surface community
+  modularity as a per-prediction confidence signal.
+- **Graph-poisoning defences.** No edge-weight cap, no minimum-
+  amount filter on graph admission, no edge-age decay (above) —
+  an adversary can inflate a target's PageRank by spraying tiny
+  transactions toward them from controlled accounts. Cheap to add
+  alongside the decay work.
+
+### Operability of high-scale deployments
+
+Items adopters who hit the ceiling need to *notice* before they're
+in production trouble.
+
+- **Alert when scheduled prune finds zero eligible victims.**
+  Today's failure mode is a silent climb to OOM: the cap fires,
+  the prune walks every node looking for `lastSeen < cutoff`,
+  finds none (all users active in last 30 d), and PAA keeps
+  growing. Add a metric `paa_graph_prune_inelligible_total` and a
+  log line at WARN when a prune attempt frees zero slots — that's
+  the precursor to OOM.
+- **Sentinel sizing panel.** Surface `paa_graph_size`,
+  `paa_consumer_lag`, `paa_group_members`, and the velocity-user
+  count as a single "PAA capacity" widget so operators see when
+  they're approaching either ceiling without learning Prometheus.
+- **Manual recompute trigger.** `POST /v1/admin/paa/recompute` for
+  ops to force a `computeNetworkMetrics()` on demand — useful for
+  ring investigations where the operator wants the freshest
+  partition immediately rather than waiting for the next tick.
+- **Dirty-triangle backlog metric.** Counter for how often the
+  triangle-close trigger fired and how many recomputes it caused.
+  Tells operators whether they're getting ring-detection latency
+  benefit or just paying for extra recomputes.
+
 ### Deployment + packaging
 
 - **Helm chart** — Kubernetes-first adopters currently template their own
