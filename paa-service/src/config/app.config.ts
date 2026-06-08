@@ -23,6 +23,7 @@ const appConfig = {
     pagerankDamping: Number(process.env.PAGERANK_DAMPING) || 0.85,
     batchSize: Number(process.env.BATCH_SIZE) || 100,
     maxGraphNodes: Number(process.env.MAX_GRAPH_NODES) || 1000000,
+    triangleRecomputeMinIntervalMs: Number(process.env.TRIANGLE_RECOMPUTE_MIN_INTERVAL_MS) || 10000,
   },
   metrics: {
     port: Number(process.env.METRICS_PORT) || 9090,

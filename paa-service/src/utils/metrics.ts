@@ -14,6 +14,7 @@ class MetricsService {
 
   // Consumer metrics
   private consumerLag!: Gauge<string>;
+  private consumerGroupMembers!: Gauge<string>;
 
   // Redis metrics
   private redisUpdateSuccess!: Counter<string>;
@@ -71,6 +72,12 @@ class MetricsService {
       registers: [this.registry],
     });
 
+    this.consumerGroupMembers = new Gauge({
+      name: "paa_group_members",
+      help: "Number of consumers in the pattern-analysis group. Must always be 1 — PAA holds graph state in-memory; >1 splits partition assignment and breaks PageRank/Louvain.",
+      registers: [this.registry],
+    });
+
     this.redisUpdateSuccess = new Counter({
       name: "paa_redis_updates_success_total",
       help: "Successful Redis updates",
@@ -119,6 +126,10 @@ class MetricsService {
 
   updateConsumerLag(partition: number, lag: number) {
     this.consumerLag.set({ partition: String(partition) }, lag);
+  }
+
+  updateConsumerGroupMembers(count: number) {
+    this.consumerGroupMembers.set(count);
   }
 
   recordRedisUpdateSuccess() {

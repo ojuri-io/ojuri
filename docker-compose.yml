@@ -224,8 +224,17 @@ services:
           memory: 4G
 
   # ============================================
-  # PAA Service Replicas (Pattern Analysis Agent)
-  # Standalone Kafka consumer worker service
+  # PAA Service (Pattern Analysis Agent)
+  # Singleton Kafka consumer.
+  #
+  # DO NOT scale this service. The graph + velocity state live in
+  # process memory; running a second replica under the same Kafka
+  # consumer group splits the partition assignment, so each replica
+  # sees only a subset of edges and PageRank / Louvain run on a
+  # partial graph. A ring whose members hash to different partitions
+  # becomes invisible. The worker emits an ERROR and a
+  # `paa_group_members` metric > 1 if a second member joins the
+  # `pattern-analysis` group.
   # ============================================
   paa-1:
     build:
@@ -268,52 +277,7 @@ services:
       - ojuri-network
     restart: unless-stopped
     deploy:
-      resources:
-        limits:
-          cpus: "2"
-          memory: 8G
-
-  paa-2:
-    build:
-      context: ./paa-service
-      dockerfile: Dockerfile
-    container_name: ojuri-paa-2
-    environment:
-      - NODE_ENV=${NODE_ENV:-development}
-      - APP_NAME=ojuri-paa-2
-      - METRICS_PORT=9090
-      - REDIS_HOST=redis
-      - REDIS_PORT=6379
-      - REDIS_PASSWORD=${REDIS_PASSWORD:-}
-      # Use the INTERNAL listener (advertised as kafka:29092) for
-      # container-to-container traffic. Port 9092 is the EXTERNAL
-      # listener that advertises localhost:9092 for host clients —
-      # which from inside this container resolves to its own loopback
-      # and produces the "Consumer crashed → restart" flap.
-      - KAFKA_BROKERS=kafka:29092
-      - KAFKA_TOPIC=transactions.completed
-      - KAFKA_CONSUMER_GROUP=pattern-analysis
-      - KAFKA_CLIENT_ID=paa-2
-      - LOG_LEVEL=info
-      - DB_CLIENT=pg
-      - DB_URL=postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-postgres}@postgres:5432/${POSTGRES_DB:-fraud_db}
-      - GRAPH_UPDATE_INTERVAL=300000
-      - PAGERANK_DAMPING=0.85
-      - BATCH_SIZE=100
-      - MAX_GRAPH_NODES=1000000
-    ports:
-      - "9093:9090"
-    depends_on:
-      redis:
-        condition: service_healthy
-      kafka:
-        condition: service_healthy
-      postgres:
-        condition: service_healthy
-    networks:
-      - ojuri-network
-    restart: unless-stopped
-    deploy:
+      replicas: 1
       resources:
         limits:
           cpus: "2"

@@ -66,7 +66,7 @@ The dev server proxies `/v1/*` → `VITE_RDA_URL` (default `http://localhost:300
 ```bash
 docker compose up -d redis postgres kafka zookeeper                          # infra only
 docker compose -f docker-compose.yml -f docker-compose.dev.yml up rda-dev paa-dev --build   # dev with hot-reload
-docker compose up --build                                                    # full prod stack (3× RDA, 2× PAA, NGINX, Prometheus, Grafana)
+docker compose up --build                                                    # full prod stack (3× RDA, 1× PAA singleton, NGINX, Prometheus, Grafana)
 ```
 
 Postgres in Docker listens on **5433** (not 5432) to avoid host conflicts.
@@ -86,7 +86,9 @@ Both TS services use `tsyringe` with `reflect-metadata` imported as the very fir
 ### Real-time path (RDA) vs async path (PAA)
 RDA's `predict` flow is: Redis feature lookup → ONNX inference → Kafka publish. **Features in Redis are stale until PAA writes them.** On Redis cache miss, RDA falls back to default features and logs a degraded-accuracy warning — this is expected behavior, not a bug.
 
-PAA is the writer: it consumes `transactions.completed`, updates an in-memory transaction graph (`graphology`) and velocity windows, then queues batched writes to Redis and Postgres. Graph metadata is persisted only every 100 events (see `processedCount % 100` in `paa-service/src/worker.ts`). Redis writes feed the next RDA prediction.
+PAA is the writer: it consumes `transactions.completed`, updates an in-memory transaction graph (`graphology`) and velocity windows, then queues batched writes to Redis and Postgres. Graph metadata is snapshotted for both sender and receiver on every event into a Map keyed by `userId`, then bulk-upserted to Postgres on the standard batch flush (size 100 / 10 s) — the Map dedupes hot users so Postgres pressure tracks unique-user rate, not event rate. Redis writes feed the next RDA prediction.
+
+**PAA is a singleton — do not scale it.** The graph and velocity state live in process memory. A second member in the `pattern-analysis` consumer group splits the partition assignment, so each replica runs PageRank/Louvain on a partial graph and rings whose members hash to different partitions become invisible. The worker logs an ERROR and the `paa_group_members` Prometheus gauge exceeds 1 if a second instance ever joins the group.
 
 ### Blocked-transaction investigation path
 When `PredictService` returns `decision === "DECLINE"`, RDA publishes the same `TransactionEvent` to **two** topics fire-and-forget: the primary `transactions.completed` (consumed by PAA + MLA, partitioned by `sender_id` for per-user ordering) and `transactions.blocked` (consumed only by FIA, partitioned by `transaction_id` so a single high-fraud sender does not pin all FIA work to one partition). The dual publish is intentional — FIA runs at LLM-inference latencies (seconds) and must never share a queue with PAA's millisecond pipeline.

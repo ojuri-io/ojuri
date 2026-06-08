@@ -48,27 +48,36 @@ async function processTransaction(event: TransactionEvent): Promise<void> {
         // 3. Calculate velocity metrics for sender
         const velocityMetrics = velocityService.calculateMetrics(event.sender_id, event.timestamp);
 
-        // 4. Get network features for sender
-        const networkFeatures = graphService.getNetworkFeatures(event.sender_id);
+        const senderSnapshot = graphService.getNodeSnapshot(event.sender_id);
+        const receiverSnapshot = graphService.getNodeSnapshot(event.receiver_id);
+        const edgeSnapshot = graphService.getEdgeSnapshot(event.sender_id, event.receiver_id);
 
-        // 5. Combine features and queue Redis update
         const combinedFeatures: CombinedFeatures = {
           ...velocityMetrics,
-          ...networkFeatures,
+          ...(senderSnapshot ?? {
+            pagerank: 0,
+            clusteringCoef: 0,
+            communityId: 0,
+            degreeCentrality: 0,
+            inDegree: 0,
+            outDegree: 0,
+          }),
           updated_at: Date.now(),
         };
 
         log.debug("processTransaction", "Queueing Redis feature update");
         redisUpdateService.queueUpdate(event.sender_id, combinedFeatures);
 
-        // 6. Queue transaction for PostgreSQL persistence
         log.debug("processTransaction", "Queueing PostgreSQL persistence");
         postgresService.queueTransaction(event);
 
-        // 7. Queue graph metadata update (less frequently)
-        if (processedCount % 100 === 0) {
-          postgresService.queueGraphMetadata(event.sender_id, networkFeatures);
-        }
+        // Snapshot both ends of the edge + the edge itself on every
+        // event. Buffers are Map-keyed so hot users/edges dedupe
+        // naturally — Postgres pressure stays bounded by the batch
+        // size / flush interval, not by the event rate.
+        if (senderSnapshot) postgresService.queueGraphMetadata(event.sender_id, senderSnapshot);
+        if (receiverSnapshot) postgresService.queueGraphMetadata(event.receiver_id, receiverSnapshot);
+        if (edgeSnapshot) postgresService.queueEdge(edgeSnapshot);
 
         processedCount++;
 
@@ -96,7 +105,22 @@ async function loadHistoricalData(): Promise<void> {
   log.entry("loadHistoricalData", "Loading historical data from PostgreSQL");
 
   try {
-    const { transactions } = await postgresService.loadGraphData();
+    // Prefer the durable edge list — it carries history older than
+    // the transactions replay window. Fall back to (or tail with) a
+    // transactions replay when the edge table is empty or stale.
+    const state = await postgresService.loadGraphState();
+    let tailSince: number | undefined;
+
+    if (state.edges.length > 0) {
+      graphService.hydrateEdges(state.edges);
+      graphService.hydrateNodeState(state.nodeState);
+      // Tail any events newer than the latest persisted edge so we
+      // catch up on writes that landed between the last PAA shutdown
+      // and now.
+      tailSince = state.latestEdgeTimestamp + 1;
+    }
+
+    const { transactions } = await postgresService.loadGraphData(tailSince);
 
     for (const transaction of transactions) {
       graphService.addTransaction(transaction);
@@ -109,6 +133,9 @@ async function loadHistoricalData(): Promise<void> {
     const velocityStats = velocityService.getStats();
 
     log.success("loadHistoricalData", "Historical data loaded", {
+      hydratedEdges: state.edges.length,
+      hydratedNodes: state.nodeState.length,
+      tailedTransactions: transactions.length,
       graphNodes: graphStats.nodes,
       graphEdges: graphStats.edges,
       velocityUsers: velocityStats.totalUsers,
@@ -157,9 +184,6 @@ function startMetricsServer(): http.Server {
   return server;
 }
 
-/**
- * Start lag monitoring
- */
 function startLagMonitoring(): void {
   setInterval(async () => {
     if (isShuttingDown) return;
@@ -181,6 +205,35 @@ function startLagMonitoring(): void {
       });
     }
   }, 30000);
+}
+
+// PAA holds the graph + velocity windows in process memory. A second
+// member in the consumer group splits the partition assignment, so
+// each replica's PageRank/Louvain runs on a partial graph and rings
+// crossing partitions become invisible. We don't refuse to start
+// (rolling restarts briefly overlap by design) — we surface the
+// breach loudly so ops sees it.
+function startSingletonGuard(): void {
+  const tick = async () => {
+    if (isShuttingDown) return;
+    try {
+      const { count, clientIds } = await kafkaConsumer.describeGroupMembers();
+      metricsService.updateConsumerGroupMembers(count);
+      if (count > 1) {
+        log.error("singletonGuard", "Multiple consumers in pattern-analysis group — graph state will desync", {
+          count,
+          clientIds,
+        });
+      }
+    } catch (err) {
+      log.warn("singletonGuard", "Failed to describe consumer group", {
+        error: err instanceof Error ? err.message : String(err),
+      });
+    }
+  };
+
+  setTimeout(tick, 15000);
+  setInterval(tick, 60000);
 }
 
 /**
@@ -235,6 +288,7 @@ async function main(): Promise<void> {
 
     // Start lag monitoring
     startLagMonitoring();
+    startSingletonGuard();
 
     log.success("main", "PAA worker started successfully");
 

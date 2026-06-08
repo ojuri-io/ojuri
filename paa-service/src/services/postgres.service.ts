@@ -1,13 +1,14 @@
 import { createServiceLogger, TraceContext } from "@utils/service-logger";
 import { metricsService } from "@utils/metrics";
 import { getKnexInstance } from "./database";
-import { TransactionEvent, NetworkFeatures } from "./types";
+import { TransactionEvent, NodeSnapshot, EdgeSnapshot } from "./types";
 
 const log = createServiceLogger("PostgresService");
 
 class PostgresService {
   private transactionBuffer: TransactionEvent[] = [];
-  private graphMetadataBuffer: Map<string, NetworkFeatures & { updatedAt: Date }> = new Map();
+  private graphMetadataBuffer: Map<string, NodeSnapshot> = new Map();
+  private edgeBuffer: Map<string, EdgeSnapshot> = new Map();
   private flushInterval: NodeJS.Timeout | null = null;
   private readonly batchSize = 100;
   private readonly flushIntervalMs = 10000;
@@ -24,14 +25,19 @@ class PostgresService {
     }
   }
 
-  queueGraphMetadata(userId: string, features: NetworkFeatures): void {
-    this.graphMetadataBuffer.set(userId, {
-      ...features,
-      updatedAt: new Date(),
-    });
+  queueGraphMetadata(userId: string, snapshot: NodeSnapshot): void {
+    this.graphMetadataBuffer.set(userId, snapshot);
 
     if (this.graphMetadataBuffer.size >= this.batchSize) {
       this.flushGraphMetadata();
+    }
+  }
+
+  queueEdge(edge: EdgeSnapshot): void {
+    this.edgeBuffer.set(`${edge.senderId}|${edge.receiverId}`, edge);
+
+    if (this.edgeBuffer.size >= this.batchSize) {
+      this.flushEdges();
     }
   }
 
@@ -149,17 +155,21 @@ class PostgresService {
 
     try {
       const knex = getKnexInstance();
-      const records = Array.from(metadata.entries()).map(([userId, features]) => ({
-        userId: userId,
-        pagerank: features.pagerank,
-        clusteringCoefficient: features.clusteringCoef,
-        communityId: features.communityId,
-        degreeCentrality: features.degreeCentrality,
+      const records = Array.from(metadata.entries()).map(([userId, snap]) => ({
+        userId,
+        pagerank: snap.pagerank,
+        clusteringCoefficient: snap.clusteringCoef,
+        communityId: snap.communityId,
+        degreeCentrality: snap.degreeCentrality,
+        inDegree: snap.inDegree,
+        outDegree: snap.outDegree,
+        firstSeen: new Date(snap.firstSeen),
+        lastSeen: new Date(snap.lastSeen),
+        transactionCount: snap.transactionCount,
+        totalAmount: snap.totalAmount,
       }));
 
-      for (const record of records) {
-        await knex("graphMetadata").insert(record).onConflict("userId").merge();
-      }
+      await knex("graphMetadata").insert(records).onConflict("userId").merge();
 
       metricsService.recordPostgresInsertSuccess();
       log.success("flushGraphMetadata", "Graph metadata flushed to database", { count: records.length });
@@ -168,39 +178,144 @@ class PostgresService {
         error: err instanceof Error ? err.message : String(err),
       });
       metricsService.recordPostgresInsertError();
-      for (const [userId, features] of metadata) {
-        this.graphMetadataBuffer.set(userId, features);
+      for (const [userId, snap] of metadata) {
+        this.graphMetadataBuffer.set(userId, snap);
+      }
+    }
+  }
+
+  async flushEdges(): Promise<void> {
+    if (this.edgeBuffer.size === 0) return;
+
+    const edges = new Map(this.edgeBuffer);
+    this.edgeBuffer.clear();
+
+    try {
+      const knex = getKnexInstance();
+      const records = Array.from(edges.values()).map((e) => ({
+        senderId: e.senderId,
+        receiverId: e.receiverId,
+        weight: e.weight,
+        totalAmount: e.totalAmount,
+        firstTransaction: e.firstTransaction,
+        lastTransaction: e.lastTransaction,
+        transactionTypes: JSON.stringify(e.transactionTypes),
+      }));
+
+      await knex("transactionEdges")
+        .insert(records)
+        .onConflict(["senderId", "receiverId"])
+        .merge();
+
+      metricsService.recordPostgresInsertSuccess();
+      log.success("flushEdges", "Edges flushed to database", { count: records.length });
+    } catch (err) {
+      log.error("flushEdges", "Failed to flush edges to database", {
+        error: err instanceof Error ? err.message : String(err),
+      });
+      metricsService.recordPostgresInsertError();
+      for (const [key, e] of edges) {
+        this.edgeBuffer.set(key, e);
       }
     }
   }
 
   private startPeriodicFlush(): void {
     this.flushInterval = setInterval(async () => {
-      await Promise.all([this.flushTransactions(), this.flushGraphMetadata()]);
+      await Promise.all([
+        this.flushTransactions(),
+        this.flushGraphMetadata(),
+        this.flushEdges(),
+      ]);
     }, this.flushIntervalMs);
   }
 
-  async loadGraphData(): Promise<{ transactions: TransactionEvent[] }> {
+  // Returns the durable edge list along with each user's last
+  // observed node state, so PAA can boot without depending on the
+  // 30-day transactions replay. The caller still tails any
+  // transactions newer than `latestEdgeTimestamp` to catch up.
+  async loadGraphState(): Promise<{
+    edges: EdgeSnapshot[];
+    nodeState: Array<{ userId: string; firstSeen: number; lastSeen: number; transactionCount: number; totalAmount: number }>;
+    latestEdgeTimestamp: number;
+  }> {
+    const knex = getKnexInstance();
+    try {
+      const edgeRows = await knex("transactionEdges").select("*");
+      const nodeRows = await knex("graphMetadata").select(
+        "userId",
+        "firstSeen",
+        "lastSeen",
+        "transactionCount",
+        "totalAmount"
+      );
+
+      const edges: EdgeSnapshot[] = edgeRows.map((r: any) => ({
+        senderId: r.senderId,
+        receiverId: r.receiverId,
+        weight: Number(r.weight),
+        totalAmount: parseFloat(r.totalAmount),
+        firstTransaction: Number(r.firstTransaction),
+        lastTransaction: Number(r.lastTransaction),
+        transactionTypes: Array.isArray(r.transactionTypes)
+          ? r.transactionTypes
+          : typeof r.transactionTypes === "string"
+            ? JSON.parse(r.transactionTypes)
+            : [],
+      }));
+
+      const nodeState = nodeRows
+        .filter((r: any) => r.firstSeen || r.lastSeen)
+        .map((r: any) => ({
+          userId: r.userId,
+          firstSeen: r.firstSeen ? new Date(r.firstSeen).getTime() : 0,
+          lastSeen: r.lastSeen ? new Date(r.lastSeen).getTime() : 0,
+          transactionCount: Number(r.transactionCount) || 0,
+          totalAmount: parseFloat(r.totalAmount) || 0,
+        }));
+
+      const latestEdgeTimestamp = edges.reduce(
+        (max, e) => (e.lastTransaction > max ? e.lastTransaction : max),
+        0
+      );
+
+      log.success("loadGraphState", "Graph state loaded from database", {
+        edges: edges.length,
+        nodes: nodeState.length,
+        latestEdgeTimestamp,
+      });
+
+      return { edges, nodeState, latestEdgeTimestamp };
+    } catch (err) {
+      log.error("loadGraphState", "Failed to load graph state from database", {
+        error: err instanceof Error ? err.message : String(err),
+      });
+      return { edges: [], nodeState: [], latestEdgeTimestamp: 0 };
+    }
+  }
+
+  async loadGraphData(sinceTimestamp?: number): Promise<{ transactions: TransactionEvent[] }> {
     try {
       const knex = getKnexInstance();
       const thirtyDaysAgo = Date.now() - 30 * 24 * 60 * 60 * 1000;
+      const cutoff = sinceTimestamp ?? thirtyDaysAgo;
 
-      // Cap the cold-start replay so a 30-day window on a 50k-txn/day
-      // deployment doesn't OOM the worker (1.5M rows). Override via env
-      // when the host has enough RAM to absorb a larger window.
+      // Cap the replay so a wide window on a busy deployment doesn't
+      // OOM the worker. Override via env when the host has the RAM.
       const historicalLimit = Math.max(
         Number(process.env.HISTORICAL_LOAD_LIMIT) || 100_000,
         1_000
       );
 
       const transactions = await knex("transactions")
-        .where("timestamp", ">=", thirtyDaysAgo)
+        .where("timestamp", ">=", cutoff)
         .orderBy("timestamp", "asc")
         .limit(historicalLimit);
 
       log.success("loadGraphData", "Graph data loaded from database", {
         transactionCount: transactions.length,
         historicalLimit,
+        sinceTimestamp: cutoff,
       });
 
       return {
@@ -231,7 +346,7 @@ class PostgresService {
       clearInterval(this.flushInterval);
       this.flushInterval = null;
     }
-    await Promise.all([this.flushTransactions(), this.flushGraphMetadata()]);
+    await Promise.all([this.flushTransactions(), this.flushGraphMetadata(), this.flushEdges()]);
   }
 }
 

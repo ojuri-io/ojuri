@@ -2,6 +2,7 @@ export enum DB_TABLES {
   MODULES = "modules",
   AUDIT_TRAILS = "auditTrails",
   TRANSACTIONS = "transactions",
+  TRANSACTION_EDGES = "transactionEdges",
   GRAPH_METADATA = "graphMetadata",
   VELOCITY_SNAPSHOTS = "velocitySnapshots",
   FRAUD_ALERTS = "fraudAlerts",

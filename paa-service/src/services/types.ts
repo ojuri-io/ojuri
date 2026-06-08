@@ -83,6 +83,39 @@ export interface NetworkFeatures {
 }
 
 /**
+ * Per-user node state in the transaction graph. Mirrors the
+ * non-metric attributes of graphology's NodeAttributes so PAA can
+ * snapshot a node's history independently of the (more expensive)
+ * PageRank/Louvain recompute.
+ */
+export interface NodeState {
+  firstSeen: number;
+  lastSeen: number;
+  transactionCount: number;
+  totalAmount: number;
+}
+
+/**
+ * Combined node snapshot (state + metrics) persisted to graphMetadata.
+ */
+export interface NodeSnapshot extends NetworkFeatures, NodeState {}
+
+/**
+ * Directed edge snapshot persisted to transactionEdges. Drives
+ * boot-time graph hydration so restarts retain the edge structure
+ * older than the transactions replay window.
+ */
+export interface EdgeSnapshot {
+  senderId: string;
+  receiverId: string;
+  weight: number;
+  totalAmount: number;
+  firstTransaction: number;
+  lastTransaction: number;
+  transactionTypes: string[];
+}
+
+/**
  * Velocity metrics for a user
  */
 export interface VelocityMetrics {

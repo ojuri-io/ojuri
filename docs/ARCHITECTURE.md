@@ -532,9 +532,13 @@ The shipped `docker-compose.yml` runs the reference production stack:
 
 - **NGINX** on host port 80 in front of three RDA replicas (`rda-1`,
   `rda-2`, `rda-3`), each capped at 1 CPU / 4 GB.
-- **Two PAA replicas** (`paa-1`, `paa-2`) under consumer group
-  `pattern-analysis`, each capped at 2 CPU / 8 GB. Metrics on host ports
-  9091 / 9092.
+- **One PAA instance** (`paa-1`) in consumer group `pattern-analysis`,
+  capped at 2 CPU / 8 GB. Metrics on host port 9091. PAA is a singleton
+  by design: the graph + velocity windows live in process memory, so
+  a second member in the consumer group would split partition
+  assignment and run PageRank/Louvain on a partial graph. The worker
+  exposes a `paa_group_members` gauge that must stay at 1; >1 is logged
+  at ERROR.
 - **One FIA** instance gated behind the `fia` Compose profile (opt in with
   `docker compose --profile fia up -d fia`). The gate exists because the
   Phi-3 weights are ~7.6 GB and the `torch`/`transformers`/`accelerate`

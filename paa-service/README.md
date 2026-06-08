@@ -17,10 +17,12 @@ PAA is down; Redis features just go stale until PAA catches up.
 | Postgres writes (graphMetadata, velocitySnapshots) | `src/services/postgres.service.ts` |
 | Inline health + metrics HTTP server | `src/worker.ts` |
 
-Graph metadata is persisted every 100 events (`processedCount % 100`
-in `worker.ts`) — full per-message persistence would dominate write
-latency. Redis writes flush on every batch so RDA's next prediction
-sees the freshest features.
+Graph metadata is snapshotted for both sender and receiver on every
+event into an in-memory Map keyed by `userId`, then bulk-upserted to
+Postgres on the standard batch flush (size 100 or 10 s). The Map
+dedupes hot users so write pressure stays bounded by the unique-user
+rate, not the event rate. Redis writes flush on the same cadence so
+RDA's next prediction sees the freshest features.
 
 The Redis wire format uses the canonical catalogue feature names
 (`graph_pagerank`, `pair_time_since_last_send`, `amount_mean_30d`,
@@ -60,8 +62,12 @@ which maps to `src/*`).
 | `BATCH_SIZE` | `100` | Postgres batch flush size |
 | `MAX_GRAPH_NODES` | `1000000` | LRU cap on in-memory graph |
 
-In docker-compose PAA listens on container port `9090`, published as
-host `9091` (`paa-1`) and `9092` (`paa-2`).
+In docker-compose PAA is a singleton (`paa-1`) listening on container
+port `9090`, published as host `9091`. Do not scale this service —
+the graph + velocity state are in-memory, so a second consumer in
+the `pattern-analysis` group would split the partition assignment and
+fragment graph algorithms across replicas. The `paa_group_members`
+metric must stay at 1.
 
 ## Health endpoints
 
