@@ -98,9 +98,11 @@ docker compose up -d                        # builds RDA on first run (a few min
 npm install && npm run db:migrate           # migration prints a one-time admin password
 ````
 
-That brings up Postgres, Redis, Kafka, three RDA replicas behind NGINX, two
-PAA workers, and the Prometheus/Grafana stack. FIA is gated behind a profile
-because it carries ~7.6 GB of Phi-3 weights — opt in with
+That brings up Postgres, Redis, Kafka, three RDA replicas behind NGINX, the
+PAA singleton worker (`paa_group_members` must stay at 1 — see
+[`paa-service/README.md`](paa-service/README.md) for the rationale),
+and the Prometheus/Grafana stack. FIA is gated behind a profile because
+it carries ~7.6 GB of Phi-3 weights — opt in with
 `docker compose --profile fia up -d fia` when you have the disk and RAM.
 
 > Make sure the Docker daemon is running before `docker compose up -d` —
@@ -320,7 +322,78 @@ Full system notes, per-service responsibilities, and data-flow diagrams live in
 - [Sentinel frontend](docs/FRONTEND.md) — layout, auth, offline demo mode
 - [Roadmap](ROADMAP.md) — what's planned next, what's out of scope
 - [Changelog](CHANGELOG.md) — per-release history
+- [Versioning policy](VERSIONING.md) — SemVer, lockstep across all five services, pinning recommendation
+- [Upgrading](UPGRADING.md) — major-version upgrade paths (none yet — v1 is the initial release)
+- [Security policy](SECURITY.md) — supported versions, disclosure channel
 - Service-level READMEs: [`paa-service/`](paa-service/), [`mla-service/`](mla-service/README.md), [`fia-service/`](fia-service/README.md), [`frontend/`](frontend/README.md)
+
+---
+
+## Releases
+
+Ojuri ships as a single tagged release that applies to all five
+services — RDA, PAA, MLA, FIA, and Sentinel — in lockstep. Each
+release publishes Docker images to GHCR under
+`ghcr.io/ojuri-io/<service>` with both an exact-version tag
+(`:v1.4.2`) and a floating major tag (`:v1`). See
+[`VERSIONING.md`](VERSIONING.md) for the full policy.
+
+### Pin to `:v1` in production
+
+Adopters running from the published images should pin to the
+floating major tag in their compose file or Helm values:
+
+````yaml
+# Pin to :v1 to receive bug-fix and feature releases automatically.
+# Breaking changes ship as :v2 and never land here without you
+# explicitly bumping. See VERSIONING.md.
+services:
+  rda:
+    image: ghcr.io/ojuri-io/rda:v1
+  paa:
+    image: ghcr.io/ojuri-io/paa:v1
+  mla:
+    image: ghcr.io/ojuri-io/mla:v1
+  fia:
+    image: ghcr.io/ojuri-io/fia:v1
+  sentinel:
+    image: ghcr.io/ojuri-io/sentinel:v1
+````
+
+If you need stricter pinning (regulated environments, certified
+builds), use the exact version (`:v1.4.2`) or the image digest.
+You then take on the responsibility of upgrading manually for
+each release.
+
+### Upgrading
+
+**Docker adopters** (using the published images):
+
+````bash
+docker compose pull
+docker compose up -d
+````
+
+**Source adopters** (building from a `git clone`):
+
+````bash
+git pull
+docker compose build
+docker compose up -d
+````
+
+Read the [`CHANGELOG.md`](CHANGELOG.md) entry for any minor or
+major bump before deploying — even though minor releases are
+designed to be safe, the changelog often calls out new env
+variables you may want to set explicitly. Major bumps require
+reading [`UPGRADING.md`](UPGRADING.md).
+
+### Get notified of releases
+
+Click **Watch → Custom → Releases** on the
+[GitHub repository](https://github.com/ojuri-io/ojuri) to receive
+an email whenever a new tag is published. Security advisories use
+the same notification channel.
 
 ---
 
