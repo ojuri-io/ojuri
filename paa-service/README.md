@@ -76,11 +76,21 @@ memory. Two ceilings matter, and they bind in different orders for
 different adopters:
 
 - **Throughput**: how many Kafka events the single consumer can chew
-  per second. The Node.js event loop, per-event triangle-close
-  detection on high-degree hubs, and the per-event Map.set into the
-  Postgres/Redis write buffers all bound this. Practical ceiling
-  on commodity hardware is **~500 TPS sustained**. Past that, Kafka
-  consumer lag grows without bound.
+  per second. Three things bind it: (a) per-event triangle-close
+  detection, which is `O(out_degree(receiver))` and gets expensive
+  on **super-agent receivers** (cash-out hubs with 10k+
+  counterparties), (b) the synchronous `computeNetworkMetrics`
+  recompute, which blocks the event loop for hundreds of ms on a
+  100k-node graph and seconds on a 1M-node graph, (c) Node.js
+  event-loop and Map.set overhead into the Postgres/Redis write
+  buffers. Honest range on commodity hardware:
+  **~1–2k TPS sustained** when the graph is below ~100k nodes
+  and receivers have low out-degree; **~200–500 TPS** past ~500k
+  nodes or when high-degree hubs dominate; **<200 TPS** past
+  ~1M nodes where the synchronous recompute starts blocking
+  event-loop time at >10 %. Numbers are estimates from code-shape
+  analysis, not measured benchmarks — re-measure on your own
+  hardware before quoting them externally.
 - **Memory**: how many unique nodes + edges fit in RAM. Each node
   costs ~250 bytes; each edge ~300 bytes; velocity history ~2 KB per
   active user. Default `MAX_GRAPH_NODES=1000000` lines up roughly
@@ -121,9 +131,9 @@ happened; **silent degradation is the default failure mode here.**
 |---|---|---|---|
 | Demo / dev | <10 | <10k | Defaults are fine |
 | Small fintech | <50 | <100k | Defaults are fine |
-| Mid-size lender / regional MMO | <500 | <1M | Defaults are fine; watch `paa_consumer_lag` and `paa_graph_size{type="nodes"}` |
-| Large MMO | <500 TPS but >1M active users | 1–5M | Bump `MAX_GRAPH_NODES` proportionally **and** the PAA `memory` limit in `docker-compose.yml` (rule of thumb: +5–8 GB per additional million nodes) |
-| Tier-1 (M-Pesa-scale) | >500 TPS or >5M active users | Either bound exceeded | The singleton design ceases to be appropriate; externalize the graph (RedisGraph / Neo4j / Memgraph) with multiple PAA writers and a separate scheduled community-detection worker. Out of scope for this README. |
+| Mid-size lender / regional MMO | <1–2k typical, <500 with super-agents | <500k | Defaults are fine; watch `paa_consumer_lag` and `paa_graph_size{type="nodes"}` |
+| Large MMO | 1–2k TPS but >500k active users | 500k–5M | Bump `MAX_GRAPH_NODES` proportionally **and** the PAA `memory` limit in `docker-compose.yml` (rule of thumb: +5–8 GB per additional million nodes). Recompute pause becomes the next ceiling. |
+| Tier-1 (M-Pesa-scale) | >2k TPS or >5M active users | Either bound exceeded | The singleton design ceases to be appropriate; externalize the graph (RedisGraph / Neo4j / Memgraph) with multiple PAA writers and a separate scheduled community-detection worker. Out of scope for this README. |
 
 Monitor `paa_graph_size{type="nodes"}` and `paa_consumer_lag` from
 Prometheus — the first warns of memory pressure, the second of CPU

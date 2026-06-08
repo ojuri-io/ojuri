@@ -45,9 +45,12 @@ your deployment needs something else first.
 ### Scaling beyond the singleton
 
 The current PAA design holds the transaction graph and velocity
-windows in process memory. It works comfortably for adopters under
-~500 TPS sustained and ~1M active users in any 30-day window (see
-`paa-service/README.md` § Sizing). Past that, several things bind in
+windows in process memory. It works comfortably for adopters in the
+1–2k TPS sustained range with graphs below ~500k nodes; throughput
+drops toward 200–500 TPS once high-degree receiver hubs dominate or
+the graph exceeds ~500k nodes, and the memory ceiling sits around
+~1M active users in any 30-day window (see `paa-service/README.md`
+§ Sizing for the full breakdown). Past that, several things bind in
 order: event-loop saturation, Louvain compute time, then memory.
 The items below are the realistic path for adopters targeting
 Tier-1 mobile-money / large-bank volumes (>5M active users, multi-

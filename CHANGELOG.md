@@ -36,8 +36,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **PAA sizing guidance** in `paa-service/README.md`. Covers what a
   node represents, what actually happens at the `MAX_GRAPH_NODES`
   cap (silent crash loop when no nodes are stale enough to evict),
-  and the two binding ceilings (~500 TPS CPU, ~1M nodes memory) with
-  a profile-by-profile sizing table from demo through Tier-1.
+  and the two binding ceilings (1–2k TPS sustained typical, dropping
+  toward 200–500 with high-degree receiver hubs or graphs past ~500k
+  nodes; ~1M nodes memory) with a profile-by-profile sizing table
+  from demo through Tier-1.
 
 - **Adopter training-data ingest.** Operators can now upload labelled
   transaction CSVs through the Sentinel "Training imports" page or via
@@ -109,8 +111,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   splits the event stream across replicas — running two means each
   computes PageRank / Louvain on a partial graph and any ring whose
   members hash to different partitions becomes invisible. Adopters
-  running >500 TPS will eventually want the externalized-graph
-  deployment profile (separate work) instead of scaling PAA.
+  running past the singleton's sustained-throughput ceiling
+  (typically >2k TPS, sooner for graphs >500k nodes or when high-
+  degree receiver hubs dominate) will eventually want the
+  externalised-graph deployment profile (separate work) instead of
+  scaling PAA.
 - **PAA `graphMetadata` populated on every event for both sender and
   receiver.** Previously the trigger was `processedCount % 100 === 0`
   and only the sender was snapshotted, which dropped 99 % of writes
