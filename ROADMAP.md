@@ -29,7 +29,7 @@ At launch (June 7, 2026) Ojuri ships:
   browser, audit log, saved reports with CSV/JSON export,
   investigations + conversational thread, users + roles, service health.
 - **Adoption tooling** — synthetic-data load generator, decision replay
-  CLI, full Docker Compose stack (NGINX + 3× RDA + 2× PAA + Postgres +
+  CLI, full Docker Compose stack (NGINX + 3× RDA + 1× PAA singleton + Postgres +
   Redis + Kafka + Prometheus + Grafana, with FIA gated behind a Compose
   profile so first boot is fast).
 
@@ -46,7 +46,7 @@ your deployment needs something else first.
 
 - **Helm chart** — Kubernetes-first adopters currently template their own
   manifests off `docker-compose.yml`. A first-party chart with sane
-  defaults for the three RDA replicas, two PAA workers, the FIA opt-in,
+  defaults for the three RDA replicas, the PAA singleton, the FIA opt-in,
   and the Postgres / Redis / Kafka externals is the highest-leverage
   follow-up on this list.
 - **Terraform module** — companion to the Helm chart for cloud-resource

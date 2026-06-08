@@ -160,6 +160,22 @@ class KafkaConsumerService {
     return this.isConnected;
   }
 
+  async describeGroupMembers(): Promise<{ count: number; clientIds: string[] }> {
+    const admin = this.kafka.admin();
+    try {
+      await admin.connect();
+      const description = await admin.describeGroups([appConfig.kafka.consumerGroup]);
+      const group = description.groups.find((g) => g.groupId === appConfig.kafka.consumerGroup);
+      const members = group?.members ?? [];
+      return {
+        count: members.length,
+        clientIds: members.map((m) => m.clientId),
+      };
+    } finally {
+      await admin.disconnect().catch(() => {});
+    }
+  }
+
   async getLag(): Promise<Map<number, number>> {
     const lag = new Map<number, number>();
     try {

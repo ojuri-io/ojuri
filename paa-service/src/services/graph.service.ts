@@ -4,7 +4,7 @@ import louvain from "graphology-communities-louvain";
 import appConfig from "@config/app.config";
 import { createServiceLogger, TraceContext } from "@utils/service-logger";
 import { metricsService } from "@utils/metrics";
-import { TransactionEvent, NetworkFeatures } from "./types";
+import { TransactionEvent, NetworkFeatures, NodeSnapshot, EdgeSnapshot } from "./types";
 
 const log = createServiceLogger("GraphService");
 
@@ -30,19 +30,30 @@ class GraphService {
   private graph: Graph<NodeAttributes, EdgeAttributes>;
   private transactionCount: number = 0;
   private lastPagerankUpdate: number = 0;
+  private maxEventTimestamp: number = 0;
+  private dirtyTriangleCount: number = 0;
   private readonly maxNodes: number;
   private readonly pagerankDamping: number;
   private readonly updateInterval: number;
+  private readonly triangleRecomputeMinIntervalMs: number;
+  private readonly pruneAgeMs = 30 * 24 * 60 * 60 * 1000;
+  private readonly pruneIntervalMs = 60 * 60 * 1000;
 
   constructor() {
     this.graph = new Graph<NodeAttributes, EdgeAttributes>({ type: "directed", multi: false });
     this.maxNodes = appConfig.paa.maxGraphNodes;
     this.pagerankDamping = appConfig.paa.pagerankDamping;
     this.updateInterval = appConfig.paa.graphUpdateInterval;
+    this.triangleRecomputeMinIntervalMs = appConfig.paa.triangleRecomputeMinIntervalMs;
+    this.startScheduledPrune();
   }
 
   addTransaction(event: TransactionEvent): void {
     const { sender_id, receiver_id, amount, timestamp, transaction_type } = event;
+
+    if (timestamp > this.maxEventTimestamp) {
+      this.maxEventTimestamp = timestamp;
+    }
 
     this.ensureNode(sender_id, timestamp);
     this.ensureNode(receiver_id, timestamp);
@@ -61,7 +72,7 @@ class GraphService {
   private ensureNode(nodeId: string, timestamp: number): void {
     if (!this.graph.hasNode(nodeId)) {
       if (this.graph.order >= this.maxNodes) {
-        this.pruneOldNodes();
+        this.pruneOldNodes({ capDriven: true });
       }
 
       this.graph.addNode(nodeId, {
@@ -101,13 +112,44 @@ class GraphService {
         firstTransaction: timestamp,
         transactionTypes: new Set([transactionType]),
       });
+      if (this.closesDirectedTriangle(sender, receiver)) {
+        this.dirtyTriangleCount++;
+      }
     }
   }
 
+  // Detects a fresh directed 3-cycle through the newly-added edge A→B.
+  // The cycle exists iff some node C has both B→C and C→A. Walking
+  // B's out-neighbors is bounded by B's out-degree, which is small
+  // for typical accounts and capped by graph order in pathological
+  // cases. Early-exits on the first match — we only need to know
+  // *if* a triangle exists, not enumerate them.
+  private closesDirectedTriangle(a: string, b: string): boolean {
+    let found = false;
+    this.graph.forEachOutNeighbor(b, (c) => {
+      if (found) return;
+      if (c !== a && this.graph.hasEdge(c, a)) {
+        found = true;
+      }
+    });
+    return found;
+  }
+
   private shouldUpdatePagerank(): boolean {
-    const timeSinceLastUpdate = Date.now() - this.lastPagerankUpdate;
-    const transactionsSinceLastUpdate = this.transactionCount % 100;
-    return timeSinceLastUpdate > this.updateInterval || transactionsSinceLastUpdate === 0;
+    const now = Date.now();
+    const timeSinceLastUpdate = now - this.lastPagerankUpdate;
+
+    if (timeSinceLastUpdate > this.updateInterval) return true;
+    if (this.transactionCount > 0 && this.transactionCount % 100 === 0) return true;
+
+    if (
+      this.dirtyTriangleCount > 0 &&
+      timeSinceLastUpdate >= this.triangleRecomputeMinIntervalMs
+    ) {
+      return true;
+    }
+
+    return false;
   }
 
   computeNetworkMetrics(): void {
@@ -142,6 +184,7 @@ class GraphService {
       });
 
       this.lastPagerankUpdate = Date.now();
+      this.dirtyTriangleCount = 0;
       const computeTime = Date.now() - startTime;
 
       metricsService.recordPagerankComputeTime(computeTime);
@@ -180,6 +223,89 @@ class GraphService {
     return triangles / possibleTriangles;
   }
 
+  getNodeSnapshot(userId: string): NodeSnapshot | null {
+    if (!this.graph.hasNode(userId)) return null;
+    const attrs = this.graph.getNodeAttributes(userId);
+    const features = this.getNetworkFeatures(userId);
+    return {
+      ...features,
+      firstSeen: attrs.firstSeen,
+      lastSeen: attrs.lastSeen,
+      transactionCount: attrs.transactionCount,
+      totalAmount: attrs.totalAmount,
+    };
+  }
+
+  getEdgeSnapshot(sender: string, receiver: string): EdgeSnapshot | null {
+    if (!this.graph.hasEdge(sender, receiver)) return null;
+    const attrs = this.graph.getEdgeAttributes(sender, receiver);
+    return {
+      senderId: sender,
+      receiverId: receiver,
+      weight: attrs.weight,
+      totalAmount: attrs.totalAmount,
+      firstTransaction: attrs.firstTransaction,
+      lastTransaction: attrs.lastTransaction,
+      transactionTypes: Array.from(attrs.transactionTypes),
+    };
+  }
+
+  // Bulk hydration entry point used by PAA at boot. Re-creates the
+  // edge structure (with attributes) without going through the normal
+  // metric-recompute path; the caller is expected to run
+  // computeNetworkMetrics() once at the end.
+  hydrateEdges(edges: EdgeSnapshot[]): void {
+    for (const e of edges) {
+      if (!this.graph.hasNode(e.senderId)) {
+        this.graph.addNode(e.senderId, {
+          firstSeen: e.firstTransaction,
+          lastSeen: e.lastTransaction,
+          transactionCount: 0,
+          totalAmount: 0,
+        });
+      }
+      if (!this.graph.hasNode(e.receiverId)) {
+        this.graph.addNode(e.receiverId, {
+          firstSeen: e.firstTransaction,
+          lastSeen: e.lastTransaction,
+          transactionCount: 0,
+          totalAmount: 0,
+        });
+      }
+      if (!this.graph.hasEdge(e.senderId, e.receiverId)) {
+        this.graph.addEdge(e.senderId, e.receiverId, {
+          weight: e.weight,
+          totalAmount: e.totalAmount,
+          firstTransaction: e.firstTransaction,
+          lastTransaction: e.lastTransaction,
+          transactionTypes: new Set(e.transactionTypes),
+        });
+      }
+      if (e.lastTransaction > this.maxEventTimestamp) {
+        this.maxEventTimestamp = e.lastTransaction;
+      }
+    }
+  }
+
+  hydrateNodeState(nodes: Array<{ userId: string } & Partial<{ firstSeen: number; lastSeen: number; transactionCount: number; totalAmount: number }>>): void {
+    for (const n of nodes) {
+      if (!this.graph.hasNode(n.userId)) continue;
+      const attrs = this.graph.getNodeAttributes(n.userId);
+      if (n.firstSeen !== undefined && (attrs.firstSeen === 0 || n.firstSeen < attrs.firstSeen)) {
+        this.graph.setNodeAttribute(n.userId, "firstSeen", n.firstSeen);
+      }
+      if (n.lastSeen !== undefined && n.lastSeen > attrs.lastSeen) {
+        this.graph.setNodeAttribute(n.userId, "lastSeen", n.lastSeen);
+      }
+      if (n.transactionCount !== undefined) {
+        this.graph.setNodeAttribute(n.userId, "transactionCount", n.transactionCount);
+      }
+      if (n.totalAmount !== undefined) {
+        this.graph.setNodeAttribute(n.userId, "totalAmount", n.totalAmount);
+      }
+    }
+  }
+
   getNetworkFeatures(userId: string): NetworkFeatures {
     if (!this.graph.hasNode(userId)) {
       return {
@@ -207,28 +333,45 @@ class GraphService {
     };
   }
 
-  private pruneOldNodes(): void {
-    const thirtyDaysAgo = Date.now() - 30 * 24 * 60 * 60 * 1000;
+  private pruneOldNodes(opts: { capDriven: boolean } = { capDriven: false }): void {
+    if (this.maxEventTimestamp === 0) return;
+
+    const cutoff = this.maxEventTimestamp - this.pruneAgeMs;
     const nodesToRemove: string[] = [];
 
     this.graph.forEachNode((node, attrs) => {
-      if (attrs.lastSeen < thirtyDaysAgo) {
+      if (attrs.lastSeen < cutoff) {
         nodesToRemove.push(node);
       }
     });
 
-    nodesToRemove
-      .sort((a, b) => {
-        const attrsA = this.graph.getNodeAttributes(a);
-        const attrsB = this.graph.getNodeAttributes(b);
-        return attrsA.lastSeen - attrsB.lastSeen;
-      })
-      .slice(0, Math.floor(this.maxNodes * 0.1))
-      .forEach((node) => {
-        this.graph.dropNode(node);
-      });
+    const ordered = nodesToRemove.sort((a, b) => {
+      return this.graph.getNodeAttributes(a).lastSeen - this.graph.getNodeAttributes(b).lastSeen;
+    });
 
-    log.info("pruneOldNodes", "Pruned old nodes from graph", { nodesRemoved: nodesToRemove.length });
+    // Cap-driven prunes only drop the oldest 10% to free room; the
+    // scheduled prune drops everything past the cutoff because it's
+    // bounded by traffic shape, not graph size.
+    const toDrop = opts.capDriven ? ordered.slice(0, Math.floor(this.maxNodes * 0.1)) : ordered;
+
+    for (const node of toDrop) {
+      this.graph.dropNode(node);
+    }
+
+    if (toDrop.length > 0) {
+      log.info("pruneOldNodes", "Pruned old nodes from graph", {
+        nodesRemoved: toDrop.length,
+        eligible: nodesToRemove.length,
+        cutoff,
+        capDriven: opts.capDriven,
+      });
+    }
+  }
+
+  private startScheduledPrune(): void {
+    setInterval(() => {
+      this.pruneOldNodes();
+    }, this.pruneIntervalMs);
   }
 
   getStats(): { nodes: number; edges: number; transactionCount: number } {
