@@ -3,7 +3,9 @@
 Adopter-facing reference for the platform's adoption features. Each
 file is a single-purpose reference, focused on what an integrator needs
 to wire one capability up. For architecture-level notes, see
-[`ARCHITECTURE.md`](ARCHITECTURE.md).
+[`ARCHITECTURE.md`](ARCHITECTURE.md). For the in-depth explainer of
+the algorithms, formulas, and fraud-domain vocabulary that the
+platform is built on, see [`INTERNALS.md`](INTERNALS.md).
 
 | Document                                  | Covers                                                                 |
 |-------------------------------------------|------------------------------------------------------------------------|
@@ -20,6 +22,7 @@ to wire one capability up. For architecture-level notes, see
 | [`IDEMPOTENCY.md`](IDEMPOTENCY.md)        | `Idempotency-Key` semantics, scoping, TTL, conflict handling.          |
 | [`FIA-API.md`](FIA-API.md)                | On-demand investigation reports and conversational follow-ups.         |
 | [`FRONTEND.md`](FRONTEND.md)              | Sentinel operator dashboard — layout, auth, offline mode, extending.   |
+| [`INTERNALS.md`](INTERNALS.md)            | Study guide — fraud-domain 101, decision pipeline stages, XGBoost / ONNX / calibration, PageRank + Louvain with formulas, drift detection, FIA, adversarial considerations, glossary. |
 
 For what's planned next, see [`../ROADMAP.md`](../ROADMAP.md). For the
 per-release history, see [`../CHANGELOG.md`](../CHANGELOG.md).
