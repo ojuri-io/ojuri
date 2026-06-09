@@ -14,6 +14,24 @@ on:
   push:
     tags:
       - "v*"
+  # Manual trigger lets maintainers run the full pipeline against a
+  # branch without tagging — useful for verifying the workflow itself
+  # before the first real release, and as a permanent escape hatch
+  # for re-running a failed release without retagging. The `dry_run`
+  # flag (default true on manual runs, irrelevant on tag pushes)
+  # skips the GHCR push and the GitHub Release create steps so a
+  # manual run produces no public artefacts.
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version label to render (e.g. v1.0.0). Used only to validate parsing and to tag the built-but-not-pushed images in logs."
+        required: true
+        type: string
+      dry_run:
+        description: "Skip GHCR push + GitHub Release create. Leave checked for verification runs."
+        required: false
+        default: true
+        type: boolean
 
 # A given tag should only ever produce one release run.
 concurrency:
@@ -42,9 +60,13 @@ jobs:
     steps:
       - id: parse
         run: |
-          TAG="${GITHUB_REF#refs/tags/}"
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            TAG="${{ inputs.version }}"
+          else
+            TAG="${GITHUB_REF#refs/tags/}"
+          fi
           if [[ ! "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[A-Za-z0-9.-]+)?$ ]]; then
-            echo "::error::Tag '$TAG' is not a SemVer tag (expected vMAJOR.MINOR.PATCH[-prerelease])."
+            echo "::error::Tag/version '$TAG' is not SemVer (expected vMAJOR.MINOR.PATCH[-prerelease])."
             exit 1
           fi
           MAJOR=$(echo "$TAG" | sed -E 's/^v([0-9]+)\..*/v\1/')
@@ -188,18 +210,19 @@ jobs:
         uses: docker/setup-buildx-action@v3
 
       - name: Log in to GHCR
+        if: github.event_name == 'push' || !inputs.dry_run
         uses: docker/login-action@v3
         with:
           registry: ${{ env.REGISTRY }}
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Build + push
+      - name: Build${{ (github.event_name == 'push' || !inputs.dry_run) && ' + push' || ' (dry-run, no push)' }}
         uses: docker/build-push-action@v6
         with:
           context: ${{ matrix.context }}
           file: ${{ matrix.dockerfile }}
-          push: true
+          push: ${{ github.event_name == 'push' || !inputs.dry_run }}
           tags: |
             ${{ env.REGISTRY }}/${{ env.IMAGE_NAMESPACE }}/${{ matrix.image }}:${{ needs.resolve-version.outputs.version }}
             ${{ env.REGISTRY }}/${{ env.IMAGE_NAMESPACE }}/${{ matrix.image }}:${{ needs.resolve-version.outputs.major }}
@@ -220,6 +243,10 @@ jobs:
     name: GitHub Release
     runs-on: ubuntu-latest
     needs: [resolve-version, build-and-push]
+    # Dry-run manual runs skip the Release create — they exist to
+    # validate the test + build path without producing public
+    # artefacts. Real tag pushes always create the Release.
+    if: github.event_name == 'push' || !inputs.dry_run
     steps:
       - uses: actions/checkout@v4
         with:
