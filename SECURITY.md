@@ -74,13 +74,26 @@ There is no monetary bug bounty at this time.
 
 ## Supported versions
 
+Security fixes ship as patch releases against the **latest
+published 1.x minor**, in line with the lockstep release policy in
+[`VERSIONING.md`](VERSIONING.md).
+
 | Version | Supported |
 | --- | --- |
-| 1.x | Yes — security fixes backported. |
-| Pre-1.0 / `main` | Best-effort; track `main` for fixes. |
+| Latest 1.x minor | Yes — security fixes shipped as a patch release. |
+| Previous 1.x minors | No — upgrade to the latest minor to receive the fix. |
+| `main` (between releases) | Best-effort; track `main` for fixes that have landed but not yet been tagged. |
 | Pre-release branches | No. |
 
-Older 1.x point releases are supported for at least the duration of the current 1.x minor's lifetime. Adopters running modified forks are responsible for backporting fixes themselves.
+Adopters pinned to the recommended floating `:v1` Docker tag
+automatically receive every security patch the next time they
+`docker compose pull`. Adopters pinning to an exact version
+(`:v1.4.2`) are responsible for upgrading to the patched release
+themselves; we will call out the upgrade in the GitHub Security
+Advisory.
+
+Adopters running modified forks are responsible for backporting
+fixes themselves.
 
 ## PGP / GPG
 
