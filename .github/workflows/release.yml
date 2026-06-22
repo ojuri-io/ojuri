@@ -152,10 +152,12 @@ jobs:
           docker compose logs --tail 100
           exit 1
 
-      - name: Install root deps + run migrations
-        run: |
-          npm ci
-          npm run db:migrate
+      # Migrations now run as a Compose one-shot `db-migrate` service before
+      # RDA accepts traffic (depends_on: service_completed_successfully). The
+      # prior host-side `npm run db:migrate` step here conflicted with that —
+      # the container had already recorded .js filenames in the migrations
+      # table, and the host run then errored with "migration directory is
+      # corrupt" looking for files that exist as .ts in src/.
 
       - name: Smoke /v1/predict end-to-end
         run: |
