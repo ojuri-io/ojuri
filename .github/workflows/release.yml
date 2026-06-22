@@ -208,6 +208,15 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # QEMU registers linux/arm64 (and others) as a buildable target on the
+      # x86_64 GitHub runner via binfmt_misc. Without it, `buildx build
+      # --platform linux/arm64` errors with "exec format error" when it
+      # tries to RUN apt/npm/pip inside the arm64 base image.
+      - name: Set up QEMU (multi-arch emulation)
+        uses: docker/setup-qemu-action@v3
+        with:
+          platforms: arm64
+
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
@@ -224,6 +233,13 @@ jobs:
         with:
           context: ${{ matrix.context }}
           file: ${{ matrix.dockerfile }}
+          # linux/amd64 is the canonical adopter target (most Linux servers,
+          # GitHub Actions runners, Docker Desktop on Intel Macs).
+          # linux/arm64 covers Apple Silicon (M-series), AWS Graviton,
+          # Ampere, Oracle Ampere A1, and various ARM cloud VMs. Without
+          # this, adopters on ARM hosts hit
+          # `no matching manifest for linux/arm64/v8` on `docker pull`.
+          platforms: linux/amd64,linux/arm64
           push: ${{ github.event_name == 'push' || !inputs.dry_run }}
           tags: |
             ${{ env.REGISTRY }}/${{ env.IMAGE_NAMESPACE }}/${{ matrix.image }}:${{ needs.resolve-version.outputs.version }}
