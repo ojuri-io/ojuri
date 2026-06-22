@@ -5,7 +5,6 @@ services:
     build:
       context: .
       dockerfile: Dockerfile.dev
-    container_name: ojuri-rda-dev
     environment:
       - NODE_ENV=development
       - PORT=3000
@@ -67,7 +66,6 @@ services:
     build:
       context: ./paa-service
       dockerfile: Dockerfile.dev
-    container_name: ojuri-paa-dev
     environment:
       - NODE_ENV=development
       - APP_NAME=ojuri-paa-dev
@@ -109,7 +107,6 @@ services:
     build:
       context: ./fia-service
       dockerfile: Dockerfile.dev
-    container_name: ojuri-fia-dev
     environment:
       - KAFKA_BROKERS=kafka:29092
       - KAFKA_BLOCKED_TOPIC=transactions.blocked

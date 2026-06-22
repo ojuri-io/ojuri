@@ -4,7 +4,6 @@ services:
   # ============================================
   nginx:
     image: nginx:alpine
-    container_name: ojuri-nginx
     ports:
       - "80:80"
     volumes:
@@ -31,7 +30,6 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
-    container_name: ojuri-rda-1
     environment:
       - NODE_ENV=${NODE_ENV:-development}
       - PORT=3000
@@ -101,7 +99,6 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
-    container_name: ojuri-rda-2
     environment:
       - NODE_ENV=${NODE_ENV:-development}
       - PORT=3000
@@ -169,7 +166,6 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
-    container_name: ojuri-rda-3
     environment:
       - NODE_ENV=${NODE_ENV:-development}
       - PORT=3000
@@ -246,7 +242,6 @@ services:
     build:
       context: ./paa-service
       dockerfile: Dockerfile
-    container_name: ojuri-paa-1
     environment:
       - NODE_ENV=${NODE_ENV:-development}
       - APP_NAME=ojuri-paa-1
@@ -305,7 +300,6 @@ services:
     build:
       context: ./fia-service
       dockerfile: Dockerfile
-    container_name: ojuri-fia
     environment:
       # Use the INTERNAL listener (advertised as kafka:29092) for
       # container-to-container traffic. Port 9092 is the EXTERNAL
@@ -395,7 +389,6 @@ services:
     build:
       context: ./mla-service
       dockerfile: Dockerfile
-    container_name: ojuri-mla
     environment:
       - POSTGRES_HOST=postgres
       - POSTGRES_PORT=5432
@@ -433,7 +426,6 @@ services:
   # ============================================
   redis:
     image: redis:7-alpine
-    container_name: ojuri-redis
     command: redis-server --appendonly yes --maxmemory 2gb --maxmemory-policy volatile-lru
     ports:
       - "6380:6379"
@@ -453,7 +445,6 @@ services:
   # ============================================
   zookeeper:
     image: confluentinc/cp-zookeeper:7.5.0
-    container_name: ojuri-zookeeper
     environment:
       ZOOKEEPER_CLIENT_PORT: 2181
       ZOOKEEPER_TICK_TIME: 2000
@@ -466,7 +457,6 @@ services:
 
   kafka:
     image: confluentinc/cp-kafka:7.5.0
-    container_name: ojuri-kafka
     depends_on:
       - zookeeper
     ports:
@@ -500,7 +490,6 @@ services:
   # ============================================
   postgres:
     image: postgres:15-alpine
-    container_name: ojuri-postgres
     environment:
       POSTGRES_USER: ${POSTGRES_USER:-postgres}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
@@ -533,7 +522,6 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
-    container_name: ojuri-db-migrate
     # Invokes the knex CLI directly with node, bypassing the package.json
     # `db:migrate` script that wraps it in ts-node + dotenv. The production
     # image runs `npm prune --production` which removes ts-node, and Compose
@@ -567,7 +555,6 @@ services:
   # ============================================
   prometheus:
     image: prom/prometheus:v2.47.0
-    container_name: ojuri-prometheus
     ports:
       - "9090:9090"
     volumes:
@@ -583,7 +570,6 @@ services:
 
   grafana:
     image: grafana/grafana:10.1.0
-    container_name: ojuri-grafana
     ports:
       - "3001:3000"
     environment:
