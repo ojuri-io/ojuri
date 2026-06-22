@@ -52,11 +52,11 @@ const primary = {
     min: 2,
   },
   migrations: {
-    directory: "src/database/migrations",
+    directory: process.env.KNEX_MIGRATIONS_DIR || "src/database/migrations",
     tableName: "migrations",
   },
   seeds: {
-    directory: "src/database/seeds",
+    directory: process.env.KNEX_SEEDS_DIR || "src/database/seeds",
   },
 };
 

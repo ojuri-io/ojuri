@@ -87,6 +87,8 @@ services:
         condition: service_healthy
       postgres:
         condition: service_healthy
+      db-migrate:
+        condition: service_completed_successfully
     networks:
       - ojuri-network
     restart: unless-stopped
@@ -153,6 +155,8 @@ services:
         condition: service_healthy
       postgres:
         condition: service_healthy
+      db-migrate:
+        condition: service_completed_successfully
     networks:
       - ojuri-network
     restart: unless-stopped
@@ -215,6 +219,8 @@ services:
         condition: service_healthy
       postgres:
         condition: service_healthy
+      db-migrate:
+        condition: service_completed_successfully
     networks:
       - ojuri-network
     restart: unless-stopped
@@ -273,6 +279,8 @@ services:
         condition: service_healthy
       postgres:
         condition: service_healthy
+      db-migrate:
+        condition: service_completed_successfully
     networks:
       - ojuri-network
     restart: unless-stopped
@@ -372,6 +380,55 @@ services:
           memory: 6G
 
   # ============================================
+  # MLA Service (Model Learning Agent)
+  # ============================================
+  # Async drift monitor + retraining pipeline. Not on the prediction
+  # hot path. Gated behind a `mla` profile because adopters often
+  # prefer to run the trainer on a host with GPU access or specific
+  # Python deps. Opt in with `docker compose --profile mla up`.
+  #
+  # When MLA runs IN compose under this profile, set
+  # `MLA_HEALTH_URL=http://mla:9095` in `.env` so the RDA replicas
+  # probe the in-compose service instead of host.docker.internal.
+  mla:
+    profiles: ["mla"]
+    build:
+      context: ./mla-service
+      dockerfile: Dockerfile
+    container_name: ojuri-mla
+    environment:
+      - POSTGRES_HOST=postgres
+      - POSTGRES_PORT=5432
+      - POSTGRES_DB=${POSTGRES_DB:-fraud_db}
+      - POSTGRES_USER=${POSTGRES_USER:-postgres}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-postgres}
+      - KAFKA_BROKERS=kafka:29092
+      - KAFKA_TOPIC=transactions.completed
+      - KAFKA_CONSUMER_GROUP=mla-drift-monitor
+      - METRICS_PORT=9095
+      - MODEL_OUTPUT_DIR=/app/models
+      - LOG_LEVEL=${MLA_LOG_LEVEL:-INFO}
+      - MLA_SERVICE_TOKEN=${MLA_SERVICE_TOKEN:-}
+      - AUTH_JWT_SECRET=${AUTH_JWT_SECRET}
+      - DRIFT_PSI_THRESHOLD=${DRIFT_PSI_THRESHOLD:-0.25}
+      - DRIFT_F1_THRESHOLD=${DRIFT_F1_THRESHOLD:-0.92}
+    ports:
+      - "9095:9095"
+    volumes:
+      - ./models:/app/models
+      - mla-data:/app/data
+    depends_on:
+      kafka:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+      db-migrate:
+        condition: service_completed_successfully
+    networks:
+      - ojuri-network
+    restart: unless-stopped
+
+  # ============================================
   # Redis
   # ============================================
   redis:
@@ -462,6 +519,50 @@ services:
       retries: 5
 
   # ============================================
+  # DB migrate (one-shot)
+  # ============================================
+  # Runs Knex migrations + seeds against Postgres, then exits 0.
+  # RDA replicas depend on it via service_completed_successfully so a
+  # fresh stack has a fully-migrated schema by the time /v1/predict
+  # accepts requests. On subsequent `docker compose up`, this re-runs
+  # and is a no-op ("Already up to date"). The image is the same RDA
+  # build (it ships the compiled migrations + knexfile); when running
+  # from prebuilt images, knex reads /app/dist/database/{migrations,seeds}
+  # via KNEX_MIGRATIONS_DIR / KNEX_SEEDS_DIR.
+  db-migrate:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: ojuri-db-migrate
+    # Invokes the knex CLI directly with node, bypassing the package.json
+    # `db:migrate` script that wraps it in ts-node + dotenv. The production
+    # image runs `npm prune --production` which removes ts-node, and Compose
+    # already injects env vars so dotenv isn't needed. Compiled migrations
+    # live at /app/dist/database/{migrations,seeds} per KNEX_*_DIR below.
+    # The seeds include the SUPER_ADMIN bootstrap that prints a one-time
+    # admin password — surfaced via `docker compose logs db-migrate`.
+    command:
+      - sh
+      - -c
+      - "node ./node_modules/knex/bin/cli.js --knexfile knexfile.js migrate:latest && node ./node_modules/knex/bin/cli.js --knexfile knexfile.js seed:run"
+    environment:
+      - NODE_ENV=${NODE_ENV:-production}
+      - DB_CLIENT=pg
+      - DB_HOST=postgres
+      - DB_PORT=5432
+      - DB_DATABASE=${POSTGRES_DB:-fraud_db}
+      - DB_USERNAME=${POSTGRES_USER:-postgres}
+      - DB_PASSWORD=${POSTGRES_PASSWORD:-postgres}
+      - KNEX_MIGRATIONS_DIR=/app/dist/database/migrations
+      - KNEX_SEEDS_DIR=/app/dist/database/seeds
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - ojuri-network
+    restart: "no"
+
+  # ============================================
   # Monitoring Stack (Optional)
   # ============================================
   prometheus:
@@ -515,3 +616,4 @@ volumes:
   prometheus-data:
   grafana-data:
   fia-hf-cache:
+  mla-data:

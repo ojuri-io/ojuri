@@ -90,20 +90,58 @@ decisions.
 > the MSVC redistributable XGBoost needs, and the cmd/PowerShell
 > activation syntax. The commands below assume a POSIX shell.
 
+There are two install paths. **Adopters running Ojuri in production** should
+use the prebuilt images path — it pulls pinned, signed containers from
+GHCR. **Contributors modifying the code** should use the build-from-source
+path. Both run the same stack and use the same `docker-compose.yml`; they
+differ only in whether images are pulled or built.
+
+### Install from published images (recommended)
+
+````bash
+git clone --depth 1 --branch v1.1.0 https://github.com/ojuri-io/ojuri.git
+cd ojuri
+cp .env.example .env                        # provides AUTH_JWT_SECRET, DB creds, CORS
+docker compose -f docker-compose.yml -f docker-compose.ghcr.yml pull
+docker compose -f docker-compose.yml -f docker-compose.ghcr.yml up -d
+docker compose logs db-migrate              # one-time admin password printed here
+````
+
+The shallow clone fetches only the v1.1.0 tag (~5 MB) for the compose files,
+`.env.example`, and config. The `pull` step downloads the five signed images
+from `ghcr.io/ojuri-io/{rda,paa,mla,fia,sentinel}`. The `up` step starts the
+stack; a one-shot `db-migrate` container applies migrations and seeds before
+RDA accepts traffic, and re-runs as a no-op on subsequent `up`.
+
+`OJURI_VERSION` defaults to `v1` (floating major — receives patches and
+minors automatically per [`VERSIONING.md`](VERSIONING.md)). Pin strictly for
+regulated deployments:
+
+````bash
+export OJURI_VERSION=v1.1.0   # before any docker compose command
+````
+
+> **Docker Compose 2.24+** is required for the GHCR overlay (uses the
+> `!reset` directive). Check with `docker compose version`. Older Compose
+> versions need to use the build-from-source path.
+
+### Build from source (for contributors)
+
 ````bash
 git clone https://github.com/ojuri-io/ojuri.git
 cd ojuri
 cp .env.example .env                        # provides AUTH_JWT_SECRET, DB creds, CORS
-docker compose up -d                        # builds RDA on first run (a few minutes)
-npm install && npm run db:migrate           # migration prints a one-time admin password
+docker compose up -d --build                # builds RDA + PAA on first run (a few minutes)
+docker compose logs db-migrate              # one-time admin password printed here
 ````
 
-That brings up Postgres, Redis, Kafka, three RDA replicas behind NGINX, the
+Both paths bring up Postgres, Redis, Kafka, three RDA replicas behind NGINX, the
 PAA singleton worker (`paa_group_members` must stay at 1 — see
 [`paa-service/README.md`](paa-service/README.md) for the rationale),
-and the Prometheus/Grafana stack. FIA is gated behind a profile because
-it carries ~7.6 GB of Phi-3 weights — opt in with
-`docker compose --profile fia up -d fia` when you have the disk and RAM.
+the `db-migrate` one-shot container (runs Knex migrations + seeds against
+Postgres, exits cleanly when done), and the Prometheus/Grafana stack. FIA is
+gated behind a profile because it carries ~7.6 GB of Phi-3 weights — opt in
+with `docker compose --profile fia up -d` when you have the disk and RAM.
 
 > Make sure the Docker daemon is running before `docker compose up -d` —
 > start Docker Desktop (macOS/Windows) or `sudo systemctl start docker` (Linux)
@@ -115,8 +153,14 @@ it carries ~7.6 GB of Phi-3 weights — opt in with
 > admin endpoints need the `DB_*` block. Rotate `AUTH_JWT_SECRET` before any
 > non-dev deploy.
 
-> MLA (the model trainer) is intentionally **not** in Compose — it runs on
-> the host venv. First-time setup:
+> MLA (the model trainer) can run either inside Compose under the `mla`
+> profile or on the host venv. The host-venv path is the historical
+> default and is recommended when you want GPU access for training. To
+> run MLA in Compose, add `--profile mla` to any of the commands above
+> and set `MLA_HEALTH_URL=http://mla:9095` in `.env` so the RDA replicas
+> probe the in-Compose service instead of `host.docker.internal`.
+>
+> Host-venv first-time setup:
 >
 > ````bash
 > cd mla-service
@@ -367,19 +411,19 @@ each release.
 
 ### Upgrading
 
-**Docker adopters** (using the published images):
+**Docker adopters** (using the published images via the GHCR overlay):
 
 ````bash
-docker compose pull
-docker compose up -d
+git pull --tags                                     # refresh tags + compose files
+docker compose -f docker-compose.yml -f docker-compose.ghcr.yml pull
+docker compose -f docker-compose.yml -f docker-compose.ghcr.yml up -d
 ````
 
 **Source adopters** (building from a `git clone`):
 
 ````bash
 git pull
-docker compose build
-docker compose up -d
+docker compose up -d --build
 ````
 
 Read the [`CHANGELOG.md`](CHANGELOG.md) entry for any minor or
