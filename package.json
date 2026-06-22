@@ -1,6 +1,6 @@
 {
   "name": "ojuri",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "Self-hosted, real-time fraud detection platform. Multi-agent (RDA / PAA / MLA / FIA), Kafka-decoupled, with an operator dashboard.",
   "main": "dist/server.js",
   "author": "Ayodeji Abodunrin <https://ayodejiabodunrin.com/>",

@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.1.0] - 2026-06-22
+
+First tagged release. v1.0.0 (2026-06-07) was the soft launch; v1.1.0 is the
+first version with a formal git tag, signed container images on GHCR
+(`ghcr.io/ojuri-io/{rda,paa,mla,fia,sentinel}`), and a GitHub Release.
+Adopters should pin to `:v1` (floating, receives future minors and patches)
+or `:v1.1.0` (strict). See [`VERSIONING.md`](./VERSIONING.md).
+
+This release adds the post-v1.0.0 graph-coherence work, adopter training-data
+ingest, FATF rule pack, MLA score calibration, per-segment threshold defaults,
+and several PAA scale/correctness fixes.
+
 ### Added
 
 - **PAA durable edge + node state in Postgres.** New `transactionEdges`
