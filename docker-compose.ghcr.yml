@@ -1,0 +1,50 @@
+# =============================================================================
+# Ojuri GHCR overlay
+# =============================================================================
+# Use this with the base docker-compose.yml to run Ojuri from prebuilt images
+# published to ghcr.io/ojuri-io rather than building from source. Combine the
+# two files on every Compose invocation:
+#
+#   docker compose -f docker-compose.yml -f docker-compose.ghcr.yml pull
+#   docker compose -f docker-compose.yml -f docker-compose.ghcr.yml up -d
+#
+# Pin a specific build by exporting OJURI_VERSION before running:
+#
+#   export OJURI_VERSION=v1.1.0   # strict (recommended for production)
+#   export OJURI_VERSION=v1       # floating major (default, gets patches/minors)
+#
+# See VERSIONING.md for the pinning policy and UPGRADING.md for upgrade paths.
+#
+# Requires Docker Compose 2.24+ for the `!reset` directive that drops the
+# `build:` block from the base file (otherwise Compose would still try to
+# build the image locally even when it is available on GHCR).
+# =============================================================================
+
+services:
+  rda-1:
+    build: !reset null
+    image: ghcr.io/ojuri-io/rda:${OJURI_VERSION:-v1}
+
+  rda-2:
+    build: !reset null
+    image: ghcr.io/ojuri-io/rda:${OJURI_VERSION:-v1}
+
+  rda-3:
+    build: !reset null
+    image: ghcr.io/ojuri-io/rda:${OJURI_VERSION:-v1}
+
+  paa-1:
+    build: !reset null
+    image: ghcr.io/ojuri-io/paa:${OJURI_VERSION:-v1}
+
+  db-migrate:
+    build: !reset null
+    image: ghcr.io/ojuri-io/rda:${OJURI_VERSION:-v1}
+
+  fia:
+    build: !reset null
+    image: ghcr.io/ojuri-io/fia:${OJURI_VERSION:-v1}
+
+  mla:
+    build: !reset null
+    image: ghcr.io/ojuri-io/mla:${OJURI_VERSION:-v1}
