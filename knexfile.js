@@ -51,12 +51,21 @@ const primary = {
   pool: {
     min: 2,
   },
+  // loadExtensions limits which files knex requires from the migrations /
+  // seeds directories. The default list includes ".ts", which matches both
+  // source .ts files AND tsc-emitted .d.ts declarations (path.extname is
+  // ".ts" for both). In the production image dist/ contains .d.ts alongside
+  // .js, and knex's CommonJS require chokes on the `export` keyword inside
+  // a .d.ts. Force the extension list explicitly — .js for compiled dirs,
+  // .ts for source dirs — to skip declarations either way.
   migrations: {
     directory: process.env.KNEX_MIGRATIONS_DIR || "src/database/migrations",
     tableName: "migrations",
+    loadExtensions: process.env.KNEX_MIGRATIONS_DIR ? [".js"] : [".ts"],
   },
   seeds: {
     directory: process.env.KNEX_SEEDS_DIR || "src/database/seeds",
+    loadExtensions: process.env.KNEX_SEEDS_DIR ? [".js"] : [".ts"],
   },
 };
 
