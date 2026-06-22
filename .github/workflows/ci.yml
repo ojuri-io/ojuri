@@ -364,7 +364,7 @@ jobs:
           echo "::group::compose ps"
           docker compose ps
           echo "::endgroup::"
-          for svc in nginx rda-1 rda-2 rda-3 paa-1 postgres redis kafka; do
+          for svc in nginx rda-1 rda-2 rda-3 paa-1 db-migrate postgres redis kafka; do
             echo "::group::$svc logs (last 60)"
             docker compose logs --tail 60 $svc || true
             echo "::endgroup::"
