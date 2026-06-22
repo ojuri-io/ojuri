@@ -150,13 +150,13 @@ jobs:
           docker compose logs nginx rda-1 --tail 50
           exit 1
 
-      # Migrations must run BEFORE the predict smoke. Without them the
-      # `decisionAuditLog` table doesn't exist, the audit insert is
-      # swallowed (by design — audit failures must never break the
-      # decision path), and the response comes back without an
-      # `audit_id` — which then fails the assertion below. Caught
-      # exactly this way the first time this workflow ran.
-      - name: Install root deps (for npm run db:migrate)
+      # Migrations now run as a Compose one-shot `db-migrate` service
+      # (see docker-compose.yml). It executes before RDA via
+      # depends_on: service_completed_successfully, so by the time `Boot
+      # the stack` returns, the schema is fully migrated and seeded.
+      # Node + npm ci are still needed for later smoke steps
+      # (db:seed re-run, demo:load).
+      - name: Install root deps (for demo:load + db:seed smoke)
         uses: actions/setup-node@v4
         with:
           node-version: "20"
@@ -164,15 +164,16 @@ jobs:
           cache-dependency-path: package-lock.json
       - name: npm ci
         run: npm ci
-      - name: Run migrations + capture the seeded admin password
+      - name: Capture the seeded admin password from db-migrate logs
         run: |
           set -e
-          OUT=$(npm run db:migrate 2>&1)
-          echo "$OUT"
-          echo "$OUT" | grep -q "password:" || { echo "::error::seed banner missing"; exit 1; }
-          # Extract the one-time printed password so a later step can
-          # rotate it and authenticate against the admin surface.
-          PW=$(echo "$OUT" | grep -E '^\s*password:' | head -1 | awk '{print $2}')
+          OUT=$(docker compose logs db-migrate 2>&1)
+          echo "$OUT" | tail -40
+          echo "$OUT" | grep -q "password:" || { echo "::error::seed banner missing from db-migrate logs"; exit 1; }
+          # docker compose logs prefixes each line with the container name
+          # (e.g. `ojuri-db-migrate  |   password: <pw>`). $NF strips the
+          # prefix and grabs the trailing token.
+          PW=$(echo "$OUT" | grep -E 'password:' | head -1 | awk '{print $NF}')
           [ -n "$PW" ] || { echo "::error::could not parse seeded admin password"; exit 1; }
           echo "::add-mask::$PW"
           echo "SEEDED_ADMIN_PASSWORD=$PW" >> $GITHUB_ENV
