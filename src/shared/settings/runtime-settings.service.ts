@@ -63,6 +63,12 @@ class RuntimeSettingsService {
     return typeof v === "number" && Number.isFinite(v) ? v : envFallback;
   }
 
+  /** Sync read for the predict hot path. 0 = REVIEW band disabled. */
+  getReviewMargin(envFallback = 0): number {
+    const v = this.cache.get("review_margin");
+    return typeof v === "number" && Number.isFinite(v) && v >= 0 ? v : envFallback;
+  }
+
   async listAll() {
     return this.repo.list();
   }
@@ -140,6 +146,7 @@ function parseTyped(type: string, value: string): unknown {
  */
 const NUMERIC_BOUNDS: Record<string, { min: number; max: number }> = {
   fraud_threshold: { min: 0.01, max: 0.99 },
+  review_margin: { min: 0, max: 0.5 },
 };
 
 export default RuntimeSettingsService;

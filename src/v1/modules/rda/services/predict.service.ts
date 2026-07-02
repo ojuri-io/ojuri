@@ -36,6 +36,7 @@ import PredictDecisionContextFactory from "../factories/predict-decision-context
 import PredictResponseFactory from "../factories/predict-response.factory";
 import TransactionEventFactory from "../factories/transaction-event.factory";
 import { ruleActionToDecision } from "../utils/rule-action-to-decision";
+import { bandDecision } from "../utils/band-decision";
 import { round4 } from "../utils/round";
 
 const log = createServiceLogger("PredictService");
@@ -169,7 +170,11 @@ class PredictService {
     }
 
     t0 = performance.now();
-    const ml = await this.runInference(features.enrichedVector, modelMeta.threshold);
+    const ml = await this.runInference(
+      features.enrichedVector,
+      modelMeta.threshold,
+      modelMeta.reviewThreshold,
+    );
     metricsService.recordPredictStage("inference", performance.now() - t0);
 
     // Shadow scoring overlaps with reason codes + POST rules; awaited
@@ -210,8 +215,9 @@ class PredictService {
   }
 
   private resolveModel(segment?: string): ModelMeta {
-    const { championVersion, shadowVersion, threshold } = this.modelRegistry.resolve(segment);
-    return { championVersion, shadowVersion, threshold };
+    const { championVersion, shadowVersion, threshold, reviewThreshold } =
+      this.modelRegistry.resolve(segment);
+    return { championVersion, shadowVersion, threshold, reviewThreshold };
   }
 
   private async loadFeatures(request: PredictRequestDto): Promise<FeaturesPayload> {
@@ -238,10 +244,13 @@ class PredictService {
     return this.rulesService.evaluate(RuleStage.PRE, ctx);
   }
 
-  private async runInference(vector: Float32Array, threshold: number): Promise<MlOutcome> {
+  private async runInference(
+    vector: Float32Array,
+    threshold: number,
+    reviewThreshold: number | null,
+  ): Promise<MlOutcome> {
     const score = await this.onnxService.predict(vector);
-    const decision = score >= threshold ? Decision.DECLINE : Decision.ACCEPT;
-    return { score, decision };
+    return { score, decision: bandDecision(score, threshold, reviewThreshold) };
   }
 
   private evaluatePostRules(

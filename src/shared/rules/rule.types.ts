@@ -61,7 +61,7 @@ export interface RuleContext {
 
   // Available only on POST-stage evaluation
   ml_score?: number;
-  ml_decision?: Decision.ACCEPT | Decision.DECLINE;
+  ml_decision?: Decision.ACCEPT | Decision.DECLINE | Decision.REVIEW;
 
   // Numeric features made available by name for convenience
   features?: Record<string, number>;

@@ -26,6 +26,7 @@ import {
 // Server-side clamps, mirrored client-side. Server still enforces.
 const BOUNDS = {
   fraud_threshold:    { min: 0.01, max: 0.99,    step: 0.01,  label: 'Fraud threshold' },
+  review_margin:      { min: 0,    max: 0.5,     step: 0.01,  label: 'Review margin' },
   driftF1Threshold:   { min: 0.5,  max: 0.99,    step: 0.01,  label: 'F1 threshold' },
   driftPsiThreshold:  { min: 0.05, max: 0.5,     step: 0.01,  label: 'PSI threshold' },
   driftWindowSize:    { min: 100,  max: 100_000, step: 100,   label: 'Window size' },
@@ -46,6 +47,7 @@ export default function Settings({ toast, user }) {
         sub="Operator-controlled runtime knobs. Each change takes effect within seconds; the server enforces the documented bounds regardless of client validation."
       />
       <FraudThresholdCard toast={toast} canWrite={canWriteSettings} />
+      <ReviewBandCard toast={toast} canWrite={canWriteSettings} />
       <DriftCard toast={toast} canWrite={canConfigureMla} />
       <RetrainCard toast={toast} canTrigger={canConfigureMla} />
     </>
@@ -120,6 +122,80 @@ function FraudThresholdCard({ toast, canWrite }) {
           />
           <Stat label="Current" value={row.value} />
           <Stat label="Last updated by" value={row.updatedBy || '— never —'} />
+          <button
+            className="btn-primary"
+            disabled={!canWrite || !draftValid || !dirty || saving}
+            onClick={save}
+            style={btnStyle(canWrite && draftValid && dirty && !saving)}
+            title={!canWrite ? 'Requires settings:write permission' : ''}
+          >
+            {saving ? 'Saving…' : 'Save'}
+          </button>
+        </Row>
+      )}
+    </Card>
+  );
+}
+
+// ──────── Card 1b: Review band ───────────────────────────────
+
+function ReviewBandCard({ toast, canWrite }) {
+  const [loading, setLoading] = useState(true);
+  const [row, setRow] = useState(null);
+  const [draft, setDraft] = useState('');
+  const [saving, setSaving] = useState(false);
+
+  const refresh = useCallback(async () => {
+    setLoading(true);
+    const rows = await listRuntimeSettings();
+    const rm = Array.isArray(rows) ? rows.find((r) => r.key === 'review_margin') : null;
+    setRow(rm || null);
+    setDraft(rm ? String(rm.value) : '');
+    setLoading(false);
+  }, []);
+
+  useEffect(() => { refresh(); }, [refresh]);
+
+  const n = Number(draft);
+  const draftValid = Number.isFinite(n) && n >= BOUNDS.review_margin.min && n <= BOUNDS.review_margin.max;
+  const dirty = row && draft !== String(row.value);
+
+  const save = async () => {
+    if (!draftValid || !dirty) return;
+    setSaving(true);
+    try {
+      await updateRuntimeSetting('review_margin', n);
+      toast && toast(n > 0 ? `Review band → ${n}` : 'Review band disabled');
+      await refresh();
+    } catch (err) {
+      toast && toast(`Save failed: ${err.message.slice(0, 80)}`);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <Card title="Review band" subtitle="Scores within this margin below the decline threshold return REVIEW and enter the analyst queue instead of a silent ACCEPT. 0 disables the band.">
+      <Help>
+        <p>The band turns the model's uncertainty into labels: borderline transactions get a human verdict, and every verdict feeds the next retrain. With threshold <code>0.70</code> and margin <code>0.15</code>, scores in <code>[0.55, 0.70)</code> go to REVIEW.</p>
+        <p style={{ marginTop: 6 }}>Size it to your analyst capacity — every point of margin adds queue volume. Start small (<code>0.05</code>) and widen if the queue stays manageable.</p>
+      </Help>
+
+      {loading && !row && <Muted>Loading…</Muted>}
+      {!loading && !row && <Muted>RDA admin unreachable, or the review_margin migration hasn't run.</Muted>}
+
+      {row && (
+        <Row>
+          <Field
+            label={`Margin (${BOUNDS.review_margin.min}–${BOUNDS.review_margin.max})`}
+            value={draft}
+            onChange={setDraft}
+            step={BOUNDS.review_margin.step}
+            bounds={BOUNDS.review_margin}
+            disabled={!canWrite || saving}
+          />
+          <Stat label="Current" value={row.value} />
+          <Stat label="Band" value={Number(row.value) > 0 ? 'ACTIVE' : 'OFF'} />
           <button
             className="btn-primary"
             disabled={!canWrite || !draftValid || !dirty || saving}

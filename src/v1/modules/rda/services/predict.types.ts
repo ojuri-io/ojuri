@@ -26,10 +26,13 @@ export interface PredictRuleHit {
   stage: RuleStage;
 }
 
+export type MlDecision = Decision.ACCEPT | Decision.DECLINE | Decision.REVIEW;
+
 export interface ModelMeta {
   championVersion: string;
   shadowVersion: string | null;
   threshold: number;
+  reviewThreshold: number | null;
 }
 
 export interface FeaturesPayload {
@@ -40,7 +43,7 @@ export interface FeaturesPayload {
 
 export interface MlOutcome {
   score: number;
-  decision: Decision.ACCEPT | Decision.DECLINE;
+  decision: MlDecision;
 }
 
 export interface FinalVerdict {
@@ -71,7 +74,7 @@ export interface MlDecisionContextInput {
   finalDecision: Decision;
   decisionSource: DecisionSource.ML | DecisionSource.POST_RULE;
   mlScore: number;
-  mlDecision: Decision.ACCEPT | Decision.DECLINE;
+  mlDecision: MlDecision;
   threshold: number;
   championVersion: string;
   shadowVersion: string | null;
@@ -89,7 +92,7 @@ export interface PredictDecisionContext {
   decisionSource: DecisionSource;
   rule: PredictRuleHit | null;
   mlScore: number;
-  mlDecision: Decision.ACCEPT | Decision.DECLINE;
+  mlDecision: MlDecision;
   threshold: number;
   championVersion: string;
   shadowVersion: string | null;
