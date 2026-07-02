@@ -469,6 +469,10 @@ class DecisionAuditRepo extends BaseRepository<IDecisionAudit, DecisionAudit> {
     netDeclineDelta: number;
     championBuckets: number[];
     shadowBuckets: number[];
+    labeled: number;
+    mcnemarP: number | null;
+    championMetrics: { precision: number; recall: number; f1: number } | null;
+    shadowMetrics: { precision: number; recall: number; f1: number } | null;
   }> {
     const knex = DecisionAudit.knex();
     const base = knex
@@ -522,12 +526,63 @@ class DecisionAuditRepo extends BaseRepository<IDecisionAudit, DecisionAudit> {
       )) as unknown as Array<{ bucket: number; n: number }>;
     for (const r of shadowRows) shadowBuckets[r.bucket] = r.n;
 
+    // Ground-truth slice: decisions whose transaction later received a
+    // verified label (chargeback, dispute, reviewer override). Enables
+    // real precision/recall per model and McNemar between them.
+    const GT = `COALESCE(t."groundTruthFraud", t."fraudLabel")`;
+    const CH = `("championScore" >= "threshold")`;
+    const SH = `("shadowScore" >= "threshold")`;
+    const auditTable = DecisionAudit.tableName;
+    const [lab] = (await knex
+      .from(auditTable)
+      .join("transactions as t", "t.transactionId", `${auditTable}.transactionId`)
+      .where(`${auditTable}.createdAt`, ">=", from)
+      .andWhere(`${auditTable}.createdAt`, "<", to)
+      .andWhere("championModelVersion", championVersion)
+      .andWhere("shadowModelVersion", shadowVersion)
+      .whereNotNull("championScore")
+      .whereNotNull("shadowScore")
+      .whereRaw(`${GT} IS NOT NULL`)
+      .select(
+        knex.raw(
+          `count(*)::int as labeled,
+           count(*) filter (where ${GT})::int as fraud,
+           count(*) filter (where ${CH} and ${GT})::int as champ_tp,
+           count(*) filter (where ${CH} and not ${GT})::int as champ_fp,
+           count(*) filter (where ${SH} and ${GT})::int as shadow_tp,
+           count(*) filter (where ${SH} and not ${GT})::int as shadow_fp,
+           count(*) filter (where (${CH} = ${GT}) and (${SH} <> ${GT}))::int as c_right_s_wrong,
+           count(*) filter (where (${CH} <> ${GT}) and (${SH} = ${GT}))::int as c_wrong_s_right`
+        )
+      )) as unknown as Array<{
+      labeled: number;
+      fraud: number;
+      champ_tp: number;
+      champ_fp: number;
+      shadow_tp: number;
+      shadow_fp: number;
+      c_right_s_wrong: number;
+      c_wrong_s_right: number;
+    }>;
+
+    const prf = (tp: number, fp: number, fraud: number) => {
+      const precision = tp + fp > 0 ? tp / (tp + fp) : 0;
+      const recall = fraud > 0 ? tp / fraud : 0;
+      const f1 = precision + recall > 0 ? (2 * precision * recall) / (precision + recall) : 0;
+      return { precision, recall, f1 };
+    };
+    const hasLabels = (lab?.labeled ?? 0) > 0;
+
     return {
       replayed: agg?.replayed ?? 0,
       agreement: agg && agg.replayed > 0 ? agg.agree / agg.replayed : 0,
       netDeclineDelta: agg ? agg.shadow_declines - agg.champ_declines : 0,
       championBuckets: champBuckets,
       shadowBuckets,
+      labeled: lab?.labeled ?? 0,
+      mcnemarP: hasLabels ? mcnemarP(lab.c_wrong_s_right, lab.c_right_s_wrong) : null,
+      championMetrics: hasLabels ? prf(lab.champ_tp, lab.champ_fp, lab.fraud) : null,
+      shadowMetrics: hasLabels ? prf(lab.shadow_tp, lab.shadow_fp, lab.fraud) : null,
     };
   }
 
@@ -598,6 +653,40 @@ function applyFilters(query: ReturnType<typeof DecisionAudit.query>, f: AuditLis
       [codes]
     );
   }
+}
+
+// McNemar with continuity correction; b/c are the paired-disagreement
+// counts. Fewer than 10 disagreements → p=1 (no detectable difference),
+// matching MLA's offline gate semantics.
+function mcnemarP(b: number, c: number): number {
+  if (b + c < 10) return 1;
+  const chi2 = Math.pow(Math.abs(b - c) - 1, 2) / (b + c);
+  return erfc(Math.sqrt(chi2 / 2));
+}
+
+function erfc(x: number): number {
+  const z = Math.abs(x);
+  const t = 1 / (1 + z / 2);
+  const r =
+    t *
+    Math.exp(
+      -z * z -
+        1.26551223 +
+        t *
+          (1.00002368 +
+            t *
+              (0.37409196 +
+                t *
+                  (0.09678418 +
+                    t *
+                      (-0.18628806 +
+                        t *
+                          (0.27886807 +
+                            t *
+                              (-1.13520398 +
+                                t * (1.48851587 + t * (-0.82215223 + t * 0.17087277))))))))
+    );
+  return x >= 0 ? r : 2 - r;
 }
 
 export default DecisionAuditRepo;
