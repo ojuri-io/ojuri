@@ -81,6 +81,8 @@ export interface NetworkFeatures {
   inDegree: number;
   outDegree: number;
   isHub: number;
+  shortestPathToFraud: number;
+  neighborhoodFraudRate: number;
 }
 
 /**

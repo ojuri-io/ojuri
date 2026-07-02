@@ -294,6 +294,45 @@ class PostgresService {
     }
   }
 
+  /**
+   * Users appearing on either side of a confirmed-fraud transaction.
+   * `sinceMs` filters on groundTruthRecordedAt for incremental polls.
+   */
+  async loadFraudFlaggedUsers(
+    sinceMs?: number
+  ): Promise<{ userIds: string[]; latestRecordedAtMs: number }> {
+    try {
+      const knex = getKnexInstance();
+      let query = knex("transactions")
+        .where({ groundTruthFraud: true })
+        .select("senderId", "receiverId", "groundTruthRecordedAt")
+        .orderBy("groundTruthRecordedAt", "asc")
+        .limit(50_000);
+      if (sinceMs) {
+        query = query.where("groundTruthRecordedAt", ">", new Date(sinceMs));
+      }
+      const rows = await query;
+
+      const userIds = new Set<string>();
+      let latestRecordedAtMs = sinceMs ?? 0;
+      for (const row of rows) {
+        if (row.senderId) userIds.add(row.senderId);
+        if (row.receiverId) userIds.add(row.receiverId);
+        const recordedAt = row.groundTruthRecordedAt
+          ? new Date(row.groundTruthRecordedAt).getTime()
+          : 0;
+        if (recordedAt > latestRecordedAtMs) latestRecordedAtMs = recordedAt;
+      }
+
+      return { userIds: [...userIds], latestRecordedAtMs };
+    } catch (err) {
+      log.error("loadFraudFlaggedUsers", "Failed to load fraud-flagged users", {
+        error: err instanceof Error ? err.message : String(err),
+      });
+      return { userIds: [], latestRecordedAtMs: sinceMs ?? 0 };
+    }
+  }
+
   async loadGraphData(sinceTimestamp?: number): Promise<{ transactions: TransactionEvent[] }> {
     try {
       const knex = getKnexInstance();

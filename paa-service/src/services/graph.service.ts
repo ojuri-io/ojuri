@@ -40,6 +40,10 @@ class GraphService {
   private readonly pruneAgeMs = 30 * 24 * 60 * 60 * 1000;
   private readonly pruneIntervalMs = 60 * 60 * 1000;
   private readonly hubMinOutDegree = 10;
+  private readonly fraudPathMaxDepth = 4;
+  private readonly fraudPathMaxVisited = 1000;
+  private readonly fraudPathUnknown = 99;
+  private fraudUsers: Set<string> = new Set();
 
   constructor() {
     this.graph = new Graph<NodeAttributes, EdgeAttributes>({ type: "directed", multi: false });
@@ -338,6 +342,8 @@ class GraphService {
         inDegree: 0,
         outDegree: 0,
         isHub: 0,
+        shortestPathToFraud: this.fraudUsers.has(userId) ? 0 : this.fraudPathUnknown,
+        neighborhoodFraudRate: 0,
       };
     }
 
@@ -354,7 +360,55 @@ class GraphService {
       inDegree,
       outDegree,
       isHub: attrs.isHub || 0,
+      shortestPathToFraud: this.shortestPathToFraud(userId),
+      neighborhoodFraudRate: this.neighborhoodFraudRate(userId),
     };
+  }
+
+  markFraudUsers(userIds: string[]): void {
+    for (const id of userIds) this.fraudUsers.add(id);
+  }
+
+  getFraudUserCount(): number {
+    return this.fraudUsers.size;
+  }
+
+  // BFS over undirected neighbors — fraud association flows both ways
+  // along money edges. Depth and visited caps bound the walk on hub
+  // nodes; anything past a cap reads as "no known fraud nearby" (99).
+  private shortestPathToFraud(userId: string): number {
+    if (this.fraudUsers.size === 0) return this.fraudPathUnknown;
+    if (this.fraudUsers.has(userId)) return 0;
+
+    const visited = new Set<string>([userId]);
+    let frontier: string[] = [userId];
+
+    for (let depth = 1; depth <= this.fraudPathMaxDepth; depth++) {
+      const next: string[] = [];
+      for (const node of frontier) {
+        for (const neighbor of this.graph.neighbors(node)) {
+          if (visited.has(neighbor)) continue;
+          if (this.fraudUsers.has(neighbor)) return depth;
+          visited.add(neighbor);
+          if (visited.size >= this.fraudPathMaxVisited) return this.fraudPathUnknown;
+          next.push(neighbor);
+        }
+      }
+      if (next.length === 0) break;
+      frontier = next;
+    }
+    return this.fraudPathUnknown;
+  }
+
+  private neighborhoodFraudRate(userId: string): number {
+    if (this.fraudUsers.size === 0) return 0;
+    let neighbors = 0;
+    let flagged = 0;
+    this.graph.forEachOutNeighbor(userId, (neighbor) => {
+      neighbors++;
+      if (this.fraudUsers.has(neighbor)) flagged++;
+    });
+    return neighbors > 0 ? flagged / neighbors : 0;
   }
 
   /** Lifetime inbound transaction count — sum of in-edge weights. */

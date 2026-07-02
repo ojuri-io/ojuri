@@ -24,6 +24,7 @@ const appConfig = {
     batchSize: Number(process.env.BATCH_SIZE) || 100,
     maxGraphNodes: Number(process.env.MAX_GRAPH_NODES) || 1000000,
     triangleRecomputeMinIntervalMs: Number(process.env.TRIANGLE_RECOMPUTE_MIN_INTERVAL_MS) || 10000,
+    fraudLabelPollIntervalMs: Number(process.env.FRAUD_LABEL_POLL_INTERVAL_MS) || 300000,
   },
   metrics: {
     port: Number(process.env.METRICS_PORT) || 9090,

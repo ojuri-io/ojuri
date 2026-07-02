@@ -176,13 +176,15 @@ class RedisUpdateService {
       unique_receivers_24h: String(features.unique_receivers_24h),
       unique_receivers_7d: String(features.unique_receivers_7d),
 
-      // Graph block (catalogue indices 18-22, 24).
+      // Graph block (catalogue indices 18-25).
       graph_pagerank: String(features.pagerank),
       graph_clustering_coef: String(features.clusteringCoef),
       graph_community_id: String(features.communityId),
       graph_in_degree: String(features.inDegree),
       graph_out_degree: String(features.outDegree),
       graph_is_hub: String(features.isHub),
+      graph_shortest_path_to_fraud: String(features.shortestPathToFraud),
+      graph_neighborhood_fraud_rate: String(features.neighborhoodFraudRate),
 
       // Receiver block (catalogue index 44) — this user's own inbound
       // count, read from the RECEIVER's hash by RDA.
