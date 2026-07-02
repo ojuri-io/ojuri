@@ -7,6 +7,162 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.2.0] - 2026-07-02
+
+This release closes the label feedback loop — the core mechanism that
+lets a self-hosted deployment improve on its own outcomes the way
+closed fraud vendors do — and fixes four correctness gaps where the
+platform silently did less than its own contracts claimed. Models
+trained before 1.2.0 keep working, but see the "Changed" notes on
+score distributions before relying on pre-1.2.0 thresholds.
+
+### Added
+
+- **Ground-truth label ingestion API** (#81). `POST /v1/admin/labels`
+  (new `labels:write` permission) accepts up to 1,000 verified
+  outcomes per batch — chargebacks, disputes, customer reports — and
+  upserts `transactions.groundTruthFraud` with provenance. Duplicates
+  in a batch collapse last-wins; the response splits `applied` vs
+  `unmatched` so callers can retry rows PAA hasn't flushed yet.
+  `GroundTruthSource` is now a shared enum across the label paths.
+  `docs/ADOPTER_TRAINING.md` §4 documents the flow.
+- **MLA label-volume retrain trigger** (#81). MLA counts labels
+  recorded since its watermark every `LABEL_CHECK_INTERVAL_SECONDS`
+  (default 900) and retrains once `LABEL_RETRAIN_THRESHOLD` (default
+  500; `0` disables) accumulate — fresh verified labels reach the
+  model on their own schedule instead of waiting for F1 drift, which
+  is 3–7 days label-delayed by nature. Runs with or without Kafka,
+  respects `autoRetrainEnabled`, and reports `label_volume_checks` /
+  `labels_pending_retrain` in `/stats`. The registry treats the
+  `label_volume` trigger like `drift` (auto-activate on gate pass).
+- **PAA fraud-proximity graph features** (#82). PAA polls
+  confirmed-fraud transactions (every `FRAUD_LABEL_POLL_INTERVAL_MS`,
+  default 5 min) and marks both parties as fraud nodes, making two
+  previously always-default catalogue features real:
+  `graph_shortest_path_to_fraud` (undirected BFS, depth-capped at 4,
+  visit-capped at 1000) and `graph_neighborhood_fraud_rate` (fraction
+  of flagged 1-hop out-neighbors). `recipient_dispute_rate` is now
+  the only contracted feature without a writer, enforced by test.
+- **Real shadow-model scoring** (#83). The SHADOW registry status now
+  does what it says: OnnxService keeps a small second session pool for
+  the shadow version (same feature-schema-version refusal as the
+  champion), scores it on every ML-scored predict overlapped with the
+  reason-code/POST-rule stages, and writes `shadowScore` onto the same
+  `decisionAuditLog` row. Strictly observational — failures record
+  null and never touch the decision or `/readyz`. New
+  `shadow_inference` stage metric.
+- **PAA delivers the full `paa:redis` feature contract** (#78).
+  Previously only 11 of the ~20 contracted features were written; the
+  model scored on catalogue defaults for the rest, permanently. Now
+  implemented: `velocity_1m/5m/15m`, `amount_mean_24h`,
+  `amount_max_24h`, `unique_receivers_24h/7d` (fan-out signal),
+  `hour_dev_from_sender_norm`, `graph_is_hub` (top 0.1% out-degree
+  with an absolute floor), `recipient_lifetime_tx_count` (kept fresh
+  on pure receivers via partial updates), and a full pair block on a
+  new `features:pair:{sender}:{receiver}` hash (30-day TTL):
+  `pair_is_first_send`, `pair_prior_send_count`,
+  `pair_time_since_last_send`, `pair_round_trip_count_30d`,
+  `pair_amount_mean_30d`. RDA fetches sender + pair + receiver hashes
+  in one pipelined round trip. A contract test fails the build if a
+  contracted feature loses its writer.
+- **REVIEW band on the ML score** (#87). A new `review_margin` runtime
+  setting (seeded 0 = off) routes scores in
+  `[threshold − margin, threshold)` to a REVIEW decision and into the
+  analyst queue instead of a silent ACCEPT — turning model uncertainty
+  into ground-truth labels. Tracks the per-segment threshold
+  resolution; REVIEW is observational on the wire (`fraud: false`,
+  never published to the blocked topic). Settings gains a Review band
+  card with sizing guidance.
+- **MLA temporal train/test splits** (#88). Training rows are
+  time-ordered and split positionally — train on the past, evaluate on
+  the future. The previous stratified random split leaked future rows
+  into training and inflated every metric the deployment gate reads.
+  Falls back to the stratified split for degenerate datasets.
+- **MLA absolute deploy floor** (#88). `MIN_DEPLOY_F1` (default 0.3):
+  the validator refuses candidates below the floor even when they beat
+  the incumbent, and cold-start models below it register as CANDIDATE
+  for operator review instead of auto-activating.
+- **Sentinel Labels page + label-feedback card** (#86). Manual entry
+  for verified outcomes (paste ids, per-line verdicts, source picker)
+  posting to the labels API, and a Settings card showing "labels until
+  next retrain" from MLA `/stats`.
+- **Fraud simulation benchmark** (#90). `scripts/fraud-sim.mjs` +
+  `scripts/fraud-sim-score.py` + `docs/FRAUD_SIMULATION.md`: a
+  deterministic persona population with six embedded fraud typologies
+  (half deliberately rule-evading) driven through `/v1/predict` over a
+  simulated multi-week window, scored per typology against ground
+  truth. Reference run: 128k transactions, 34.2% of fraud caught cold
+  → 98.8% at 1.1% FPR after one label-driven retrain, on fraud
+  identities the model never saw.
+- **Live ground-truth metrics in champion-vs-shadow** (#91). The
+  comparison endpoint computes per-model precision/recall/F1 and
+  McNemar's p from labelled decisions in the window instead of
+  hardcoding null; the Models page prefers live values over training
+  metrics, √-scales the score histogram, and fixes the off-plot
+  tooltip.
+- **Demo traffic seeder** (#84). `docker compose --profile demo run
+  --rm demo-seed` (or `node scripts/demo-traffic.mjs`) posts ~500
+  realistic NGN transactions — 50 recurring senders plus an embedded
+  money ring, a 30-receiver mule fan-out, VPN sessions, and a
+  structuring sequence — so a fresh install has a populated dashboard
+  and firing rules within a minute. Zero npm dependencies.
+
+### Fixed
+
+- **Reason codes were misattributed** (#77). The explainer used
+  pre-catalogue vector indices, so every code read a different feature
+  than its label claimed (`AMOUNT_HIGH` was computed from
+  `unique_receivers_24h`, `PAGERANK` from `velocity_7d`, …). Specs now
+  resolve positions from the feature catalogue by name; a regression
+  test pins the attribution. `PAGERANK` baselines moved to realistic
+  per-node magnitudes so it no longer adds a large constant to every
+  explanation.
+- **`pair_time_since_last_send` semantics** (#78). Was the sender's
+  time since their last transaction to *anyone*, mislabeled to the
+  model as pair recency. Now genuinely pair-scoped.
+- **MLA deployment gate had an escape hatch** (#79). A candidate
+  deployed on F1 improvement alone, bypassing both the McNemar
+  significance requirement and the >5% precision/recall regression
+  guards. All three gates are now binding.
+- **MLA PSI data-drift detection was inert** (#80). The consumer fed
+  the detector fields the Kafka event doesn't carry (fabricated as
+  constant 0) under names that didn't match the baseline's catalogue
+  keys. PSI now monitors only fields actually present on the event
+  (`amount`, `account_age_days`, `session_to_txn_seconds`) under exact
+  catalogue names, omitting absent fields instead of defaulting them.
+- **PAA first Redis flush no longer silently dropped** (#89). The
+  worker now waits for Redis readiness before consuming Kafka — the
+  lazy client raced the first batch flush and every write in it was
+  counted as an error and discarded. Also quiets the fraud-sync log
+  re-reporting the same users every poll.
+- **Isotonic calibrator was dropped on automated retrains** (#88). Only
+  the cold-start script persisted it, so the first drift/label-volume
+  retrain silently shipped uncalibrated scores. `upload_model` now
+  writes `calibrator.npz` into every version directory.
+
+### Changed
+
+- **Score distributions will shift after deploying 1.2.0.** Models
+  trained before this release learned on default values for the ~9
+  newly-delivered PAA features (#78) and the two fraud-proximity
+  features (#82); once real values flow, scores move. Plan a retrain
+  shortly after deploying, and re-validate any hand-tuned per-segment
+  thresholds against post-upgrade audit data.
+- Shadow scoring adds one extra ONNX inference per ML-scored request
+  *while a SHADOW model is staged* (#83). No cost when no shadow is
+  registered. If throughput matters on small hardware, retire the
+  shadow when the comparison window is done.
+- `POST /v1/admin/labels` requires the new `labels:write` permission —
+  grant it to the role your ops integration uses before pointing a
+  chargeback feed at it (#81).
+- Post-1.2.0 training metrics will read **lower** than pre-1.2.0
+  numbers for the same data (#88) — the temporal split removes the
+  future-leak inflation. That drop is honesty, not regression; compare
+  models within the same split methodology only.
+- The review queue now includes REVIEW-decision rows alongside
+  DECLINEs (#87). Queue volume is unchanged until an operator sets a
+  non-zero `review_margin`.
+
 ## [1.1.0] - 2026-06-22
 
 First tagged release. v1.0.0 (2026-06-07) was the soft launch; v1.1.0 is the
