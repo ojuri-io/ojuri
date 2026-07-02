@@ -86,6 +86,20 @@ score distributions before relying on pre-1.2.0 thresholds.
   for verified outcomes (paste ids, per-line verdicts, source picker)
   posting to the labels API, and a Settings card showing "labels until
   next retrain" from MLA `/stats`.
+- **Fraud simulation benchmark** (#90). `scripts/fraud-sim.mjs` +
+  `scripts/fraud-sim-score.py` + `docs/FRAUD_SIMULATION.md`: a
+  deterministic persona population with six embedded fraud typologies
+  (half deliberately rule-evading) driven through `/v1/predict` over a
+  simulated multi-week window, scored per typology against ground
+  truth. Reference run: 128k transactions, 34.2% of fraud caught cold
+  → 98.8% at 1.1% FPR after one label-driven retrain, on fraud
+  identities the model never saw.
+- **Live ground-truth metrics in champion-vs-shadow** (#91). The
+  comparison endpoint computes per-model precision/recall/F1 and
+  McNemar's p from labelled decisions in the window instead of
+  hardcoding null; the Models page prefers live values over training
+  metrics, √-scales the score histogram, and fixes the off-plot
+  tooltip.
 - **Demo traffic seeder** (#84). `docker compose --profile demo run
   --rm demo-seed` (or `node scripts/demo-traffic.mjs`) posts ~500
   realistic NGN transactions — 50 recurring senders plus an embedded
@@ -116,6 +130,11 @@ score distributions before relying on pre-1.2.0 thresholds.
   keys. PSI now monitors only fields actually present on the event
   (`amount`, `account_age_days`, `session_to_txn_seconds`) under exact
   catalogue names, omitting absent fields instead of defaulting them.
+- **PAA first Redis flush no longer silently dropped** (#89). The
+  worker now waits for Redis readiness before consuming Kafka — the
+  lazy client raced the first batch flush and every write in it was
+  counted as an error and discarded. Also quiets the fraud-sync log
+  re-reporting the same users every poll.
 - **Isotonic calibrator was dropped on automated retrains** (#88). Only
   the cold-start script persisted it, so the first drift/label-volume
   retrain silently shipped uncalibrated scores. `upload_model` now
