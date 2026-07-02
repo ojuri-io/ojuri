@@ -18,13 +18,8 @@ import { CombinedFeatures, PairFeatures, TransactionEvent } from "@services/type
 
 const CATALOG_PATH = resolve(__dirname, "../../../../models/feature-catalog.v1.json");
 
-// Not yet computable: fraud-proximity features need the label feedback
-// loop into PAA; dispute rate needs a dispute ingestion path.
-const KNOWN_UNIMPLEMENTED = new Set([
-  "graph_shortest_path_to_fraud",
-  "graph_neighborhood_fraud_rate",
-  "recipient_dispute_rate",
-]);
+// Not yet computable: dispute rate needs a dispute ingestion path.
+const KNOWN_UNIMPLEMENTED = new Set(["recipient_dispute_rate"]);
 
 const combinedFeatures: CombinedFeatures = {
   velocity_1m: 1,
@@ -48,6 +43,8 @@ const combinedFeatures: CombinedFeatures = {
   inDegree: 3,
   outDegree: 9,
   isHub: 0,
+  shortestPathToFraud: 99,
+  neighborhoodFraudRate: 0,
   recipientLifetimeTxCount: 3,
   updated_at: 0,
 };
@@ -138,6 +135,44 @@ describe("VelocityService windows and pair metrics", () => {
     const service = new VelocityService();
     seed(service);
     expect(service.calculatePairMetrics("A", "C", now).secondsSincePrevSend).toBeNull();
+  });
+});
+
+describe("GraphService fraud proximity", () => {
+  function chainGraph(): GraphService {
+    const service = new GraphService();
+    service.addTransaction(event({ sender_id: "A", receiver_id: "B", timestamp: 1 }));
+    service.addTransaction(event({ sender_id: "B", receiver_id: "C", timestamp: 2 }));
+    service.addTransaction(event({ sender_id: "C", receiver_id: "D", timestamp: 3 }));
+    return service;
+  }
+
+  it("defaults to 99 / 0 when no fraud users are known", () => {
+    const service = chainGraph();
+    const features = service.getNetworkFeatures("A");
+    expect(features.shortestPathToFraud).toBe(99);
+    expect(features.neighborhoodFraudRate).toBe(0);
+  });
+
+  it("computes hop distance to the nearest fraud user", () => {
+    const service = chainGraph();
+    service.markFraudUsers(["D"]);
+
+    expect(service.getNetworkFeatures("D").shortestPathToFraud).toBe(0);
+    expect(service.getNetworkFeatures("C").shortestPathToFraud).toBe(1);
+    expect(service.getNetworkFeatures("B").shortestPathToFraud).toBe(2);
+    expect(service.getNetworkFeatures("A").shortestPathToFraud).toBe(3);
+  });
+
+  it("computes the fraction of flagged out-neighbors", () => {
+    const service = new GraphService();
+    service.addTransaction(event({ sender_id: "S", receiver_id: "F1", timestamp: 1 }));
+    service.addTransaction(event({ sender_id: "S", receiver_id: "F2", timestamp: 2 }));
+    service.addTransaction(event({ sender_id: "S", receiver_id: "OK", timestamp: 3 }));
+    service.addTransaction(event({ sender_id: "S", receiver_id: "OK2", timestamp: 4 }));
+    service.markFraudUsers(["F1", "F2"]);
+
+    expect(service.getNetworkFeatures("S").neighborhoodFraudRate).toBeCloseTo(0.5, 5);
   });
 });
 
