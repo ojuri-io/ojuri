@@ -47,6 +47,11 @@ async function processTransaction(event: TransactionEvent): Promise<void> {
 
         // 3. Calculate velocity metrics for sender
         const velocityMetrics = velocityService.calculateMetrics(event.sender_id, event.timestamp);
+        const pairMetrics = velocityService.calculatePairMetrics(
+          event.sender_id,
+          event.receiver_id,
+          event.timestamp
+        );
 
         const senderSnapshot = graphService.getNodeSnapshot(event.sender_id);
         const receiverSnapshot = graphService.getNodeSnapshot(event.receiver_id);
@@ -61,12 +66,26 @@ async function processTransaction(event: TransactionEvent): Promise<void> {
             degreeCentrality: 0,
             inDegree: 0,
             outDegree: 0,
+            isHub: 0,
           }),
+          recipientLifetimeTxCount: graphService.getInboundTransactionCount(event.sender_id),
           updated_at: Date.now(),
         };
 
         log.debug("processTransaction", "Queueing Redis feature update");
         redisUpdateService.queueUpdate(event.sender_id, combinedFeatures);
+        redisUpdateService.queuePairUpdate(event.sender_id, event.receiver_id, {
+          // Edge weight is lifetime and survives restarts; the velocity
+          // buffer only sees the replay window.
+          priorSendCount: edgeSnapshot?.weight ?? pairMetrics.forwardCount30d,
+          secondsSincePrevSend: pairMetrics.secondsSincePrevSend ?? 999999,
+          roundTripCount30d: pairMetrics.roundTripCount30d,
+          amountMean30d: pairMetrics.amountMean30d,
+        });
+        redisUpdateService.queueReceiverCount(
+          event.receiver_id,
+          graphService.getInboundTransactionCount(event.receiver_id)
+        );
 
         log.debug("processTransaction", "Queueing PostgreSQL persistence");
         postgresService.queueTransaction(event);

@@ -80,6 +80,7 @@ export interface NetworkFeatures {
   degreeCentrality: number;
   inDegree: number;
   outDegree: number;
+  isHub: number;
 }
 
 /**
@@ -119,17 +120,46 @@ export interface EdgeSnapshot {
  * Velocity metrics for a user
  */
 export interface VelocityMetrics {
+  velocity_1m: number;
+  velocity_5m: number;
+  velocity_15m: number;
   velocity_1h: number;
   velocity_24h: number;
   velocity_7d: number;
+  amount_mean_24h: number;
+  amount_max_24h: number;
   avg_amount_30d: number;
   std_amount_30d: number;
+  unique_receivers_24h: number;
+  unique_receivers_7d: number;
+  hour_dev_from_norm: number;
   time_since_last_txn: number;
+}
+
+/**
+ * Windowed (sender, receiver) pair metrics from the velocity buffers.
+ */
+export interface PairVelocityMetrics {
+  forwardCount30d: number;
+  amountMean30d: number;
+  roundTripCount30d: number;
+  secondsSincePrevSend: number | null;
+}
+
+/**
+ * Pair features written to `features:pair:{senderId}:{receiverId}`.
+ */
+export interface PairFeatures {
+  priorSendCount: number;
+  secondsSincePrevSend: number;
+  roundTripCount30d: number;
+  amountMean30d: number;
 }
 
 /**
  * Combined features to store in Redis
  */
 export interface CombinedFeatures extends VelocityMetrics, NetworkFeatures {
+  recipientLifetimeTxCount: number;
   updated_at: number;
 }

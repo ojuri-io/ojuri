@@ -16,6 +16,7 @@ interface NodeAttributes {
   pagerank?: number;
   clusteringCoef?: number;
   communityId?: number;
+  isHub?: number;
 }
 
 interface EdgeAttributes {
@@ -38,6 +39,7 @@ class GraphService {
   private readonly triangleRecomputeMinIntervalMs: number;
   private readonly pruneAgeMs = 30 * 24 * 60 * 60 * 1000;
   private readonly pruneIntervalMs = 60 * 60 * 1000;
+  private readonly hubMinOutDegree = 10;
 
   constructor() {
     this.graph = new Graph<NodeAttributes, EdgeAttributes>({ type: "directed", multi: false });
@@ -183,6 +185,8 @@ class GraphService {
         this.graph.setNodeAttribute(node, "communityId", communities[node] || 0);
       });
 
+      this.markHubs();
+
       this.lastPagerankUpdate = Date.now();
       this.dirtyTriangleCount = 0;
       const computeTime = Date.now() - startTime;
@@ -199,6 +203,24 @@ class GraphService {
         error: err instanceof Error ? err.message : String(err),
       });
     }
+  }
+
+  // Catalogue `graph_is_hub`: top 0.1% of out-degree. The absolute
+  // floor keeps small/young graphs from flagging every node while the
+  // 99.9th percentile is still degenerate.
+  private markHubs(): void {
+    const outDegrees: number[] = [];
+    this.graph.forEachNode((node) => {
+      outDegrees.push(this.graph.outDegree(node));
+    });
+
+    outDegrees.sort((a, b) => a - b);
+    const percentileIdx = Math.floor(0.999 * (outDegrees.length - 1));
+    const threshold = Math.max(outDegrees[percentileIdx] ?? Infinity, this.hubMinOutDegree);
+
+    this.graph.forEachNode((node) => {
+      this.graph.setNodeAttribute(node, "isHub", this.graph.outDegree(node) >= threshold ? 1 : 0);
+    });
   }
 
   private calculateLocalClusteringCoefficient(node: string): number {
@@ -315,6 +337,7 @@ class GraphService {
         degreeCentrality: 0,
         inDegree: 0,
         outDegree: 0,
+        isHub: 0,
       };
     }
 
@@ -330,7 +353,18 @@ class GraphService {
       degreeCentrality: (inDegree + outDegree) / (2 * maxDegree),
       inDegree,
       outDegree,
+      isHub: attrs.isHub || 0,
     };
+  }
+
+  /** Lifetime inbound transaction count — sum of in-edge weights. */
+  getInboundTransactionCount(userId: string): number {
+    if (!this.graph.hasNode(userId)) return 0;
+    let count = 0;
+    this.graph.forEachInEdge(userId, (_edge, attrs) => {
+      count += attrs.weight;
+    });
+    return count;
   }
 
   private pruneOldNodes(opts: { capDriven: boolean } = { capDriven: false }): void {
