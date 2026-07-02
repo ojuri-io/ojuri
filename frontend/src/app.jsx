@@ -37,6 +37,7 @@ import Integrations from './pages/integrations.jsx';
 import Users from './pages/users.jsx';
 import Roles from './pages/roles.jsx';
 import TrainingImports from './pages/training-imports.jsx';
+import Labels from './pages/labels.jsx';
 
 function loadRoute() {
   const h = (location.hash || '').replace('#', '') || 'dash';
@@ -59,6 +60,7 @@ function loadRoute() {
     'users',
     'roles',
     'training',
+    'labels',
   ];
   return { page: valid.includes(h) ? h : 'dash', txn: null };
 }
@@ -379,6 +381,9 @@ function AuthenticatedApp({ user, onLogout }) {
   } else if (page === 'training') {
     PageBody = <TrainingImports toast={toast} user={user} />;
     screenLabel = '14 Training data';
+  } else if (page === 'labels') {
+    PageBody = <Labels toast={toast} user={user} />;
+    screenLabel = '15 Labels';
   }
 
   // Bell notifications are sourced from the same state the dashboard
