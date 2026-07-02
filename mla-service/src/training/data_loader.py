@@ -246,6 +246,14 @@ class DataLoader:
             except Exception as e:
                 logger.debug("Could not calculate label age: %s", e)
 
+        # Time-order the selected rows so the preprocessor's temporal
+        # split (train on the past, evaluate on the future) works
+        # positionally. Selection priority (ground truth first, within
+        # the LIMIT) already happened in SQL — this only reorders what
+        # was selected.
+        if "timestamp" in df.columns and df["timestamp"].notna().any():
+            df = df.sort_values("timestamp").reset_index(drop=True)
+
         features_df = self._extract_features(df)
         labels = df["fraud_label"].astype(int)
 
