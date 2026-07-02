@@ -15,6 +15,7 @@ to wire one capability up. For architecture-level notes, see
 | [`RULES.md`](RULES.md)                    | Pre/post rules engine, the JSON DSL, examples, failure isolation.      |
 | [`MODEL-REGISTRY.md`](MODEL-REGISTRY.md)  | Model lifecycle (CANDIDATE → SHADOW → ACTIVE), per-segment thresholds. |
 | [`FEATURES.md`](FEATURES.md)              | Feature catalogue (64 base + adopter overlay), compute ops, schema versioning. |
+| [`FRAUD_SIMULATION.md`](FRAUD_SIMULATION.md) | Persona-driven detection benchmark; run it against your own stack.   |
 | [`TRAINING.md`](TRAINING.md)              | Adopter walkthrough — load data, train, register, activate.            |
 | [`WEBHOOKS.md`](WEBHOOKS.md)              | Subscribing, payload schemas, signature verification, retry model.     |
 | [`IDEMPOTENCY.md`](IDEMPOTENCY.md)        | `Idempotency-Key` semantics, scoping, TTL, conflict handling.          |
