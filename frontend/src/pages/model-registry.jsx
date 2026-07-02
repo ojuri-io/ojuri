@@ -96,10 +96,13 @@ function ModelRegistry({ toast, models, setModels, segmentThresholds, setSegment
     RETIRED: models.filter(m => m.status === 'RETIRED').length
   }), [models]);
 
-  // Promote gating per spec: F1Δ ≥ 0.01 is enforced client-side. McNemar
-  // gating requires ground-truth fraudLabel which most adopters don't
-  // carry — `comparison.mcnemarP` is null until that's wired.
+  // Promote gating per spec: F1Δ ≥ 0.01 is enforced client-side.
+  // `comparison.mcnemarP` and the live per-model metrics arrive once
+  // decisions in the window carry ground truth from the labels flow;
+  // until then registered training metrics are shown.
   const mcnemarP = comparison?.mcnemarP ?? null;
+  const liveChamp = comparison?.metrics?.champion ?? null;
+  const liveShadow = comparison?.metrics?.shadow ?? null;
   const f1Delta = shadow && champion && shadow.F1 != null && champion.F1 != null
     ? +(shadow.F1 - champion.F1).toFixed(3)
     : 0;
@@ -236,8 +239,13 @@ function ModelRegistry({ toast, models, setModels, segmentThresholds, setSegment
           <span></span>
           <span>F1</span><span>AUC</span><span>PRECISION</span><span>RECALL</span>
         </div>
-        <StatRow color="info" label="Champion" version={champion?.version} F1={champion?.F1} AUC={champion?.AUC} P={champion?.precision} R={champion?.recall}/>
-        <StatRow color="warning" label="Shadow" version={shadow?.version} F1={shadow?.F1} AUC={shadow?.AUC} P={shadow?.precision} R={shadow?.recall} compareTo={champion}/>
+        <StatRow color="info" label="Champion" version={champion?.version} F1={liveChamp?.f1 ?? champion?.F1} AUC={champion?.AUC} P={liveChamp?.precision ?? champion?.precision} R={liveChamp?.recall ?? champion?.recall}/>
+        <StatRow color="warning" label="Shadow" version={shadow?.version} F1={liveShadow?.f1 ?? shadow?.F1} AUC={shadow?.AUC} P={liveShadow?.precision ?? shadow?.precision} R={liveShadow?.recall ?? shadow?.recall} compareTo={champion}/>
+        {liveChamp && (
+          <p style={{margin:'4px 0 0', fontSize:10, color:'var(--color-text-tertiary)'}}>
+            F1 / precision / recall computed live from {comparison?.labeled?.toLocaleString?.() ?? comparison?.labeled} ground-truth-labelled decisions in the window; AUC is from training.
+          </p>
+        )}
 
         {/* Distribution */}
         <div style={{marginTop:14}}>
@@ -264,7 +272,7 @@ function ModelRegistry({ toast, models, setModels, segmentThresholds, setSegment
           <KV
             label="MCNEMAR p"
             value={mcnemarP == null ? '—' : mcnemarP < 0.01 ? <span style={{color:'var(--color-text-success)'}}>&lt; 0.01</span> : mcnemarP.toFixed(3)}
-            sub={mcnemarP == null ? 'requires fraudLabel ground truth' : `p = ${mcnemarP}`}
+            sub={mcnemarP == null ? 'no ground-truth labels in window' : `over ${comparison?.labeled?.toLocaleString?.() ?? comparison?.labeled} labelled decisions`}
           />
           <KV
             label="NET ΔDECLINE"
@@ -545,34 +553,51 @@ function Histogram({ champ, shadow, threshold }) {
       <line x1={thresholdX} y1={pad.t} x2={thresholdX} y2={pad.t + innerH} stroke="var(--color-text-danger)" strokeWidth="1" strokeDasharray="4,3"/>
       <text x={thresholdX + 4} y={pad.t + 9} fontSize="9" fill="var(--color-text-danger)" fontFamily="var(--font-mono)">0.65</text>
 
-      {/* bars */}
+      {/* bars — √ scale: fraud scores pile into the extreme buckets and
+          a linear axis flattens everything else into invisibility */}
       {champArr.map((v, i) => {
         const x = pad.l + i * bucketSpan + 1;
-        const h = (v / max) * innerH;
+        const h = Math.sqrt(v / max) * innerH;
         const y = pad.t + innerH - h;
         const sv = shadowArr[i] ?? 0;
-        const sh = (sv / max) * innerH;
+        const sh = Math.sqrt(sv / max) * innerH;
         const sy = pad.t + innerH - sh;
         return (
           <g key={i} onMouseEnter={()=>setHover(i)} onMouseLeave={()=>setHover(null)} style={{cursor:'pointer'}}>
             <rect x={x} y={y} width={barW} height={h} fill="var(--color-text-info)" opacity={hover == null || hover === i ? 1 : 0.4}/>
             <rect x={x + barW + 1} y={sy} width={barW} height={sh} fill="var(--color-text-warning)" opacity={hover == null || hover === i ? 1 : 0.4}/>
-            {hover === i && (
-              <g>
-                <rect x={x - 38} y={Math.min(y, sy) - 32} width={94} height={28} rx="3" fill="var(--color-text-primary)"/>
-                <text x={x + 9} y={Math.min(y, sy) - 19} fontSize="9" fill="white" fontFamily="var(--font-mono)" textAnchor="middle">{(i/bucketCount).toFixed(2)}–{((i+1)/bucketCount).toFixed(2)}</text>
-                <text x={x + 9} y={Math.min(y, sy) - 9} fontSize="9" fill="white" fontFamily="var(--font-mono)" textAnchor="middle">C:{v} · S:{sv}</text>
-              </g>
-            )}
           </g>
         );
       })}
+
+      {/* tooltip drawn after all bars so it never renders underneath a
+          neighbouring bucket; box clamps inside the plot and sizes to
+          its widest line so large counts stay legible */}
+      {hover != null && (() => {
+        const v = champArr[hover] ?? 0;
+        const sv = shadowArr[hover] ?? 0;
+        const line1 = `${(hover/bucketCount).toFixed(2)}–${((hover+1)/bucketCount).toFixed(2)}`;
+        const line2 = `C:${v.toLocaleString()} · S:${sv.toLocaleString()}`;
+        const boxW = Math.max(line1.length, line2.length) * 5.6 + 14;
+        const barTop = pad.t + innerH - Math.sqrt(Math.max(v, sv) / max) * innerH;
+        const boxY = Math.max(pad.t + 2, Math.min(barTop - 32, pad.t + innerH - 30));
+        const cx = pad.l + hover * bucketSpan + bucketSpan / 2;
+        const boxX = Math.min(Math.max(cx - boxW / 2, pad.l + 2), pad.l + innerW - boxW - 2);
+        return (
+          <g pointerEvents="none">
+            <rect x={boxX} y={boxY} width={boxW} height={28} rx="3" fill="var(--color-text-primary)"/>
+            <text x={boxX + boxW/2} y={boxY + 12} fontSize="9" fill="white" fontFamily="var(--font-mono)" textAnchor="middle">{line1}</text>
+            <text x={boxX + boxW/2} y={boxY + 22} fontSize="9" fill="white" fontFamily="var(--font-mono)" textAnchor="middle">{line2}</text>
+          </g>
+        );
+      })()}
 
       {/* x ticks */}
       {[0, 0.25, 0.5, 0.75, 1].map(t => (
         <text key={t} x={pad.l + t * innerW} y={H - 8} fontSize="9" fill="var(--color-text-tertiary)" fontFamily="var(--font-mono)" textAnchor="middle">{t.toFixed(2)}</text>
       ))}
       <text x={pad.l + innerW/2} y={H - 0} fontSize="9" fill="var(--color-text-secondary)" textAnchor="middle">fraud probability bucket</text>
+      <text x={pad.l + 4} y={pad.t + 8} fontSize="8" fill="var(--color-text-tertiary)" fontFamily="var(--font-mono)">count (√ scale)</text>
     </svg>
   );
 }

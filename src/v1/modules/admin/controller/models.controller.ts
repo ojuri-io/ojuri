@@ -21,9 +21,11 @@ class ModelsController {
   /**
    * Champion-vs-shadow replay summary. Numbers are computed off the
    * `decisionAuditLog` rows where both `championModelVersion` and
-   * `shadowModelVersion` match the requested labels. `mcnemarP` is
-   * intentionally omitted from this MVP — most adopters don't carry
-   * ground-truth `fraudLabel`, and the UI renders "—" when null.
+   * `shadowModelVersion` match the requested labels. When decisions in
+   * the window carry ground truth (chargebacks / disputes / reviewer
+   * overrides via the labels flow), per-model precision/recall/F1 and
+   * McNemar's p are computed live; otherwise they are null and the UI
+   * renders "—".
    */
   comparison = async (
     req: FastifyRequest<{
@@ -75,9 +77,12 @@ class ModelsController {
         replayed: cmp.replayed,
         agreement: cmp.replayed > 0 ? cmp.agreement : null,
         netDeclineDelta: cmp.replayed > 0 ? cmp.netDeclineDelta : null,
-        // McNemar's test needs the ground-truth `fraudLabel`, which most
-        // adopters don't carry. Surface null so the UI renders "—".
-        mcnemarP: null,
+        labeled: cmp.labeled,
+        mcnemarP: cmp.mcnemarP,
+        metrics: {
+          champion: cmp.championMetrics,
+          shadow: cmp.shadowMetrics,
+        },
         scoreBuckets: {
           champion: cmp.championBuckets,
           shadow: cmp.shadowBuckets,
