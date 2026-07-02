@@ -113,6 +113,8 @@ class ModelRegistry:
         version: str,
         metadata: dict,
         trigger: str = "drift",
+        calibrator=None,
+        activate: bool = None,
     ) -> str:
         """
         Materialise a versioned model directory and, if configured,
@@ -163,6 +165,14 @@ class ModelRegistry:
             shutil.copyfile(scaler_src, scaler_dst)
             logger.info("  ✅ Scaler:  %s", scaler_dst)
 
+        # 3b. Isotonic calibrator — previously only the cold-start
+        # script persisted it, so every automated retrain silently
+        # shipped uncalibrated scores.
+        if calibrator is not None and getattr(calibrator, "fitted", False):
+            calibrator_dst = version_dir / "calibrator.npz"
+            calibrator.save(calibrator_dst)
+            logger.info("  ✅ Calibrator: %s", calibrator_dst)
+
         # 4. Metadata — full training context for the audit trail.
         # `feature_schema_version` is the contract RDA enforces on
         # load: it embeds the base catalogue version plus a SHA of
@@ -200,7 +210,7 @@ class ModelRegistry:
                 "trained_at": time.time(),
                 "trigger": trigger,
             },
-            activate=trigger != "manual",
+            activate=(trigger != "manual") if activate is None else activate,
         )
 
         logger.info("✅ Model %s materialised at %s", version, version_dir)

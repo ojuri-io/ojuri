@@ -43,16 +43,23 @@ class DataPreprocessor:
         X: pd.DataFrame,
         y: pd.Series,
         test_size: float = 0.2,
-        val_size: float = 0.25  # 0.25 of remaining = 0.2 of total
+        val_size: float = 0.25,  # 0.25 of remaining = 0.2 of total
+        temporal: bool = True,
     ) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
         """
         Full preprocessing pipeline.
         
         Args:
-            X: Feature DataFrame
+            X: Feature DataFrame (rows time-ascending when temporal=True)
             y: Labels Series
             test_size: Fraction for test set
             val_size: Fraction of train set for validation
+            temporal: Split positionally — train on the past, validate
+                and test on the future. Fraud is time-ordered; a random
+                split leaks future rows into training and inflates every
+                metric the deployment gate reads. Falls back to the
+                stratified random split when the temporal cut leaves a
+                single-class train set (tiny or degenerate datasets).
         
         Returns:
             Tuple of (X_train, X_val, X_test, y_train, y_val, y_test)
@@ -68,23 +75,34 @@ class DataPreprocessor:
         # Handle NaN and inf values
         X_array = np.nan_to_num(X_array, nan=0.0, posinf=0.0, neginf=0.0)
         
-        # Step 1: Train/test split
-        logger.info("Step 1: Train/test split...")
-        X_temp, X_test, y_temp, y_test = train_test_split(
-            X_array, y_array,
-            test_size=test_size,
-            stratify=y_array,
-            random_state=42
-        )
-        
-        # Step 2: Train/validation split
-        logger.info("Step 2: Train/validation split...")
-        X_train, X_val, y_train, y_val = train_test_split(
-            X_temp, y_temp,
-            test_size=val_size,
-            stratify=y_temp,
-            random_state=42
-        )
+        split = self._temporal_split(X_array, y_array, test_size, val_size) if temporal else None
+        if temporal and split is None:
+            logger.warning(
+                "Temporal split produced a single-class train set — "
+                "falling back to stratified random split"
+            )
+
+        if split is not None:
+            logger.info("Step 1-2: Temporal train/val/test split (past → future)...")
+            X_train, X_val, X_test, y_train, y_val, y_test = split
+        else:
+            # Step 1: Train/test split
+            logger.info("Step 1: Train/test split...")
+            X_temp, X_test, y_temp, y_test = train_test_split(
+                X_array, y_array,
+                test_size=test_size,
+                stratify=y_array,
+                random_state=42
+            )
+            
+            # Step 2: Train/validation split
+            logger.info("Step 2: Train/validation split...")
+            X_train, X_val, y_train, y_val = train_test_split(
+                X_temp, y_temp,
+                test_size=val_size,
+                stratify=y_temp,
+                random_state=42
+            )
         
         logger.info(f"  Train: {len(X_train)} samples")
         logger.info(f"  Val: {len(X_val)} samples")
@@ -106,6 +124,24 @@ class DataPreprocessor:
         
         return X_train, X_val, X_test, y_train, y_val, y_test
     
+    def _temporal_split(self, X, y, test_size, val_size):
+        n = len(X)
+        n_test = int(n * test_size)
+        n_rem = n - n_test
+        n_val = int(n_rem * val_size)
+        n_train = n_rem - n_val
+        if n_train < 2 or n_val < 1 or n_test < 1:
+            return None
+
+        y_train = y[:n_train]
+        if len(np.unique(y_train)) < 2:
+            return None
+
+        return (
+            X[:n_train], X[n_train:n_rem], X[n_rem:],
+            y_train, y[n_train:n_rem], y[n_rem:],
+        )
+
     def _apply_smote(
         self,
         X: np.ndarray,
