@@ -238,6 +238,16 @@ For host-side dev (`npm run start:dev` from the repo root for RDA), the
 default targets in `.env.example` already point at `127.0.0.1:3000` —
 `cp .env.example .env` is optional.
 
+Two first-run footguns worth knowing:
+
+- **Node version.** The dev server needs Node ≥ 18; the repo pins 20 in
+  `.nvmrc` (`nvm use` in the repo root). `TypeError:
+  crypto.getRandomValues is not a function` on `npm run dev` means an
+  older Node was picked up from your PATH.
+- **Port collisions.** If another Vite project holds 5173, the dev
+  server silently serves on the next free port — use the URL Vite
+  prints, not a bookmarked one.
+
 Send a test prediction. The example below uses only the six
 required fields; the API also accepts ~40 optional context fields
 (device, geography, identity, agent, recipient, …) that improve
@@ -456,17 +466,25 @@ the same notification channel.
 
 ## Status
 
-The platform is approaching 1.0. Released in this revision and stable: API-key
-auth, JWT user auth and RBAC, hot-reloaded rules engine, model registry with
-per-segment thresholds, decision audit log with inline reason codes, HMAC-signed
-webhooks, idempotency keys, FIA on-demand reports and conversational follow-ups,
-synthetic-data and replay CLIs, the Sentinel dashboard.
+Stable as of v1.2.0: API-key auth, JWT user auth and RBAC, hot-reloaded rules
+engine, model registry with per-segment thresholds, decision audit log with
+inline reason codes, HMAC-signed webhooks, idempotency keys, FIA on-demand
+reports and conversational follow-ups, the Sentinel dashboard — and the label
+feedback loop: chargebacks/disputes in via `POST /v1/admin/labels`,
+label-volume retrains with temporal splits and a binding deployment gate,
+live shadow scoring with champion-vs-shadow ground-truth metrics, and a
+REVIEW band that turns model uncertainty into analyst labels.
+
+Detection is validated end-to-end by a reproducible 128k-transaction persona
+simulation — 34% of fraud caught cold, 98.8% after one label-driven retrain
+at 1.1% FPR. See [`docs/FRAUD_SIMULATION.md`](docs/FRAUD_SIMULATION.md) to
+run it against your own deployment.
 
 Scoped follow-ups (see [`ROADMAP.md`](ROADMAP.md)): Helm chart and Terraform
 module, TypeScript and Python client SDKs, canary traffic split by API-key
 cohort, PII tokenisation hooks, mTLS for service-to-service callers,
 OAuth 2.0 client-credentials grant, pre-built connectors (Stripe / Adyen /
-Plaid), demo dataset, hosted sandbox.
+Plaid), dynamic deny/allow lists, rule backtesting, hosted sandbox.
 
 Performance numbers in this README are orientation values measured on a single
 Apple Silicon developer workstation, not SLA targets — re-measure on your own
