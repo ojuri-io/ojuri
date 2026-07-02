@@ -18,6 +18,7 @@ export interface ResolvedDecisionContext {
   championVersion: string;
   shadowVersion: string | null;
   threshold: number;
+  reviewThreshold: number | null;
 }
 
 /**
@@ -140,7 +141,14 @@ class ModelRegistryService {
     const threshold =
       segmentSpecific ?? this.champion?.defaultThreshold ?? runtimeFraudThreshold;
 
-    return { championVersion, shadowVersion, threshold };
+    // REVIEW band: scores in [threshold - margin, threshold) return
+    // REVIEW instead of ACCEPT. Margin 0 (the seeded default) keeps
+    // the pre-band binary behaviour.
+    const reviewMargin = this.runtimeSettings.getReviewMargin(0);
+    const reviewThreshold =
+      reviewMargin > 0 ? Math.max(0.01, Number(threshold) - reviewMargin) : null;
+
+    return { championVersion, shadowVersion, threshold, reviewThreshold };
   }
 
   async register(input: {

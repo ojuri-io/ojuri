@@ -1,6 +1,7 @@
 import { injectable } from "tsyringe";
 import { BaseRepository } from "../../repositories/base.repo";
 import { DecisionAudit, IDecisionAudit } from "../model/decision-audit.model";
+import { Decision } from "@shared/enums/decision.enum";
 
 /**
  * The slice of `transactions` we surface to the operator on the
@@ -185,7 +186,7 @@ class DecisionAuditRepo extends BaseRepository<IDecisionAudit, DecisionAudit> {
 
   async listReviewQueue(limit: number): Promise<DecisionAudit[]> {
     return DecisionAudit.query()
-      .where({ finalDecision: "DECLINE" })
+      .whereIn("finalDecision", [Decision.DECLINE, Decision.REVIEW])
       .whereNull("reviewedAt")
       .orderBy("createdAt", "desc")
       .limit(limit);
@@ -210,7 +211,7 @@ class DecisionAuditRepo extends BaseRepository<IDecisionAudit, DecisionAudit> {
     totalPendingAmount: number;
   }> {
     const baseQuery = DecisionAudit.query()
-      .where({ finalDecision: "DECLINE" })
+      .whereIn("finalDecision", [Decision.DECLINE, Decision.REVIEW])
       .whereNull("reviewedAt");
 
     // ILIKE %term% across the identifier columns the analyst sees in
@@ -578,7 +579,7 @@ function applyFilters(query: ReturnType<typeof DecisionAudit.query>, f: AuditLis
   if (f.modelVersion) query.where({ championModelVersion: f.modelVersion });
   if (f.tenantId) query.where({ tenantId: f.tenantId });
   if (f.overridden) query.whereNotNull("overrideDecision");
-  if (f.pending) query.where({ finalDecision: "DECLINE" }).whereNull("reviewedAt");
+  if (f.pending) query.whereIn("finalDecision", [Decision.DECLINE, Decision.REVIEW]).whereNull("reviewedAt");
   if (f.search) {
     const s = `%${f.search}%`;
     query.where((b) => {

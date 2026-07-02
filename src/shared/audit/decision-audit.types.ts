@@ -24,7 +24,7 @@ export interface DecisionAuditRecord {
   shadowScore?: number | null;
   threshold: number;
 
-  mlDecision: Decision.ACCEPT | Decision.DECLINE;
+  mlDecision: Decision.ACCEPT | Decision.DECLINE | Decision.REVIEW;
   finalDecision: Decision;
   decisionSource: DecisionSource;
 
