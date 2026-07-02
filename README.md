@@ -371,6 +371,7 @@ Full system notes, per-service responsibilities, and data-flow diagrams live in
 - [Model registry](docs/MODEL-REGISTRY.md) — lifecycle, segment thresholds
 - [Feature catalogue](docs/FEATURES.md) — base + adopter overlay, schema versioning
 - [Training](docs/TRAINING.md) — load data, train, register, activate
+- [Fraud simulation benchmark](docs/FRAUD_SIMULATION.md) — persona-driven detection benchmark; reference before/after-retrain scorecard
 - [Audit log](docs/AUDIT.md) and [Reason codes](docs/REASON-CODES.md)
 - [Webhooks](docs/WEBHOOKS.md) — HMAC signing, retry, delivery ledger
 - [Idempotency](docs/IDEMPOTENCY.md) — `Idempotency-Key` semantics on `/v1/predict`
