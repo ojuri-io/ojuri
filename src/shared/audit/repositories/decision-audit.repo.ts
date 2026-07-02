@@ -531,9 +531,16 @@ class DecisionAuditRepo extends BaseRepository<IDecisionAudit, DecisionAudit> {
     const GT = `COALESCE(t."groundTruthFraud", t."fraudLabel")`;
     const CH = `("championScore" >= "threshold")`;
     const SH = `("shadowScore" >= "threshold")`;
-    const [lab] = (await base
-      .clone()
-      .join("transactions as t", "t.transactionId", `${DecisionAudit.tableName}.transactionId`)
+    const auditTable = DecisionAudit.tableName;
+    const [lab] = (await knex
+      .from(auditTable)
+      .join("transactions as t", "t.transactionId", `${auditTable}.transactionId`)
+      .where(`${auditTable}.createdAt`, ">=", from)
+      .andWhere(`${auditTable}.createdAt`, "<", to)
+      .andWhere("championModelVersion", championVersion)
+      .andWhere("shadowModelVersion", shadowVersion)
+      .whereNotNull("championScore")
+      .whereNotNull("shadowScore")
       .whereRaw(`${GT} IS NOT NULL`)
       .select(
         knex.raw(
