@@ -230,17 +230,17 @@ class ModelValidator:
                 f"Recall regression: {metrics_a['recall']:.4f} → {metrics_b['recall']:.4f}"
             )
         
-        # Make decision
-        if (f1_improvement >= self.min_improvement and 
+        # All gates are binding: F1 improvement alone must not ship a
+        # model that is statistically indistinguishable from the
+        # champion or that trades away precision/recall.
+        if (f1_improvement >= self.min_improvement and
             p_value < self.significance_level and
             metrics_b['precision'] >= metrics_a['precision'] * 0.95 and
             metrics_b['recall'] >= metrics_a['recall'] * 0.95):
             decision = 'DEPLOY_NEW_MODEL'
-        elif f1_improvement >= self.min_improvement:
-            decision = 'DEPLOY_NEW_MODEL'  # Deploy even without significance if improvement is clear
         else:
             decision = 'KEEP_CURRENT_MODEL'
-        
+
         return decision, reasons
     
     def _log_comparison(self, result: Dict):
