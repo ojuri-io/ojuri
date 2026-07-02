@@ -5,6 +5,7 @@ import { createServiceLogger, TraceContext } from "@shared/utils/logger/service-
 import { metricsService } from "@shared/metrics/metrics.service";
 import { createCircuitBreaker } from "@shared/circuit-breaker/circuit-breaker";
 import type CircuitBreaker from "opossum";
+import type { ModelVersion } from "@shared/models/model/model-version.model";
 import fs from "fs";
 import path from "path";
 
@@ -35,6 +36,12 @@ class OnnxService {
   // operators deploying multi-GB models.
   private sessions: ort.InferenceSession[] = [];
   private nextSessionIndex = 0;
+  // Shadow model pool — small (2 sessions max): shadow scoring is
+  // observational, so a little serialization is an acceptable trade
+  // against doubling model memory.
+  private shadowSessions: ort.InferenceSession[] = [];
+  private nextShadowIndex = 0;
+  private shadowSourceKey: string | null = null;
   private modelPath: string;
   private inferenceCircuitBreaker!: CircuitBreaker<any[], any>;
   private isModelLoaded: boolean = false;
@@ -317,6 +324,27 @@ class OnnxService {
           })
         );
       });
+
+      registry.onShadowChange((current, previous) => {
+        onnxLogger.info("shadowChange", "SHADOW model version changed", {
+          from: previous?.version ?? "(none)",
+          to: current?.version ?? "(none)",
+        });
+        this.applyShadowVersion(current).catch((err) =>
+          onnxLogger.error("applyShadowVersion", "Failed to load SHADOW model", {
+            version: current?.version ?? null,
+            error: err instanceof Error ? err.message : String(err),
+          })
+        );
+      });
+
+      // The registry initializes before OnnxService, so a shadow that
+      // was already SHADOW at boot never fires the change listener.
+      await this.applyShadowVersion(registry.getShadow()).catch((err) =>
+        onnxLogger.error("applyShadowVersion", "Failed initial SHADOW load", {
+          error: err instanceof Error ? err.message : String(err),
+        })
+      );
     } catch (err) {
       onnxLogger.warn("subscribeToRegistry", "Could not subscribe to registry", {
         error: err instanceof Error ? err.message : String(err),
@@ -360,18 +388,12 @@ class OnnxService {
       }
     }
 
-    let resolved: string;
-    if (sourceUri.startsWith("file://")) {
-      resolved = sourceUri.slice("file://".length);
-    } else if (sourceUri.startsWith("/")) {
-      resolved = sourceUri;
-    } else if (/^[a-z]+:\/\//i.test(sourceUri)) {
+    const resolved = this.resolveSourceUri(sourceUri);
+    if (!resolved) {
       onnxLogger.warn("applyActiveVersion", "Non-local sourceUri scheme — skipping hot-reload", {
         sourceUri,
       });
       return;
-    } else {
-      resolved = path.resolve(process.cwd(), sourceUri);
     }
 
     if (!fs.existsSync(resolved)) {
@@ -399,6 +421,111 @@ class OnnxService {
       modelPath: this.modelPath,
       calibrationHealthy: this.isCalibrationHealthy,
     });
+  }
+
+  private resolveSourceUri(sourceUri: string): string | null {
+    if (sourceUri.startsWith("file://")) return sourceUri.slice("file://".length);
+    if (sourceUri.startsWith("/")) return sourceUri;
+    if (/^[a-z]+:\/\//i.test(sourceUri)) return null;
+    return path.resolve(process.cwd(), sourceUri);
+  }
+
+  /**
+   * Load (or unload) the SHADOW model's sessions. Loaded directly from
+   * the version's artefact path — the canonical MODEL_PATH stays owned
+   * by the champion. A shadow that fails to load leaves shadow scoring
+   * off (`predictShadow` returns null); it never affects the decision
+   * path or /readyz.
+   */
+  private async applyShadowVersion(row: ModelVersion | null): Promise<void> {
+    if (!row || !row.sourceUri) {
+      if (this.shadowSessions.length > 0) {
+        onnxLogger.info("applyShadowVersion", "Shadow cleared — unloading sessions", {});
+      }
+      this.shadowSessions = [];
+      this.shadowSourceKey = null;
+      return;
+    }
+
+    const key = `${row.version}|${row.sourceUri}`;
+    if (key === this.shadowSourceKey) return;
+
+    const metadata = row.metadata as Record<string, unknown> | null;
+    if (metadata && typeof metadata.feature_schema_version === "string") {
+      const { loadCatalog } = await import("@shared/features/feature-catalog");
+      const expected = loadCatalog().schemaVersion;
+      if (metadata.feature_schema_version !== expected) {
+        onnxLogger.error("applyShadowVersion", "Refusing shadow — feature schema mismatch", {
+          version: row.version,
+          reported: metadata.feature_schema_version,
+          expected,
+        });
+        this.shadowSessions = [];
+        this.shadowSourceKey = null;
+        return;
+      }
+    }
+
+    const resolved = this.resolveSourceUri(row.sourceUri);
+    if (!resolved || !fs.existsSync(resolved)) {
+      onnxLogger.error("applyShadowVersion", "Shadow sourceUri not loadable", {
+        version: row.version,
+        sourceUri: row.sourceUri,
+      });
+      this.shadowSessions = [];
+      this.shadowSourceKey = null;
+      return;
+    }
+
+    const sessionOptions: ort.InferenceSession.SessionOptions = {
+      executionProviders: ["cpu"],
+      graphOptimizationLevel: "all",
+      enableCpuMemArena: true,
+      enableMemPattern: true,
+      executionMode: "sequential",
+      intraOpNumThreads: appConfig.onnx.intraOpNumThreads,
+    };
+    const poolSize = Math.min(2, appConfig.onnx.sessionPoolSize);
+    const newSessions = await Promise.all(
+      Array.from({ length: poolSize }, () => ort.InferenceSession.create(resolved, sessionOptions)),
+    );
+
+    this.shadowSessions = newSessions;
+    this.nextShadowIndex = 0;
+    this.shadowSourceKey = key;
+    onnxLogger.success("applyShadowVersion", "SHADOW model loaded", {
+      version: row.version,
+      sourceUri: row.sourceUri,
+      poolSize,
+    });
+  }
+
+  /**
+   * Score the SHADOW model. Observational only: returns null when no
+   * shadow is loaded or scoring fails — never throws, never fails
+   * closed, never touches the decision.
+   */
+  async predictShadow(features: Float32Array): Promise<number | null> {
+    if (this.shadowSessions.length === 0) return null;
+
+    const session = this.shadowSessions[this.nextShadowIndex % this.shadowSessions.length]!;
+    this.nextShadowIndex = (this.nextShadowIndex + 1) % this.shadowSessions.length;
+
+    const startTime = Date.now();
+    try {
+      const score = await this.executeSession(session, features);
+      metricsService.recordPredictStage("shadow_inference", Date.now() - startTime);
+      return score;
+    } catch (err) {
+      onnxLogger.warn("predictShadow", "Shadow inference failed — recording null", {
+        error: err instanceof Error ? err.message : String(err),
+      });
+      return null;
+    }
+  }
+
+  isShadowLoaded(): boolean {
+    return this.shadowSessions.length > 0;
   }
 
   /**
@@ -435,40 +562,10 @@ class OnnxService {
         throw new Error("ONNX sessions not loaded — predict cannot proceed");
       }
 
-      // Pad-to-fit if the loaded model expects more dimensions than
-      // the catalogue currently produces. Only used for the brief
-      // transition between Phase 2 (RDA serves 64-dim) and Phase 3
-      // (MLA retrains at 64-dim). When the model and catalogue match,
-      // `features` is used verbatim.
-      const expectedDim = Number(process.env.MODEL_INPUT_DIMENSION) || 0;
-      let inputArray = features;
-      if (expectedDim > features.length) {
-        inputArray = new Float32Array(expectedDim);
-        inputArray.set(features);
-      }
-
-      // Create input tensor
-      const inputTensor = new ort.Tensor("float32", inputArray, [1, inputArray.length]);
-
-      // Run inference. The pool selector spreads concurrent calls across
-      // sessions so onnxruntime-node's per-session execution lock does not
+      // The pool selector spreads concurrent calls across sessions so
+      // onnxruntime-node's per-session execution lock does not
       // serialize the request hot path.
-      const feeds = { input: inputTensor };
-      const session = this.nextSession();
-      const results = await session.run(feeds);
-
-      // XGBoost-via-onnxmltools emits `probabilities` shape [N, 2] as
-      // [P(legit), P(fraud)] — we need index 1. Legacy single-output
-      // stubs still expose a scalar at index 0.
-      const output: ort.Tensor =
-        (results.probabilities as ort.Tensor | undefined) ??
-        (results.output as ort.Tensor | undefined) ??
-        (Object.values(results)[0] as ort.Tensor);
-      if (!output) throw new Error("ONNX inference returned no output tensor");
-      const data = output.data as Float32Array;
-      const dims = output.dims ?? [];
-      const isBinaryProbs = dims.length === 2 && dims[1] === 2 && data.length >= 2;
-      const probability = isBinaryProbs ? data[1]! : data[0]!;
+      const probability = await this.executeSession(this.nextSession(), features);
 
       const inferenceTime = Date.now() - startTime;
       metricsService.recordModelInferenceLatency(inferenceTime);
@@ -487,6 +584,39 @@ class OnnxService {
       });
       throw err;
     }
+  }
+
+  private async executeSession(
+    session: ort.InferenceSession,
+    features: Float32Array
+  ): Promise<number> {
+    // Pad-to-fit if the loaded model expects more dimensions than
+    // the catalogue currently produces. Only used for the brief
+    // transition between Phase 2 (RDA serves 64-dim) and Phase 3
+    // (MLA retrains at 64-dim). When the model and catalogue match,
+    // `features` is used verbatim.
+    const expectedDim = Number(process.env.MODEL_INPUT_DIMENSION) || 0;
+    let inputArray = features;
+    if (expectedDim > features.length) {
+      inputArray = new Float32Array(expectedDim);
+      inputArray.set(features);
+    }
+
+    const inputTensor = new ort.Tensor("float32", inputArray, [1, inputArray.length]);
+    const results = await session.run({ input: inputTensor });
+
+    // XGBoost-via-onnxmltools emits `probabilities` shape [N, 2] as
+    // [P(legit), P(fraud)] — we need index 1. Legacy single-output
+    // stubs still expose a scalar at index 0.
+    const output: ort.Tensor =
+      (results.probabilities as ort.Tensor | undefined) ??
+      (results.output as ort.Tensor | undefined) ??
+      (Object.values(results)[0] as ort.Tensor);
+    if (!output) throw new Error("ONNX inference returned no output tensor");
+    const data = output.data as Float32Array;
+    const dims = output.dims ?? [];
+    const isBinaryProbs = dims.length === 2 && dims[1] === 2 && data.length >= 2;
+    return isBinaryProbs ? data[1]! : data[0]!;
   }
 
   /**

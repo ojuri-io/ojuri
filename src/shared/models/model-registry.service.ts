@@ -28,6 +28,7 @@ export interface ResolvedDecisionContext {
  * registers a real model).
  */
 type ActiveChangeListener = (current: ModelVersion | null, previous: ModelVersion | null) => void;
+type ShadowChangeListener = (current: ModelVersion | null, previous: ModelVersion | null) => void;
 
 @singleton()
 class ModelRegistryService {
@@ -40,6 +41,7 @@ class ModelRegistryService {
   // version label or different sourceUri). OnnxService subscribes so
   // it can hot-swap the loaded model without RDA restart.
   private activeChangeListeners: ActiveChangeListener[] = [];
+  private shadowChangeListeners: ShadowChangeListener[] = [];
 
   constructor(
     private readonly versionRepo: ModelVersionRepo,
@@ -60,6 +62,18 @@ class ModelRegistryService {
     };
   }
 
+  /**
+   * Subscribe to SHADOW-version changes — same contract as
+   * `onActiveChange`. OnnxService uses this to load/unload the shadow
+   * scoring session.
+   */
+  onShadowChange(fn: ShadowChangeListener): () => void {
+    this.shadowChangeListeners.push(fn);
+    return () => {
+      this.shadowChangeListeners = this.shadowChangeListeners.filter((l) => l !== fn);
+    };
+  }
+
   async initialize(): Promise<void> {
     await this.reload();
     this.timer = setInterval(() => {
@@ -77,8 +91,22 @@ class ModelRegistryService {
     ]);
 
     const previousChampion = this.champion;
+    const previousShadow = this.shadow;
     this.champion = versions.find((v) => v.status === "ACTIVE") || null;
     this.shadow = versions.find((v) => v.status === "SHADOW") || null;
+
+    const shadowChanged =
+      previousShadow?.version !== this.shadow?.version ||
+      previousShadow?.sourceUri !== this.shadow?.sourceUri;
+    if (shadowChanged && this.shadowChangeListeners.length > 0) {
+      for (const listener of this.shadowChangeListeners) {
+        try {
+          listener(this.shadow, previousShadow);
+        } catch (err) {
+          log.error("shadowChange", "Listener threw — continuing", { err: String(err) });
+        }
+      }
+    }
 
     // Detect "ACTIVE changed" via version label OR sourceUri delta —
     // both matter because operators can re-register the same version

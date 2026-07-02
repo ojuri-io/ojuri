@@ -172,6 +172,13 @@ class PredictService {
     const ml = await this.runInference(features.enrichedVector, modelMeta.threshold);
     metricsService.recordPredictStage("inference", performance.now() - t0);
 
+    // Shadow scoring overlaps with reason codes + POST rules; awaited
+    // just before the audit record is built so the score lands on the
+    // same row (no post-hoc UPDATE racing the batched audit flush).
+    const shadowScorePromise: Promise<number | null> = modelMeta.shadowVersion
+      ? this.onnxService.predictShadow(features.enrichedVector)
+      : Promise.resolve(null);
+
     t0 = performance.now();
     const reasonCodes = explain(features.enrichedVector);
     metricsService.recordPredictStage("reason_codes", performance.now() - t0);
@@ -179,6 +186,8 @@ class PredictService {
     t0 = performance.now();
     const verdict = this.evaluatePostRules(request, tenantId, features.snapshot, ml);
     metricsService.recordPredictStage("post_rules", performance.now() - t0);
+
+    const shadowScore = await shadowScorePromise;
 
     const ctx = PredictDecisionContextFactory.fromMlDecision({
       invocation,
@@ -192,6 +201,7 @@ class PredictService {
       threshold: modelMeta.threshold,
       championVersion: modelMeta.championVersion,
       shadowVersion: modelMeta.shadowVersion,
+      shadowScore,
       reasonCodes,
       featuresSnapshot: features.snapshot,
       isDefault: features.isDefault,
