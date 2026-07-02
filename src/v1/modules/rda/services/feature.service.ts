@@ -42,7 +42,8 @@ class FeatureService {
 
   private setupCircuitBreaker(): void {
     this.featureCircuitBreaker = createCircuitBreaker(
-      async (senderId: string) => this.fetchFeaturesFromRedis(senderId),
+      async (senderId: string, receiverId: string) =>
+        this.fetchFeaturesFromRedis(senderId, receiverId),
       {
         name: "redis-features",
         timeout: this.featureTimeout,
@@ -59,9 +60,11 @@ class FeatureService {
   }
 
   /**
-   * Fetch the `features:{senderId}` Redis hash. Returns the raw
-   * snapshot and a flag for whether the values came from Redis or
-   * the population-default fallback.
+   * Fetch the sender's `features:{senderId}` hash, the pair-scoped
+   * `features:pair:{senderId}:{receiverId}` hash, and the receiver's
+   * `recipient_*` fields — one pipelined round trip. Returns the
+   * merged snapshot and a flag for whether the sender values came
+   * from Redis or the population-default fallback.
    *
    * Catalogue-aligned vector construction happens downstream in
    * `predict.service.ts` via `buildFeatures()`. This service stays
@@ -69,12 +72,16 @@ class FeatureService {
    */
   async getFeatures(
     senderId: string,
+    receiverId: string,
     _timestamp: number
   ): Promise<{ snapshot: RedisFeatureSnapshot; isDefault: boolean }> {
     const traceId = TraceContext.getTraceId();
 
     try {
-      const snapshot: RedisFeatureSnapshot = await this.featureCircuitBreaker.fire(senderId);
+      const snapshot: RedisFeatureSnapshot = await this.featureCircuitBreaker.fire(
+        senderId,
+        receiverId
+      );
       const isDefault = this.isDefaultSnapshot(snapshot);
 
       if (!isDefault) {
@@ -106,27 +113,62 @@ class FeatureService {
   /**
    * Fetch features from Redis. Keys are stored as catalogue feature
    * names; values are stringified numerics that the feature builder
-   * coerces.
+   * coerces. The receiver hash contributes ONLY its `recipient_*`
+   * fields — merging it wholesale would overwrite the sender's
+   * velocity/graph values with the receiver's.
    */
-  private async fetchFeaturesFromRedis(senderId: string): Promise<RedisFeatureSnapshot> {
-    const key = `features:${senderId}`;
+  private async fetchFeaturesFromRedis(
+    senderId: string,
+    receiverId: string
+  ): Promise<RedisFeatureSnapshot> {
+    const senderKey = `features:${senderId}`;
+    const pairKey = `features:pair:${senderId}:${receiverId}`;
+    const receiverKey = `features:${receiverId}`;
     const traceId = TraceContext.getTraceId();
 
-    const features = await Promise.race([
-      this.redisClient.hgetall(key),
+    const [senderHash, pairHash, receiverHash] = await Promise.race([
+      this.pipelinedHashes(senderKey, pairKey, receiverKey),
       this.timeout(this.featureTimeout),
     ]);
 
-    if (!features || Object.keys(features).length === 0) {
+    const hasSenderFeatures = senderHash && Object.keys(senderHash).length > 0;
+    if (!hasSenderFeatures) {
       featureLogger.debug("fetchFeaturesFromRedis", "No features found in Redis, using defaults", {
         traceId,
         senderId,
-        key,
+        key: senderKey,
       });
-      return { ...DEFAULT_REDIS_SNAPSHOT };
     }
 
-    return features as RedisFeatureSnapshot;
+    const snapshot: RedisFeatureSnapshot = hasSenderFeatures
+      ? { ...senderHash }
+      : { ...DEFAULT_REDIS_SNAPSHOT };
+
+    if (pairHash) {
+      for (const [field, value] of Object.entries(pairHash)) {
+        snapshot[field] = value;
+      }
+    }
+    if (receiverHash) {
+      for (const [field, value] of Object.entries(receiverHash)) {
+        if (field.startsWith("recipient_")) snapshot[field] = value;
+      }
+    }
+
+    return snapshot;
+  }
+
+  private async pipelinedHashes(
+    ...keys: string[]
+  ): Promise<Array<Record<string, string> | null>> {
+    const pipeline = this.redisClient.pipeline();
+    for (const key of keys) pipeline.hgetall(key);
+    const results = await pipeline.exec();
+    if (!results) throw new Error("Redis pipeline returned no results");
+    return results.map(([err, value]) => {
+      if (err) throw err;
+      return (value ?? null) as Record<string, string> | null;
+    });
   }
 
   /**

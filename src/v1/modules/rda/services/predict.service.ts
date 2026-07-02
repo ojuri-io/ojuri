@@ -208,6 +208,7 @@ class PredictService {
     const catalog = loadCatalog();
     const { snapshot: redisSnapshot, isDefault } = await this.featureService.getFeatures(
       request.sender_id,
+      request.receiver_id,
       request.timestamp,
     );
     const { vector, snapshot } = buildFeatures(
