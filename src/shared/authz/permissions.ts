@@ -80,6 +80,9 @@ export const PERMISSIONS = [
   { code: "training:read", description: "View training-data import jobs and their status" },
   { code: "training:write", description: "Submit and manage training-data import jobs" },
 
+  // Ground-truth label ingest (chargebacks, disputes, customer reports)
+  { code: "labels:write", description: "Push verified fraud outcomes onto transactions for model training" },
+
   // Cross-tenant scoping — required to issue API keys, register webhooks,
   // or create users for a tenant other than the caller's own. Without
   // this permission, the tenantId in the request body is ignored and the

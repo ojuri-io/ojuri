@@ -63,6 +63,14 @@ class Config:
     DRIFT_WINDOW_SIZE: int = int(os.getenv('DRIFT_WINDOW_SIZE', '1000'))
     
     # ═══════════════════════════════════════════════════════════════
+    # Label-volume retrain trigger
+    # ═══════════════════════════════════════════════════════════════
+    # Retrain once this many NEW verified labels (groundTruthRecordedAt)
+    # land after the last retrain / service start. 0 disables.
+    LABEL_RETRAIN_THRESHOLD: int = int(os.getenv('LABEL_RETRAIN_THRESHOLD', '500'))
+    LABEL_CHECK_INTERVAL_SECONDS: int = int(os.getenv('LABEL_CHECK_INTERVAL_SECONDS', '900'))
+
+    # ═══════════════════════════════════════════════════════════════
     # Training Configuration
     # ═══════════════════════════════════════════════════════════════
     # UPDATED: Changed from 500000 to 50000 for laptop compatibility
