@@ -108,6 +108,9 @@ class MLAService:
             "last_error": None,
             "drift_f1_threshold": config.DRIFT_F1_THRESHOLD,
             "drift_psi_threshold": config.DRIFT_PSI_THRESHOLD,
+            "label_volume_checks": 0,
+            "last_label_check_at": None,
+            "labels_pending_retrain": 0,
         }
 
         self._http_server: Optional[socketserver.TCPServer] = None
@@ -399,6 +402,8 @@ class MLAService:
                 trigger = 'manual'
             elif reason == 'initial_training':
                 trigger = 'initial'
+            elif reason == 'label_volume':
+                trigger = 'label_volume'
             else:
                 trigger = 'drift'
 
@@ -556,6 +561,71 @@ class MLAService:
             self._effective_drift_config["autoRetrainEnabled"],
         )
 
+    def _start_label_volume_monitor(self) -> None:
+        """
+        Poll for newly-verified ground-truth labels and retrain once
+        enough have accumulated. This closes the feedback loop without
+        waiting for F1 drift: fresh chargeback/dispute labels are the
+        most valuable training signal and should reach the model on
+        their own schedule, not the drift detector's.
+        """
+        if config.LABEL_RETRAIN_THRESHOLD <= 0:
+            logger.info("Label-volume retrain trigger disabled (LABEL_RETRAIN_THRESHOLD=0)")
+            return
+
+        self._label_watermark = time.time()
+
+        def _loop():
+            while True:
+                time.sleep(config.LABEL_CHECK_INTERVAL_SECONDS)
+                try:
+                    self._check_label_volume()
+                except Exception as exc:
+                    logger.warning(f"Label-volume check failed: {exc}")
+
+        threading.Thread(target=_loop, name="label-volume-monitor", daemon=True).start()
+        logger.info(
+            "Label-volume monitor started: threshold=%s, interval=%ss",
+            config.LABEL_RETRAIN_THRESHOLD,
+            config.LABEL_CHECK_INTERVAL_SECONDS,
+        )
+
+    def _check_label_volume(self) -> None:
+        from sqlalchemy import text
+
+        self._stats["label_volume_checks"] += 1
+        self._stats["last_label_check_at"] = time.time()
+
+        with self.db_engine.connect() as conn:
+            count = conn.execute(
+                text(
+                    'SELECT COUNT(*) FROM transactions '
+                    'WHERE "groundTruthRecordedAt" > to_timestamp(:mark)'
+                ),
+                {"mark": self._label_watermark},
+            ).scalar() or 0
+
+        self._stats["labels_pending_retrain"] = int(count)
+
+        if count < config.LABEL_RETRAIN_THRESHOLD:
+            return
+        if self.retraining_in_progress:
+            logger.info("Label threshold reached but a retrain is already running")
+            return
+        if not self._effective_drift_config.get("autoRetrainEnabled", True):
+            logger.info(
+                "Label threshold reached (%s new labels) but autoRetrainEnabled=false",
+                count,
+            )
+            return
+
+        logger.info("=" * 70)
+        logger.info(f"📬 LABEL-VOLUME RETRAIN: {count} new verified labels")
+        logger.info("=" * 70)
+        self._label_watermark = time.time()
+        self._stats["labels_pending_retrain"] = 0
+        self._run_training_pipeline({"reason": "label_volume", "new_labels": int(count)})
+
     def trigger_manual_retrain(self, run_id: str, triggered_by: str) -> None:
         """Kick off a retrain in a background thread. Handler returns
         202 immediately; the run completes async and the runs list
@@ -663,6 +733,10 @@ class MLAService:
         # needs to see /livez even if Kafka is down so operators can
         # distinguish "MLA dead" from "MLA can't reach Kafka".
         self._start_http_server()
+
+        # Label-volume trigger runs regardless of Kafka availability —
+        # labels arrive over the RDA HTTP API, not the event stream.
+        self._start_label_volume_monitor()
 
         # Set up graceful shutdown
         def signal_handler(sig, frame):

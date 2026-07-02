@@ -5,6 +5,7 @@ import { metricsService } from "@shared/metrics/metrics.service";
 import DecisionAuditRepo, { AuditListFilters } from "./repositories/decision-audit.repo";
 import { DecisionAudit } from "./model/decision-audit.model";
 import AuditWriteQueue from "./audit-write-queue";
+import { GroundTruthSource } from "@shared/enums/ground-truth-source.enum";
 import { DecisionAuditRecord, DecisionAuditRecordResult } from "./decision-audit.types";
 
 export type { DecisionAuditRecord, DecisionAuditRecordResult };
@@ -125,7 +126,7 @@ class DecisionAuditService {
         await this.repo.writeGroundTruth({
           transactionId: row.transactionId,
           groundTruthFraud: input.decision === "DECLINE",
-          source: "reviewer_override",
+          source: GroundTruthSource.REVIEWER_OVERRIDE,
           recordedBy: input.reviewer,
         });
       } catch (err) {

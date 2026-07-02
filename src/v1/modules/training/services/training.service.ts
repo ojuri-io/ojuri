@@ -1,6 +1,7 @@
 import { injectable } from "tsyringe";
 import { createServiceLogger } from "@shared/utils/logger/service-logger";
 import { TrainingJobStatus } from "@shared/enums/training-job-status.enum";
+import { GroundTruthSource } from "@shared/enums/ground-truth-source.enum";
 import TrainingJobNotFoundError from "@shared/error/training-job-not-found.error";
 import TrainingPromoteNotReadyError from "@shared/error/training-promote-not-ready.error";
 import TrainingPromoteDuplicateStagingError from "@shared/error/training-promote-duplicate-staging.error";
@@ -61,7 +62,7 @@ class TrainingService {
     // varchar(32) on transactions.groundTruthSource — the full job id
     // would overflow. Keep the per-job provenance on the trainingJob
     // row (promotedAt / promotedBy) rather than on every transaction.
-    const groundTruthSource = "training_import";
+    const groundTruthSource = GroundTruthSource.TRAINING_IMPORT;
 
     let result;
     try {

@@ -8,6 +8,7 @@ import authRoute from "../../v1/modules/auth/routes/auth.route";
 import statsRoute from "../../v1/modules/stats/routes/stats.route";
 import notificationsRoute from "../../v1/modules/notifications/routes/notifications.route";
 import trainingRoute from "../../v1/modules/training/routes/training.route";
+import labelsRoute from "../../v1/modules/labels/routes/labels.route";
 
 export default {
   app: appRoute,
@@ -20,4 +21,5 @@ export default {
   stats: statsRoute,
   notifications: notificationsRoute,
   training: trainingRoute,
+  labels: labelsRoute,
 };

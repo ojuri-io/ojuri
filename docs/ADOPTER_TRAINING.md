@@ -197,13 +197,36 @@ psql "$DB_URL" -c "\copy \"transactions\"( \
 Fastest path. No staging table, no validation — bad rows kill the COPY,
 fix the CSV and retry.
 
-## 4. Ongoing labels via webhook (not bulk)
+## 4. Ongoing labels (chargebacks, disputes, customer reports)
 
-For chargebacks / reviewer overrides as they happen:
+For verified fraud outcomes as they happen:
 
-`POST /v1/admin/labels` (not yet implemented) — idempotent by `transactionId`.
-Until shipped, use the existing `POST /v1/admin/audit/:auditId/override` flow,
-which writes ground truth via the override path.
+```
+POST /v1/admin/labels          (requires the labels:write permission)
+{
+  "labels": [
+    { "transaction_id": "tx-123", "is_fraud": true,  "source": "chargeback" },
+    { "transaction_id": "tx-456", "is_fraud": false, "source": "dispute" }
+  ]
+}
+```
+
+- Up to 1,000 labels per request; duplicates within a batch collapse
+  last-wins. `source` is one of `chargeback`, `dispute`,
+  `customer_report`, `reviewer_override`, `training_import`.
+- Labels upsert `transactions.groundTruthFraud` — re-sending the same
+  `transaction_id` overwrites the previous verdict (chargeback reversals
+  just get pushed again with the corrected `is_fraud`).
+- The response reports `unmatched` transaction ids (no matching
+  `transactions` row yet — e.g. PAA hasn't flushed it). Retry those
+  after a minute.
+
+MLA retrains automatically once `LABEL_RETRAIN_THRESHOLD` (default 500)
+new labels accumulate, checked every `LABEL_CHECK_INTERVAL_SECONDS`
+(default 900). Set the threshold to 0 to disable and rely on drift /
+manual retrains only. Reviewer overrides in Sentinel keep flowing
+through the same ground-truth columns via
+`POST /v1/admin/audit/:auditId/override`.
 
 For high-volume label streams, publish to a Kafka topic `labels.received`
 that MLA consumes — design TBD; needs the topic + consumer wired.
