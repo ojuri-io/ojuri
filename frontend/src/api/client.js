@@ -965,3 +965,23 @@ export const promoteTrainingImport = (jobId) =>
     method: 'POST',
     headers: adminHeaders({ body: false }),
   }).then(unwrap);
+
+// ──────── Ground-truth labels ────────
+//
+// POST /v1/admin/labels pushes verified fraud outcomes (chargebacks,
+// disputes, customer reports) onto transactions. Write call — no
+// `safe` wrapper; the Labels page catches failures and toasts.
+// The MLA stats read feeds the "labels until next retrain" widget.
+
+export const ingestLabels = (labels) =>
+  fetch('/v1/admin/labels', {
+    method: 'POST',
+    headers: adminHeaders(),
+    body: JSON.stringify({ labels }),
+  }).then(unwrap);
+
+export const getMlaStats = () =>
+  safe(
+    () => fetch('/mla/stats').then((r) => (r.ok ? r.json() : null)),
+    () => null,
+  );

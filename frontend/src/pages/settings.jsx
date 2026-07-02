@@ -21,6 +21,7 @@ import {
   updateDriftConfig,
   triggerManualRetrain,
   listRetrainRuns,
+  getMlaStats,
 } from '../api/client.js';
 
 // Server-side clamps, mirrored client-side. Server still enforces.
@@ -50,6 +51,7 @@ export default function Settings({ toast, user }) {
       <ReviewBandCard toast={toast} canWrite={canWriteSettings} />
       <DriftCard toast={toast} canWrite={canConfigureMla} />
       <RetrainCard toast={toast} canTrigger={canConfigureMla} />
+      <LabelFeedbackCard />
     </>
   );
 }
@@ -545,6 +547,79 @@ function RetrainCard({ toast, canTrigger }) {
 }
 
 // ──────── Tiny presentational helpers ────────────────────────
+
+// ──────── Card 4: Label feedback ─────────────────────────────
+
+function LabelFeedbackCard() {
+  const [stats, setStats] = useState(null);
+  const [loaded, setLoaded] = useState(false);
+
+  useEffect(() => {
+    let alive = true;
+    const refresh = async () => {
+      const data = await getMlaStats();
+      if (!alive) return;
+      setStats(data);
+      setLoaded(true);
+    };
+    refresh();
+    const t = setInterval(refresh, 8000);
+    return () => {
+      alive = false;
+      clearInterval(t);
+    };
+  }, []);
+
+  const pending = Number(stats?.labels_pending_retrain ?? 0);
+  const threshold = Number(stats?.label_retrain_threshold ?? 0);
+  const enabled = threshold > 0;
+  const pct = enabled ? Math.min(100, Math.round((pending / threshold) * 100)) : 0;
+
+  return (
+    <Card
+      title="Label feedback"
+      subtitle="Verified outcomes (chargebacks, disputes, reviewer overrides) accumulate until MLA retrains on them. Push labels via the Labels page or POST /v1/admin/labels."
+    >
+      {!loaded && <Muted>Loading label stats…</Muted>}
+      {loaded && !stats && <Muted>MLA unreachable — label stats unavailable.</Muted>}
+      {loaded && stats && !enabled && (
+        <Muted>Label-volume retraining is disabled (LABEL_RETRAIN_THRESHOLD=0). Drift and manual retrains still pick labels up.</Muted>
+      )}
+      {loaded && stats && enabled && (
+        <>
+          <div style={{ display: 'flex', gap: 24, marginBottom: 10 }}>
+            <Stat label="Labels until retrain" value={`${pending} / ${threshold}`} />
+            <Stat label="Checks run" value={String(stats.label_volume_checks ?? 0)} />
+            <Stat
+              label="Last check"
+              value={stats.last_label_check_at ? new Date(stats.last_label_check_at * 1000).toLocaleTimeString() : '—'}
+            />
+          </div>
+          <div
+            style={{
+              height: 8,
+              borderRadius: 4,
+              background: 'var(--color-background-tertiary)',
+              overflow: 'hidden',
+            }}
+            role="progressbar"
+            aria-valuenow={pending}
+            aria-valuemax={threshold}
+          >
+            <div
+              style={{
+                width: `${pct}%`,
+                height: '100%',
+                background: 'var(--color-text-info)',
+                transition: 'width 300ms ease',
+              }}
+            />
+          </div>
+        </>
+      )}
+    </Card>
+  );
+}
 
 function Card({ title, subtitle, children }) {
   return (

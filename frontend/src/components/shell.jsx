@@ -67,6 +67,7 @@ import {
   SkipForward,
   Sparkles,
   Target,
+  Tag,
   Terminal,
   Trash2,
   TriangleAlert,
@@ -151,6 +152,7 @@ const ICON_MAP = {
   // lock — same connotation, brand-consistent.
   'shield-lock': Lock,
   'shield-x': ShieldX,
+  tag: Tag,
   'sort-ascending': ArrowUpNarrowWide,
   'sort-descending': ArrowDownNarrowWide,
   sparkles: Sparkles,
@@ -384,6 +386,7 @@ export function Sidebar({ active, onNav, queueCount, user, mobileOpen, onClose }
         { id: 'rules', label: 'Rules', icon: 'shield-check', perm: 'rules:read' },
         { id: 'features', label: 'Features', icon: 'list-numbers', perm: 'models:read' },
         { id: 'training', label: 'Training data', icon: 'database-import', perm: 'training:read' },
+        { id: 'labels', label: 'Labels', icon: 'tag', perm: 'labels:write' },
         { id: 'settings', label: 'Settings', icon: 'settings', perm: 'settings:read' },
         {
           id: 'integ',
