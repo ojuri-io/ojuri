@@ -271,6 +271,48 @@ class TestModelValidator:
         assert 'improvements' in result
         assert 'decision' in result
     
+    def test_gate_requires_statistical_significance(self):
+        """F1 improvement alone must not deploy without significance."""
+        validator = ModelValidator(min_improvement=0.01)
+
+        decision, _ = validator._make_decision(
+            f1_improvement=0.05,
+            auc_improvement=0.02,
+            p_value=0.50,
+            metrics_a={'f1_score': 0.80, 'precision': 0.80, 'recall': 0.80, 'auc_roc': 0.90},
+            metrics_b={'f1_score': 0.85, 'precision': 0.82, 'recall': 0.82, 'auc_roc': 0.92},
+        )
+
+        assert decision == 'KEEP_CURRENT_MODEL'
+
+    def test_gate_blocks_precision_regression(self):
+        """A significant F1 win must not ship a >5% precision regression."""
+        validator = ModelValidator(min_improvement=0.01)
+
+        decision, _ = validator._make_decision(
+            f1_improvement=0.05,
+            auc_improvement=0.02,
+            p_value=0.001,
+            metrics_a={'f1_score': 0.80, 'precision': 0.90, 'recall': 0.70, 'auc_roc': 0.90},
+            metrics_b={'f1_score': 0.85, 'precision': 0.80, 'recall': 0.92, 'auc_roc': 0.92},
+        )
+
+        assert decision == 'KEEP_CURRENT_MODEL'
+
+    def test_gate_deploys_when_all_conditions_hold(self):
+        """Significant improvement with no regression deploys."""
+        validator = ModelValidator(min_improvement=0.01)
+
+        decision, _ = validator._make_decision(
+            f1_improvement=0.05,
+            auc_improvement=0.02,
+            p_value=0.001,
+            metrics_a={'f1_score': 0.80, 'precision': 0.80, 'recall': 0.80, 'auc_roc': 0.90},
+            metrics_b={'f1_score': 0.85, 'precision': 0.82, 'recall': 0.84, 'auc_roc': 0.92},
+        )
+
+        assert decision == 'DEPLOY_NEW_MODEL'
+
     def test_comparison_report(self):
         """Test generating comparison report."""
         validator = ModelValidator()
