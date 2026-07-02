@@ -551,6 +551,33 @@ services:
     restart: "no"
 
   # ============================================
+  # Demo traffic seed (one-shot, opt-in)
+  # ============================================
+  # Sends ~500 realistic transactions (recurring senders plus embedded
+  # fraud patterns: money ring, mule fan-out, VPN, structuring) straight
+  # at rda-1 so a fresh stack has a populated dashboard. Opt in with
+  # `docker compose --profile demo run --rm demo-seed`.
+  demo-seed:
+    profiles: ["demo"]
+    image: node:20-alpine
+    command: ["node", "/scripts/demo-traffic.mjs"]
+    environment:
+      - RDA_URL=http://rda-1:3000
+      - DEMO_API_KEY=${DEMO_API_KEY:-}
+      - DEMO_TX_COUNT=${DEMO_TX_COUNT:-500}
+      # rda-1 has no compose healthcheck, so the script polls /livez
+      # itself instead of relying on a service_healthy condition.
+      - DEMO_WAIT_FOR_RDA_SECONDS=90
+    volumes:
+      - ./scripts:/scripts:ro
+    depends_on:
+      rda-1:
+        condition: service_started
+    networks:
+      - ojuri-network
+    restart: "no"
+
+  # ============================================
   # Monitoring Stack (Optional)
   # ============================================
   prometheus:
