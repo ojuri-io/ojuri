@@ -71,6 +71,10 @@ class Config:
     TRAINING_DATA_SIZE: int = int(os.getenv('TRAINING_DATA_SIZE', '50000'))
     SMOTE_RATIO: float = float(os.getenv('SMOTE_RATIO', '1.0'))
     CV_FOLDS: int = int(os.getenv('CV_FOLDS', '5'))
+    # Absolute F1 floor for auto-activation. A candidate below this is
+    # registered as CANDIDATE (operator review) even when it beats the
+    # incumbent — guards against garbage-in/garbage-out cold starts.
+    MIN_DEPLOY_F1: float = float(os.getenv('MIN_DEPLOY_F1', '0.3'))
     
     # ═══════════════════════════════════════════════════════════════
     # XGBoost Hyperparameters

@@ -79,7 +79,7 @@ class MLAService:
         self.data_loader = DataLoader()
         self.preprocessor = DataPreprocessor()
         self.trainer = ModelTrainer(config)
-        self.validator = ModelValidator()
+        self.validator = ModelValidator(min_deploy_f1=config.MIN_DEPLOY_F1)
         self.onnx_converter = ONNXConverter()
         self.model_registry = ModelRegistry(config)
         self.kafka_consumer = KafkaConsumerService(config, self.drift_detector)
@@ -318,7 +318,7 @@ class MLAService:
             # Step 3: Train new model
             logger.info("Step 3/7: Training XGBoost model...")
             mode, continued_trees = self._load_training_mode()
-            new_model, _calibrator, training_metrics = self.trainer.train(
+            new_model, calibrator, training_metrics = self.trainer.train(
                 X_train, y_train, X_val, y_val,
                 mode=mode,
                 prior_model=self.current_model,
@@ -327,6 +327,7 @@ class MLAService:
 
             # Step 4: Validate against current model (if exists)
             logger.info("Step 4/7: Validating new model...")
+            activate_override = None
 
             if self.current_model is not None:
                 logger.info("  Performing A/B test: new model vs production model")
@@ -361,7 +362,20 @@ class MLAService:
 
             else:
                 logger.info("  No current production model - skipping A/B test")
-                logger.info("  New model will be deployed automatically")
+                if training_metrics.get('f1_score', 0.0) < config.MIN_DEPLOY_F1:
+                    activate_override = False
+                    logger.warning("=" * 70)
+                    logger.warning(
+                        "⚠️  CANDIDATE F1 %.4f IS BELOW THE DEPLOY FLOOR (%.2f)",
+                        training_metrics.get('f1_score', 0.0),
+                        config.MIN_DEPLOY_F1,
+                    )
+                    logger.warning("   Registering as CANDIDATE — an operator must review and")
+                    logger.warning("   activate it explicitly. A model this weak is usually a")
+                    logger.warning("   data problem (synthetic fallback, missing labels).")
+                    logger.warning("=" * 70)
+                else:
+                    logger.info("  New model will be deployed automatically")
 
             # Step 5: Convert to ONNX. The input dimension must match
             # the catalogue length so the resulting model's first-axis
@@ -408,6 +422,8 @@ class MLAService:
                 version=self.next_version,
                 metadata=metadata,
                 trigger=trigger,
+                calibrator=calibrator,
+                activate=activate_override,
             )
 
             # Step 7: Update MLA state

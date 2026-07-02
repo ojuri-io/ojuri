@@ -27,7 +27,8 @@ class ModelValidator:
     def __init__(
         self,
         min_improvement: float = 0.01,
-        significance_level: float = 0.05
+        significance_level: float = 0.05,
+        min_deploy_f1: float = 0.0
     ):
         """
         Initialize validator.
@@ -35,13 +36,17 @@ class ModelValidator:
         Args:
             min_improvement: Minimum F1 improvement to consider (default 1%)
             significance_level: P-value threshold for statistical significance
+            min_deploy_f1: Absolute F1 floor a candidate must clear
+                regardless of how it compares to the incumbent
         """
         self.min_improvement = min_improvement
         self.significance_level = significance_level
+        self.min_deploy_f1 = min_deploy_f1
         
         logger.info(f"ModelValidator initialized")
         logger.info(f"  Minimum improvement: {min_improvement*100}%")
         logger.info(f"  Significance level: {significance_level}")
+        logger.info(f"  Absolute F1 floor: {min_deploy_f1}")
     
     def ab_test(
         self,
@@ -230,11 +235,18 @@ class ModelValidator:
                 f"Recall regression: {metrics_a['recall']:.4f} → {metrics_b['recall']:.4f}"
             )
         
+        if metrics_b['f1_score'] < self.min_deploy_f1:
+            reasons.append(
+                f"Candidate F1 ({metrics_b['f1_score']:.4f}) below absolute deploy floor ({self.min_deploy_f1})"
+            )
+
         # All gates are binding: F1 improvement alone must not ship a
         # model that is statistically indistinguishable from the
-        # champion or that trades away precision/recall.
+        # champion or that trades away precision/recall — and no
+        # relative win can ship a model below the absolute floor.
         if (f1_improvement >= self.min_improvement and
             p_value < self.significance_level and
+            metrics_b['f1_score'] >= self.min_deploy_f1 and
             metrics_b['precision'] >= metrics_a['precision'] * 0.95 and
             metrics_b['recall'] >= metrics_a['recall'] * 0.95):
             decision = 'DEPLOY_NEW_MODEL'

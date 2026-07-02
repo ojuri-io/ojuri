@@ -313,6 +313,21 @@ class TestModelValidator:
 
         assert decision == 'DEPLOY_NEW_MODEL'
 
+    def test_gate_blocks_candidate_below_absolute_floor(self):
+        """A significant relative win must not ship a model below the floor."""
+        validator = ModelValidator(min_improvement=0.01, min_deploy_f1=0.6)
+
+        decision, reasons = validator._make_decision(
+            f1_improvement=0.10,
+            auc_improvement=0.05,
+            p_value=0.001,
+            metrics_a={'f1_score': 0.40, 'precision': 0.40, 'recall': 0.40, 'auc_roc': 0.70},
+            metrics_b={'f1_score': 0.50, 'precision': 0.55, 'recall': 0.55, 'auc_roc': 0.80},
+        )
+
+        assert decision == 'KEEP_CURRENT_MODEL'
+        assert any('absolute deploy floor' in r for r in reasons)
+
     def test_comparison_report(self):
         """Test generating comparison report."""
         validator = ModelValidator()
@@ -334,6 +349,47 @@ class TestModelValidator:
         assert 'F1-score' in report
         assert 'DEPLOY_NEW_MODEL' in report
 
+
+
+class TestTemporalSplit:
+    """The preprocessor must train on the past and evaluate on the future."""
+
+    def _indexed_frame(self, n, y_values):
+        import pandas as pd
+        X = pd.DataFrame({'row_index': np.arange(n, dtype=np.float32),
+                          'noise': np.random.rand(n)})
+        return X, pd.Series(y_values)
+
+    def test_split_is_positional_past_to_future(self):
+        np.random.seed(42)
+        n = 500
+        X, y = self._indexed_frame(n, [i % 2 for i in range(n)])
+
+        preprocessor = DataPreprocessor()
+        X_train, X_val, X_test, y_train, y_val, y_test = preprocessor.preprocess(X, y)
+
+        assert X_train[:, 0].max() < X_val[:, 0].min()
+        assert X_val[:, 0].max() < X_test[:, 0].min()
+        assert X_test[:, 0].min() == n - len(X_test)
+
+    def test_falls_back_when_train_would_be_single_class(self):
+        np.random.seed(42)
+        n = 500
+        X, y = self._indexed_frame(n, [0] * 400 + [1] * 100)
+
+        preprocessor = DataPreprocessor()
+        X_train, _, _, y_train, _, y_test = preprocessor.preprocess(X, y)
+
+        assert len(np.unique(y_train)) == 2
+        assert len(np.unique(y_test)) == 2
+
+    def test_random_split_still_available(self):
+        np.random.seed(42)
+        X, y = self._indexed_frame(200, np.random.randint(0, 2, 200))
+
+        preprocessor = DataPreprocessor()
+        result = preprocessor.preprocess(X, y, temporal=False)
+        assert len(result) == 6
 
 if __name__ == '__main__':
     pytest.main([__file__, '-v'])
