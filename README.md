@@ -290,6 +290,18 @@ The response shape (from `PredictResponseDto`):
 }
 ````
 
+### Demo traffic
+
+A fresh stack has an empty dashboard until real predictions flow. The
+demo seeder posts ~500 realistic transactions — 50 recurring senders
+plus embedded fraud patterns (a money ring, a mule fan-out, VPN
+sessions, structuring) — so every Sentinel page has data to show:
+
+````bash
+docker compose --profile demo run --rm demo-seed   # against the running stack
+node scripts/demo-traffic.mjs                      # or from the host (RDA_URL=… to override)
+````
+
 Log in to the dashboard with the **seeded admin password printed by
 `npm run db:migrate`** — copy it from the migration output. The seeded user
 has `mustChangePassword=true`; the first login forces a rotation. To require
