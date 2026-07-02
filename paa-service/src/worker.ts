@@ -174,10 +174,13 @@ async function syncFraudLabels(): Promise<void> {
   const { userIds, latestRecordedAtMs } = await postgresService.loadFraudFlaggedUsers(
     fraudLabelWatermarkMs || undefined
   );
-  if (userIds.length > 0) {
-    graphService.markFraudUsers(userIds);
+  // Postgres keeps microseconds; the ms-truncated watermark re-matches
+  // the newest row on every poll. The Set dedupes, so only log when
+  // genuinely new users were flagged.
+  const added = graphService.markFraudUsers(userIds);
+  if (added > 0) {
     log.info("syncFraudLabels", "Fraud-flagged users loaded into graph", {
-      newUsers: userIds.length,
+      newUsers: added,
       totalFraudUsers: graphService.getFraudUserCount(),
     });
   }
@@ -331,6 +334,18 @@ async function main(): Promise<void> {
     // otherwise early snapshots write default proximity values.
     await syncFraudLabels();
     startFraudLabelSync();
+
+    // The Redis client rejects commands until connected
+    // (enableOfflineQueue=false), and per-command pipeline errors are
+    // dropped, not requeued — consuming before ready silently loses
+    // the first feature flush.
+    try {
+      await redisClient.waitUntilReady(15000);
+    } catch (err) {
+      log.error("main", "Redis not ready — early feature writes will fail until it connects", {
+        error: err instanceof Error ? err.message : String(err),
+      });
+    }
 
     // Connect to Kafka
     await kafkaConsumer.connect();

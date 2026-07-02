@@ -14,6 +14,22 @@ class RedisClient {
     return this.client;
   }
 
+  async waitUntilReady(timeoutMs = 15000): Promise<void> {
+    const client = this.get();
+    if (client.status === "ready") return;
+    await new Promise<void>((resolve, reject) => {
+      const timer = setTimeout(() => {
+        client.removeListener("ready", onReady);
+        reject(new Error(`Redis not ready after ${timeoutMs}ms (status: ${client.status})`));
+      }, timeoutMs);
+      const onReady = () => {
+        clearTimeout(timer);
+        resolve();
+      };
+      client.once("ready", onReady);
+    });
+  }
+
   private createClient(): Redis {
     const retryStrategy = (attempts: number) => {
       const delay = Math.min(attempts * 1000, 15000);

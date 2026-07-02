@@ -365,8 +365,15 @@ class GraphService {
     };
   }
 
-  markFraudUsers(userIds: string[]): void {
-    for (const id of userIds) this.fraudUsers.add(id);
+  markFraudUsers(userIds: string[]): number {
+    let added = 0;
+    for (const id of userIds) {
+      if (!this.fraudUsers.has(id)) {
+        this.fraudUsers.add(id);
+        added++;
+      }
+    }
+    return added;
   }
 
   getFraudUserCount(): number {
