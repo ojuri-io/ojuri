@@ -13,6 +13,31 @@ from src.utils.logger import get_logger
 
 logger = get_logger()  # Use the configured MLA logger
 
+# TransactionEvent fields usable for PSI monitoring. Names must match
+# `models/feature-catalog.v1.json` exactly — the baseline distributions
+# are keyed by catalogue name and PSI only compares features present in
+# BOTH baseline and window. The event does not carry the PAA-computed
+# velocity/graph features, so they cannot be monitored here.
+PSI_FEATURE_FIELDS = ('amount', 'account_age_days', 'session_to_txn_seconds')
+
+
+def extract_psi_features(transaction: dict) -> dict:
+    """
+    Pull PSI-monitorable features from a transaction event. Absent
+    fields are omitted rather than defaulted — a fabricated constant 0
+    poisons the window with a distribution the model never saw.
+    """
+    features = {}
+    for field in PSI_FEATURE_FIELDS:
+        value = transaction.get(field)
+        if value is None:
+            continue
+        try:
+            features[field] = float(value)
+        except (TypeError, ValueError):
+            continue
+    return features
+
 
 class KafkaConsumerService:
     """
@@ -147,14 +172,7 @@ class KafkaConsumerService:
                                         f"label={'YES' if fraud_label else 'NO' if fraud_label is False else 'PENDING'}"
                                     )
                                 
-                                # Extract features (if available in message)
-                                features = {
-                                    'amount': transaction.get('amount', 0),
-                                    'velocity_1h': transaction.get('velocity_1h', 0),
-                                    'velocity_24h': transaction.get('velocity_24h', 0),
-                                    'velocity_7d': transaction.get('velocity_7d', 0),
-                                    'pagerank': transaction.get('pagerank', 0.0)
-                                }
+                                features = extract_psi_features(transaction)
                                 
                                 # Update drift detector ONLY if we have ground truth label
                                 if fraud_label is not None:
