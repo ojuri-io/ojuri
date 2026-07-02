@@ -21,7 +21,7 @@ class DecisionAuditFactory {
     record.championModelVersion = ctx.championVersion;
     record.shadowModelVersion = ctx.shadowVersion;
     record.championScore = ctx.mlScore;
-    record.shadowScore = null;
+    record.shadowScore = ctx.shadowScore;
     record.threshold = ctx.threshold;
 
     record.mlDecision = ctx.mlDecision;

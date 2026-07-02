@@ -75,6 +75,7 @@ export interface MlDecisionContextInput {
   threshold: number;
   championVersion: string;
   shadowVersion: string | null;
+  shadowScore: number | null;
   reasonCodes: ReasonCode[];
   featuresSnapshot: Record<string, number>;
   isDefault: boolean;
@@ -92,6 +93,7 @@ export interface PredictDecisionContext {
   threshold: number;
   championVersion: string;
   shadowVersion: string | null;
+  shadowScore: number | null;
   reasonCodes: ReasonCode[];
   featuresSnapshot: Record<string, number>;
   isDefault: boolean;
