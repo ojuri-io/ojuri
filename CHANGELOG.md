@@ -65,6 +65,27 @@ score distributions before relying on pre-1.2.0 thresholds.
   `pair_amount_mean_30d`. RDA fetches sender + pair + receiver hashes
   in one pipelined round trip. A contract test fails the build if a
   contracted feature loses its writer.
+- **REVIEW band on the ML score** (#87). A new `review_margin` runtime
+  setting (seeded 0 = off) routes scores in
+  `[threshold − margin, threshold)` to a REVIEW decision and into the
+  analyst queue instead of a silent ACCEPT — turning model uncertainty
+  into ground-truth labels. Tracks the per-segment threshold
+  resolution; REVIEW is observational on the wire (`fraud: false`,
+  never published to the blocked topic). Settings gains a Review band
+  card with sizing guidance.
+- **MLA temporal train/test splits** (#88). Training rows are
+  time-ordered and split positionally — train on the past, evaluate on
+  the future. The previous stratified random split leaked future rows
+  into training and inflated every metric the deployment gate reads.
+  Falls back to the stratified split for degenerate datasets.
+- **MLA absolute deploy floor** (#88). `MIN_DEPLOY_F1` (default 0.3):
+  the validator refuses candidates below the floor even when they beat
+  the incumbent, and cold-start models below it register as CANDIDATE
+  for operator review instead of auto-activating.
+- **Sentinel Labels page + label-feedback card** (#86). Manual entry
+  for verified outcomes (paste ids, per-line verdicts, source picker)
+  posting to the labels API, and a Settings card showing "labels until
+  next retrain" from MLA `/stats`.
 - **Demo traffic seeder** (#84). `docker compose --profile demo run
   --rm demo-seed` (or `node scripts/demo-traffic.mjs`) posts ~500
   realistic NGN transactions — 50 recurring senders plus an embedded
@@ -95,6 +116,10 @@ score distributions before relying on pre-1.2.0 thresholds.
   keys. PSI now monitors only fields actually present on the event
   (`amount`, `account_age_days`, `session_to_txn_seconds`) under exact
   catalogue names, omitting absent fields instead of defaulting them.
+- **Isotonic calibrator was dropped on automated retrains** (#88). Only
+  the cold-start script persisted it, so the first drift/label-volume
+  retrain silently shipped uncalibrated scores. `upload_model` now
+  writes `calibrator.npz` into every version directory.
 
 ### Changed
 
@@ -111,6 +136,13 @@ score distributions before relying on pre-1.2.0 thresholds.
 - `POST /v1/admin/labels` requires the new `labels:write` permission —
   grant it to the role your ops integration uses before pointing a
   chargeback feed at it (#81).
+- Post-1.2.0 training metrics will read **lower** than pre-1.2.0
+  numbers for the same data (#88) — the temporal split removes the
+  future-leak inflation. That drop is honesty, not regression; compare
+  models within the same split methodology only.
+- The review queue now includes REVIEW-decision rows alongside
+  DECLINEs (#87). Queue volume is unchanged until an operator sets a
+  non-zero `review_margin`.
 
 ## [1.1.0] - 2026-06-22
 
