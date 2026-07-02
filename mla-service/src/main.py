@@ -111,6 +111,7 @@ class MLAService:
             "label_volume_checks": 0,
             "last_label_check_at": None,
             "labels_pending_retrain": 0,
+            "label_retrain_threshold": config.LABEL_RETRAIN_THRESHOLD,
         }
 
         self._http_server: Optional[socketserver.TCPServer] = None
