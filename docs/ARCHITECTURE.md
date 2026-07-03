@@ -632,7 +632,7 @@ limit, assert every response is HTTP 200 before computing percentiles.
 |---|---|---|
 | ONNX inference, batch = 1 (CPUExecutionProvider) | p50 / p99 | 0.010 ms / 0.049 ms |
 | ONNX inference, batch = 128 | throughput | ~1.18 M predictions/s |
-| RDA `POST /v1/predict`, single client (3,000 trials), **uncontended** | p50 / p99 / mean | 1.24 ms / 4.06 ms / 1.36 ms |
+| RDA `POST /v1/predict`, single client (3,000 trials), **uncontended — baseline, before idempotency + audit joined the hot path** | p50 / p99 / mean | 1.24 ms / 4.06 ms / 1.36 ms |
 | RDA `POST /v1/predict`, 16 concurrent, 5,000 trials, **direct to one replica, unique IDs, all 200 OK** | mean / p50 / p95 / p99 / p999 / RPS | 35 ms / 43 ms / 140 ms / **295 ms** / 3.3 s / ~237 |
 | RDA per-stage means at 16 concurrent (from `predict_stage_duration_ms{stage}`) | feature_load / inference / others | 19 ms / 16 ms / <1 ms |
 | MLA retrain on IEEE-CIS (683,852 train + 5-fold CV + SMOTE) | wall time | 27.67 s |
@@ -642,8 +642,11 @@ limit, assert every response is HTTP 200 before computing percentiles.
 | Phi-3-mini steady-state generation | wall time | ~40–90 s/report |
 
 The single-client and 16-concurrent numbers describe two different
-regimes. Uncontended, the request hot path completes in ~4 ms p99 —
-ONNX inference + Redis hgetall + a Fastify pass. Under concurrent load
+regimes. Uncontended, the request hot path now completes in ~6 ms p99.
+The 4.06 ms row above is the pre-idempotency, pre-audit baseline
+(ONNX inference + Redis hgetall + a Fastify pass); adding the
+idempotency reservation and the audit-enqueue stage to the hot path
+accounts for the ~2 ms delta. Under concurrent load
 the Node event loop becomes the binding constraint: `feature_load` and
 `inference` stage means both jump by an order of magnitude because
 their async resolutions queue behind whatever is currently CPU-bound

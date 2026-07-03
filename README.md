@@ -46,7 +46,7 @@ and a replay CLI that runs candidates against the live audit log.
 
 **Real-time latency budget.** ONNX inference on the deployed XGBoost model
 measures p99 ≈ 49 µs (batch=1); end-to-end `POST /v1/predict` measures
-p99 ≈ 4 ms uncontended on a single developer workstation. Under
+p99 ≈ 6 ms uncontended on a single developer workstation. Under
 concurrent load the path is currently event-loop-bound; see
 [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md#performance-characteristics)
 for the loaded stress profile and benchmarking guidance (the shipped
@@ -287,7 +287,7 @@ node scripts/demo-traffic.mjs                      # or from the host (RDA_URL=�
 
 To measure detection quality — not just populate the UI — run the
 persona-driven benchmark in
-[`docs/FRAUD_SIMULATION.md`](docs/FRAUD_SIMULATION.md): ~120k transactions
+[`docs/FRAUD_SIMULATION.md`](docs/FRAUD_SIMULATION.md): ~128k transactions
 with six fraud typologies, scored per typology before and after a
 label-driven retrain. It's how the numbers in [Status](#status) were
 produced, and it runs against your own deployment.
@@ -537,7 +537,7 @@ Scoped follow-ups (see [`ROADMAP.md`](ROADMAP.md)): Helm chart and Terraform
 module, TypeScript and Python client SDKs, canary traffic split by API-key
 cohort, PII tokenisation hooks, mTLS for service-to-service callers,
 OAuth 2.0 client-credentials grant, pre-built connectors (Stripe / Adyen /
-Plaid), dynamic deny/allow lists, rule backtesting, hosted sandbox.
+Plaid), hosted sandbox.
 
 Performance numbers in this README are orientation values measured on a single
 Apple Silicon developer workstation, not SLA targets — re-measure on your own
