@@ -90,13 +90,9 @@ decisions.
 > the MSVC redistributable XGBoost needs, and the cmd/PowerShell
 > activation syntax. The commands below assume a POSIX shell.
 
-There are two install paths. **Adopters running Ojuri in production** should
-use the prebuilt images path — it pulls pinned, signed containers from
-GHCR. **Contributors modifying the code** should use the build-from-source
-path. Both run the same stack and use the same `docker-compose.yml`; they
-differ only in whether images are pulled or built.
+Clone, start the stack, send a prediction. Two install options — pick one:
 
-### Install from published images (recommended)
+**Run published images** (adopters):
 
 ````bash
 git clone --depth 1 --branch v1.2.0 https://github.com/ojuri-io/ojuri.git
@@ -107,25 +103,7 @@ docker compose -f docker-compose.yml -f docker-compose.ghcr.yml up -d
 docker compose logs db-migrate              # one-time admin password printed here
 ````
 
-The shallow clone fetches only the v1.2.0 tag (~5 MB) for the compose files,
-`.env.example`, and config. The `pull` step downloads the five signed images
-from `ghcr.io/ojuri-io/{rda,paa,mla,fia,sentinel}`. The `up` step starts the
-stack; a one-shot `db-migrate` container applies migrations and seeds before
-RDA accepts traffic, and re-runs as a no-op on subsequent `up`.
-
-`OJURI_VERSION` defaults to `v1` (floating major — receives patches and
-minors automatically per [`VERSIONING.md`](VERSIONING.md)). Pin strictly for
-regulated deployments:
-
-````bash
-export OJURI_VERSION=v1.2.0   # before any docker compose command
-````
-
-> **Docker Compose 2.24+** is required for the GHCR overlay (uses the
-> `!reset` directive). Check with `docker compose version`. Older Compose
-> versions need to use the build-from-source path.
-
-### Build from source (for contributors)
+**Build from source** (contributors):
 
 ````bash
 git clone https://github.com/ojuri-io/ojuri.git
@@ -135,125 +113,19 @@ docker compose up -d --build                # builds RDA + PAA on first run (a f
 docker compose logs db-migrate              # one-time admin password printed here
 ````
 
-Both paths bring up Postgres, Redis, Kafka, three RDA replicas behind NGINX, the
-PAA singleton worker (`paa_group_members` must stay at 1 — see
-[`paa-service/README.md`](paa-service/README.md) for the rationale),
-the `db-migrate` one-shot container (runs Knex migrations + seeds against
-Postgres, exits cleanly when done), and the Prometheus/Grafana stack. FIA is
-gated behind a profile because it carries ~7.6 GB of Phi-3 weights — opt in
-with `docker compose --profile fia up -d` when you have the disk and RAM.
+Either way brings up Postgres, Redis, Kafka, three RDA replicas behind
+NGINX, the PAA singleton worker, a one-shot `db-migrate` container, and
+Prometheus/Grafana. MLA and FIA are opt-in — see
+[Install options](#install-options) and
+[Training a model](#training-a-model-mla). The `.env` copy is required:
+RDA refuses login without `AUTH_JWT_SECRET`.
 
-> Make sure the Docker daemon is running before `docker compose up -d` —
-> start Docker Desktop (macOS/Windows) or `sudo systemctl start docker` (Linux)
-> and confirm with `docker info`. Compose will fail with
-> `Cannot connect to the Docker daemon` if it isn't up.
+### Send a test prediction
 
-> Copying `.env.example` to `.env` is required before `docker compose up` —
-> RDA refuses `/v1/auth/login` without `AUTH_JWT_SECRET`, and the Knex-backed
-> admin endpoints need the `DB_*` block. Rotate `AUTH_JWT_SECRET` before any
-> non-dev deploy.
-
-> MLA (the model trainer) can run either inside Compose under the `mla`
-> profile or on the host venv. The host-venv path is the historical
-> default and is recommended when you want GPU access for training. To
-> run MLA in Compose, add `--profile mla` to any of the commands above
-> and set `MLA_HEALTH_URL=http://mla:9095` in `.env` so the RDA replicas
-> probe the in-Compose service instead of `host.docker.internal`.
->
-> Host-venv first-time setup:
->
-> ````bash
-> cd mla-service
-> python --version                # must report Python 3.11.x — see Prerequisites
-> python -m venv venv
-> source venv/bin/activate
-> pip install -r requirements.txt
-> python -m src.main
-> ````
->
-> If `python` on your PATH isn't 3.11, substitute the binary your installer
-> provides (e.g. `python3.11` / `python3` on Debian/Ubuntu after
-> `apt install python3.11`, or the pyenv shim once `pyenv local 3.11` is
-> set in this directory). Windows users: see [`docs/WINDOWS-SETUP.md`](docs/WINDOWS-SETUP.md)
-> for the cmd/PowerShell equivalent.
->
-> On subsequent runs, just `source venv/bin/activate && python -m src.main`.
-> The "System health" page in Sentinel will show MLA as offline until you
-> start it locally; that is expected unless you wire MLA into your own
-> deployment.
->
-> On a fresh checkout MLA will log a one-time `⚠️  No production model
-> found in registry — This is normal for first deployment` and idle
-> waiting for drift signals. This is **not** a conflict with the shipped
-> demo `models/fraud_model.onnx` — that file is what RDA loads at the
-> registry root so `/v1/predict` works out of the box, whereas MLA's
-> registry scans `models/versions/<v>/` for lineage-tracked versions and
-> that directory ships empty. To seed `models/versions/v1.0/` immediately
-> (so MLA has a baseline for A/B comparisons on its first retrain), run
-> the cold-start trainer once before `python -m src.main`:
->
-> ````bash
-> python scripts/train_initial_model.py     # writes models/versions/v1.0/{model.onnx,model.json,scaler.npz,meta.json}
-> ````
->
-> Without real `fraudLabel` data in Postgres, the script falls back to
-> synthetic data and logs a warning — fine for a dev walkthrough, not for
-> production results. See [`docs/TRAINING.md`](docs/TRAINING.md) for
-> training against your own data.
-
-
-> A 120 KB demo ONNX model (`models/fraud_model.onnx`, derived from a
-> PaySim-trained XGBoost) ships in the repo so `/v1/predict` returns
-> real ML decisions out of the box. The performance numbers in this
-> README were measured against this same model. Replace it with your
-> own once MLA has trained on your data: `cd mla-service && python
-> scripts/train_initial_model.py` writes `models/versions/<v>/model.onnx`;
-> activate it via the admin UI or copy it to `models/fraud_model.onnx`
-> for RDA to pick up. Replacements are gitignored so retrained models
-> don't accidentally land in commits.
->
-> Each model load (boot or hot-reload) runs through a two-check
-> calibration probe: a deterministic re-run and a clearly-legit vs
-> clearly-fraud discrimination test. If either fails — file missing,
-> constant output, wrong feature dimension — `/readyz` reports
-> `{"name":"onnx-model","status":"DOWN"}` and the circuit-breaker
-> fail-closes every predict to a `1.0` (DECLINE) score until a working
-> model is loaded. There is no longer a degraded-mode heuristic that
-> would silently serve random predictions.
-
-The dashboard runs separately. If you brought the backend up with
-`docker compose up -d` (the quickstart above), tell vite to proxy
-through NGINX before starting it — otherwise the dev server defaults
-to `http://localhost:3000` (a host-side RDA) and login returns a 502
-from the proxy:
-
-````bash
-cd frontend
-npm install
-cp .env.example .env       # then edit: uncomment the "Docker stack" block
-npm run dev                # http://localhost:5173
-````
-
-For host-side dev (`npm run start:dev` from the repo root for RDA), the
-default targets in `.env.example` already point at `127.0.0.1:3000` —
-`cp .env.example .env` is optional.
-
-Two first-run footguns worth knowing:
-
-- **Node version.** The dev server needs Node ≥ 18; the repo pins 20 in
-  `.nvmrc` (`nvm use` in the repo root). `TypeError:
-  crypto.getRandomValues is not a function` on `npm run dev` means an
-  older Node was picked up from your PATH.
-- **Port collisions.** If another Vite project holds 5173, the dev
-  server silently serves on the next free port — use the URL Vite
-  prints, not a bookmarked one.
-
-Send a test prediction. The example below uses only the six
-required fields; the API also accepts ~40 optional context fields
-(device, geography, identity, agent, recipient, …) that improve
-prediction quality when supplied — see
-[`docs/PREDICT-API.md`](docs/PREDICT-API.md) for the full field
-reference.
+The example uses the six required fields plus a few common context fields;
+the API accepts ~40 optional context fields (device, geography, identity,
+agent, recipient, …) that improve prediction quality when supplied — see
+[`docs/PREDICT-API.md`](docs/PREDICT-API.md) for the full field reference.
 
 > `transaction_id` is the single identifier Ojuri tracks. It's
 > caller-controlled — any 10–255 char string is accepted, so plug in
@@ -272,55 +144,236 @@ curl -X POST http://localhost/v1/predict \
     "transaction_id": "550e8400-e29b-41d4-a716-446655440000",
     "sender_id": "user_a",
     "receiver_id": "user_b",
-    "amount": 1500.00,
+    "amount": 300.00,
     "transaction_type": "TRANSFER",
     "timestamp": 1717718400000,
-    "segment": "high_value"
+    "is_authenticated": true,
+    "device_is_trusted": true,
+    "account_age_days": 900
   }'
 ````
 
-The response shape (from `PredictResponseDto`):
+The response shape (from `PredictResponseDto`) — values are illustrative,
+reason codes vary with the live feature snapshot:
 
 ````json
 {
   "transaction_id": "550e8400-…",
   "fraud": false,
-  "fraud_probability": 0.1842,
+  "fraud_probability": 0.0773,
   "decision": "ACCEPT",
   "decision_source": "ML",
   "reason_codes": [
-    { "code": "AMOUNT_HIGH",  "description": "Transaction amount relative to typical range", "contribution":  0.27, "value": 1500.0 },
-    { "code": "VELOCITY_24H", "description": "Transactions in the last 24 hours above baseline", "contribution": -0.05, "value": 4.0 }
+    { "code": "VELOCITY_1H",     "description": "Transactions in the last hour above baseline", "contribution":  0.28, "value": 9 },
+    { "code": "PAGERANK",        "description": "Network-centrality score from the transaction graph", "contribution": -0.20, "value": 0.35 },
+    { "code": "CLUSTERING_COEF", "description": "How tightly the sender clusters with known peers", "contribution": 0.11, "value": 0 }
   ],
-  "model_version": "v1.0",
+  "model_version": "default",
   "threshold": 0.65,
-  "audit_id": "f3d7c0bc-…",
-  "latency_ms": 3,
+  "audit_id": "38fb28d2-…",
+  "latency_ms": 9,
   "timestamp": 1717718400123
 }
 ````
 
-### Demo traffic
+> **What you'll see on a fresh install.** Two things surprise first-time
+> users, both expected:
+> - `"model_version": "default"` — the demo ONNX model scores every
+>   prediction, but no version is registered in the model registry yet,
+>   so the label falls back to `default`. It becomes `v1.x` once you
+>   register a trained model (see [Training a model](#training-a-model-mla)).
+> - The seeded **demo rules** run before the model and will `REVIEW` or
+>   `DENY` some common shapes out of the box — `segment: "high_value"`,
+>   amounts ≥ ₦100k, and `PAYMENT` between 500 and 10 000. A flagged
+>   response with `"decision_source": "PRE_RULE"` is a rule firing, not
+>   the model. Disable or edit them in Sentinel → Rules (or the
+>   `01_demo_rules` seed) once you've added your own.
 
-A fresh stack has an empty dashboard until real predictions flow. The
-demo seeder posts ~500 realistic transactions — 50 recurring senders
-plus embedded fraud patterns (a money ring, a mule fan-out, VPN
-sessions, structuring) — so every Sentinel page has data to show:
+That's clone to a scored transaction. Next: bring up the
+[dashboard](#running-the-dashboard), [seed demo data](#demo--test-data),
+or [train your own model](#training-a-model-mla).
+
+---
+
+## Install options
+
+The two paths run the same stack and the same `docker-compose.yml`; they
+differ only in whether the RDA/PAA/Sentinel images are pulled from GHCR or
+built locally.
+
+**Published images.** The shallow clone fetches only the `v1.2.0` tag
+(~5 MB) for the compose files, `.env.example`, and config. The `pull` step
+downloads the five signed images from
+`ghcr.io/ojuri-io/{rda,paa,mla,fia,sentinel}` — public, no login needed. A
+one-shot `db-migrate` container applies migrations and seeds before RDA
+accepts traffic, and re-runs as a no-op on subsequent `up`.
+
+`OJURI_VERSION` defaults to `v1` (floating major — receives patches and
+minors automatically per [`VERSIONING.md`](VERSIONING.md)). Pin strictly
+for regulated deployments:
+
+````bash
+export OJURI_VERSION=v1.2.0   # before any docker compose command
+````
+
+> **Docker Compose 2.24+** is required for the GHCR overlay (uses the
+> `!reset` directive). Check with `docker compose version`. Older Compose
+> versions need the build-from-source path.
+
+**Build from source.** `docker compose up -d --build` builds RDA + PAA on
+first run (a few minutes), then starts the same services.
+
+**What comes up, either way:** Postgres, Redis, Kafka, three RDA replicas
+behind NGINX, the PAA singleton worker (`paa_group_members` must stay at 1
+— see [`paa-service/README.md`](paa-service/README.md) for the rationale),
+the `db-migrate` one-shot (Knex migrations + seeds, exits cleanly), and the
+Prometheus/Grafana stack. FIA is behind a profile because it carries
+~7.6 GB of Phi-3 weights — opt in with `docker compose --profile fia up -d`
+when you have the disk and RAM.
+
+> Copying `.env.example` to `.env` is required before `docker compose up` —
+> RDA refuses `/v1/auth/login` without `AUTH_JWT_SECRET`, and the
+> Knex-backed admin endpoints need the `DB_*` block. Rotate
+> `AUTH_JWT_SECRET` before any non-dev deploy.
+
+> Make sure the Docker daemon is running first — start Docker Desktop
+> (macOS/Windows) or `sudo systemctl start docker` (Linux) and confirm with
+> `docker info`. Compose fails with `Cannot connect to the Docker daemon`
+> if it isn't up.
+
+---
+
+## Running the dashboard
+
+Sentinel (the operator dashboard) runs separately from the backend. If you
+brought the backend up with `docker compose up -d`, point Vite at NGINX
+before starting it — otherwise the dev server targets a host-side RDA on
+`:3000` and login returns a 502 from the proxy:
+
+````bash
+cd frontend
+npm install
+cp .env.example .env       # then edit: uncomment the "Docker stack" block
+npm run dev                # http://localhost:5173
+````
+
+For host-side dev (`npm run start:dev` from the repo root for RDA), the
+default targets in `.env.example` already point at `127.0.0.1:3000`, so
+`cp .env.example .env` is optional.
+
+Log in with the **seeded admin password from `docker compose logs
+db-migrate`** (build-from-source on the host: `npm run db:migrate`). The
+seeded user has `mustChangePassword=true`; the first login forces a
+rotation. To require `X-Api-Key` on `/v1/predict`, set
+`RDA_REQUIRE_API_KEY=true` and issue a key from `POST /v1/admin/api-keys`.
+
+Lost the seeded password? It's only printed once. `npm run reset:admin`
+mints a fresh random one (or pass `-- --password 'my-chosen-secret'` to set
+your own); the new password again has `mustChangePassword=true`.
+
+---
+
+## Demo & test data
+
+A fresh stack has an empty dashboard until predictions flow. The demo
+seeder posts ~500 realistic transactions — 50 recurring senders plus
+embedded fraud patterns (a money ring, a mule fan-out, VPN sessions,
+structuring) — so every Sentinel page has data to show:
 
 ````bash
 docker compose --profile demo run --rm demo-seed   # against the running stack
 node scripts/demo-traffic.mjs                      # or from the host (RDA_URL=… to override)
 ````
 
-Log in to the dashboard with the **seeded admin password printed by
-`npm run db:migrate`** — copy it from the migration output. The seeded user
-has `mustChangePassword=true`; the first login forces a rotation. To require
-`X-Api-Key` on `/v1/predict`, set `RDA_REQUIRE_API_KEY=true` and issue a key
-from `POST /v1/admin/api-keys`.
+To measure detection quality — not just populate the UI — run the
+persona-driven benchmark in
+[`docs/FRAUD_SIMULATION.md`](docs/FRAUD_SIMULATION.md): ~120k transactions
+with six fraud typologies, scored per typology before and after a
+label-driven retrain. It's how the numbers in [Status](#status) were
+produced, and it runs against your own deployment.
 
-Lost the seeded password? It's only printed once. `npm run reset:admin` mints
-a fresh random one (or pass `-- --password 'my-chosen-secret-string'` to set
-your own); the new password again has `mustChangePassword=true`.
+---
+
+## Training a model (MLA)
+
+A 120 KB demo ONNX model (`models/fraud_model.onnx`, a PaySim-trained
+XGBoost) ships in the repo so `/v1/predict` returns real ML decisions out
+of the box; the performance numbers here were measured against it. Replace
+it once MLA has trained on your data.
+
+MLA runs either inside Compose under the `mla` profile or on a host venv.
+The host-venv path is the historical default and is recommended when you
+want GPU access for training. To run MLA in Compose, add `--profile mla` to
+any `up` command and set `MLA_HEALTH_URL=http://mla:9095` in `.env` so the
+RDA replicas probe the in-Compose service instead of `host.docker.internal`.
+
+Host-venv first-time setup:
+
+````bash
+cd mla-service
+python --version                # must report Python 3.11.x — see Prerequisites
+python -m venv venv
+source venv/bin/activate
+pip install -r requirements.txt
+python -m src.main
+````
+
+If `python` on your PATH isn't 3.11, substitute the binary your installer
+provides (`python3.11` / `python3` on Debian/Ubuntu, or the pyenv shim once
+`pyenv local 3.11` is set here). Windows: see
+[`docs/WINDOWS-SETUP.md`](docs/WINDOWS-SETUP.md). On subsequent runs, just
+`source venv/bin/activate && python -m src.main`. Sentinel's "System health"
+page shows MLA offline until you start it — expected unless you wire MLA
+into your deployment.
+
+On a fresh checkout MLA logs a one-time `⚠️  No production model found in
+registry` and idles waiting for drift signals. This is **not** a conflict
+with the shipped demo model — `models/fraud_model.onnx` is what RDA loads
+so predictions work, whereas MLA's registry scans `models/versions/<v>/`
+for lineage-tracked versions, and that directory ships empty. To seed
+`models/versions/v1.0/` immediately (so MLA has a baseline for its first
+A/B comparison):
+
+````bash
+python scripts/train_initial_model.py     # writes models/versions/v1.0/{model.onnx,model.json,scaler.npz,meta.json}
+````
+
+Without real `fraudLabel` data in Postgres, the script falls back to
+synthetic data and logs a warning — fine for a dev walkthrough, not for
+production results. Then activate via the admin UI or copy the `.onnx` to
+`models/fraud_model.onnx` for RDA to pick up (replacements are gitignored).
+See [`docs/TRAINING.md`](docs/TRAINING.md) for training on your own data.
+
+Every model load (boot or hot-reload) runs a two-check calibration probe: a
+deterministic re-run and a clearly-legit vs clearly-fraud discrimination
+test. If either fails — file missing, constant output, wrong feature
+dimension — `/readyz` reports `{"name":"onnx-model","status":"DOWN"}` and
+the circuit breaker fail-closes every predict to `1.0` (DECLINE) until a
+working model loads. There is no degraded-mode heuristic that would
+silently serve random predictions.
+
+---
+
+## Troubleshooting
+
+- **`Cannot connect to the Docker daemon`** — start Docker Desktop or
+  `sudo systemctl start docker`; confirm with `docker info`.
+- **Login returns 502 (dashboard)** — the frontend `.env` isn't pointing at
+  NGINX. Uncomment the "Docker stack" block in `frontend/.env`; see
+  [Running the dashboard](#running-the-dashboard).
+- **`crypto.getRandomValues is not a function` on `npm run dev`** — Node is
+  older than 18. The repo pins 20 in `.nvmrc`; run `nvm use` in the repo
+  root.
+- **Dashboard opens on a different port** — another Vite project holds 5173,
+  so Vite serves on the next free port. Use the URL it prints, not a
+  bookmark.
+- **First prediction returns `DECLINE` for a bare request** — with no
+  context fields and a cold feature cache, the demo model scores the default
+  vector as risky. Add context fields (as in the Quick start example) or
+  send more traffic so PAA warms the cache.
+- **`PRE_RULE` on a request you expected the model to score** — a seeded
+  demo rule fired first; see the fresh-install note in Quick start.
+- **Lost the admin password** — `npm run reset:admin`.
 
 ---
 
