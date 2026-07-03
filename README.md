@@ -287,7 +287,7 @@ node scripts/demo-traffic.mjs                      # or from the host (RDA_URL=�
 
 To measure detection quality — not just populate the UI — run the
 persona-driven benchmark in
-[`docs/FRAUD_SIMULATION.md`](docs/FRAUD_SIMULATION.md): ~120k transactions
+[`docs/FRAUD_SIMULATION.md`](docs/FRAUD_SIMULATION.md): ~128k transactions
 with six fraud typologies, scored per typology before and after a
 label-driven retrain. It's how the numbers in [Status](#status) were
 produced, and it runs against your own deployment.
@@ -537,7 +537,7 @@ Scoped follow-ups (see [`ROADMAP.md`](ROADMAP.md)): Helm chart and Terraform
 module, TypeScript and Python client SDKs, canary traffic split by API-key
 cohort, PII tokenisation hooks, mTLS for service-to-service callers,
 OAuth 2.0 client-credentials grant, pre-built connectors (Stripe / Adyen /
-Plaid), dynamic deny/allow lists, rule backtesting, hosted sandbox.
+Plaid), hosted sandbox.
 
 Performance numbers in this README are orientation values measured on a single
 Apple Silicon developer workstation, not SLA targets — re-measure on your own
