@@ -99,7 +99,7 @@ differ only in whether images are pulled or built.
 ### Install from published images (recommended)
 
 ````bash
-git clone --depth 1 --branch v1.1.0 https://github.com/ojuri-io/ojuri.git
+git clone --depth 1 --branch v1.2.0 https://github.com/ojuri-io/ojuri.git
 cd ojuri
 cp .env.example .env                        # provides AUTH_JWT_SECRET, DB creds, CORS
 docker compose -f docker-compose.yml -f docker-compose.ghcr.yml pull
@@ -107,7 +107,7 @@ docker compose -f docker-compose.yml -f docker-compose.ghcr.yml up -d
 docker compose logs db-migrate              # one-time admin password printed here
 ````
 
-The shallow clone fetches only the v1.1.0 tag (~5 MB) for the compose files,
+The shallow clone fetches only the v1.2.0 tag (~5 MB) for the compose files,
 `.env.example`, and config. The `pull` step downloads the five signed images
 from `ghcr.io/ojuri-io/{rda,paa,mla,fia,sentinel}`. The `up` step starts the
 stack; a one-shot `db-migrate` container applies migrations and seeds before
@@ -118,7 +118,7 @@ minors automatically per [`VERSIONING.md`](VERSIONING.md)). Pin strictly for
 regulated deployments:
 
 ````bash
-export OJURI_VERSION=v1.1.0   # before any docker compose command
+export OJURI_VERSION=v1.2.0   # before any docker compose command
 ````
 
 > **Docker Compose 2.24+** is required for the GHCR overlay (uses the
