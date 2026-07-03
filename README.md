@@ -46,7 +46,7 @@ and a replay CLI that runs candidates against the live audit log.
 
 **Real-time latency budget.** ONNX inference on the deployed XGBoost model
 measures p99 ≈ 49 µs (batch=1); end-to-end `POST /v1/predict` measures
-p99 ≈ 4 ms uncontended on a single developer workstation. Under
+p99 ≈ 6 ms uncontended on a single developer workstation. Under
 concurrent load the path is currently event-loop-bound; see
 [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md#performance-characteristics)
 for the loaded stress profile and benchmarking guidance (the shipped

@@ -232,9 +232,9 @@ To measure honestly: unique `transaction_id` per request, multi-IP source or tem
 **Measured values** (single RDA replica, direct port 3000 to bypass NGINX, unique `transaction_id` per request, all 200 OK):
 
 - ONNX model only (deployed PaySim model, 122 KB, batch=1): p50=0.010 ms, p99=0.049 ms.
-- RDA `/v1/predict`, single client, uncontended: p99 ≈ 4 ms (historical reference; the platform was originally benchmarked at this load).
+- RDA `/v1/predict`, single client, uncontended: p99 ≈ 6 ms (idempotency reservation + audit enqueue are now on the hot path; the earlier 4 ms figure predates those two stages).
 - RDA `/v1/predict`, 16 concurrent, 5,000 trials: mean 35 ms, p50=43 ms, p95=140 ms, **p99=295 ms**, p999=3.3 s, ~237 RPS. Per-stage means: `feature_load` 19 ms, `inference` 16 ms — both stages an order of magnitude above their uncontended cost because Node's event loop is serialising async resolutions under contention. The non-ML stages (rules, reason codes, audit_enqueue) stay sub-1 ms.
 - IEEE-CIS XGBoost training: 683,852 train / 118,108 test in 27.67 s; held-out F1=0.554, AUC=0.911.
 - FIA (Phi-3-mini, MPS, fp16): ~46 s LLM load, ~6–10 min one-time MPS warmup, then ~40–90 s per report. Idempotency guard verified end-to-end.
 
-The 295 ms p99 number is the current honest baseline at meaningful concurrency on this hardware. Driving it down toward the uncontended 4 ms is open work — request admission control at the predict route, hot-path object-allocation cleanup, possibly cluster-mode workers per container, and a benchmark host separate from the server are the levers worth trying next.
+The 295 ms p99 number is the current honest baseline at meaningful concurrency on this hardware. Driving it down toward the uncontended 6 ms is open work — request admission control at the predict route, hot-path object-allocation cleanup, possibly cluster-mode workers per container, and a benchmark host separate from the server are the levers worth trying next.
