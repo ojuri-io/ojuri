@@ -248,12 +248,25 @@ Two first-run footguns worth knowing:
   server silently serves on the next free port — use the URL Vite
   prints, not a bookmarked one.
 
-Send a test prediction. The example below uses only the six
-required fields; the API also accepts ~40 optional context fields
-(device, geography, identity, agent, recipient, …) that improve
+Send a test prediction. The example uses the six required fields plus
+a few common context fields; the API accepts ~40 optional context
+fields (device, geography, identity, agent, recipient, …) that improve
 prediction quality when supplied — see
 [`docs/PREDICT-API.md`](docs/PREDICT-API.md) for the full field
 reference.
+
+> **What you'll see on a fresh install.** Two things surprise first-time
+> users, both expected:
+> - `"model_version": "default"` — the demo ONNX model scores every
+>   prediction, but no version is registered in the model registry yet,
+>   so the label falls back to `default`. It becomes `v1.x` once you
+>   register a trained model (see the MLA notes above).
+> - The seeded **demo rules** run before the model and will `REVIEW` or
+>   `DENY` some common shapes out of the box — `segment: "high_value"`,
+>   amounts ≥ ₦100k, and `PAYMENT` between 500 and 10 000. A flagged
+>   response with `"decision_source": "PRE_RULE"` is a rule firing, not
+>   the model. Disable or edit them in Sentinel → Rules (or the
+>   `01_demo_rules` seed) once you've added your own.
 
 > `transaction_id` is the single identifier Ojuri tracks. It's
 > caller-controlled — any 10–255 char string is accepted, so plug in
@@ -272,30 +285,34 @@ curl -X POST http://localhost/v1/predict \
     "transaction_id": "550e8400-e29b-41d4-a716-446655440000",
     "sender_id": "user_a",
     "receiver_id": "user_b",
-    "amount": 1500.00,
+    "amount": 300.00,
     "transaction_type": "TRANSFER",
     "timestamp": 1717718400000,
-    "segment": "high_value"
+    "is_authenticated": true,
+    "device_is_trusted": true,
+    "account_age_days": 900
   }'
 ````
 
-The response shape (from `PredictResponseDto`):
+The response shape (from `PredictResponseDto`) — values are illustrative,
+reason codes vary with the live feature snapshot:
 
 ````json
 {
   "transaction_id": "550e8400-…",
   "fraud": false,
-  "fraud_probability": 0.1842,
+  "fraud_probability": 0.0773,
   "decision": "ACCEPT",
   "decision_source": "ML",
   "reason_codes": [
-    { "code": "AMOUNT_HIGH",  "description": "Transaction amount relative to typical range", "contribution":  0.27, "value": 1500.0 },
-    { "code": "VELOCITY_24H", "description": "Transactions in the last 24 hours above baseline", "contribution": -0.05, "value": 4.0 }
+    { "code": "VELOCITY_1H",     "description": "Transactions in the last hour above baseline", "contribution":  0.28, "value": 9 },
+    { "code": "PAGERANK",        "description": "Network-centrality score from the transaction graph", "contribution": -0.20, "value": 0.35 },
+    { "code": "CLUSTERING_COEF", "description": "How tightly the sender clusters with known peers", "contribution": 0.11, "value": 0 }
   ],
-  "model_version": "v1.0",
+  "model_version": "default",
   "threshold": 0.65,
-  "audit_id": "f3d7c0bc-…",
-  "latency_ms": 3,
+  "audit_id": "38fb28d2-…",
+  "latency_ms": 9,
   "timestamp": 1717718400123
 }
 ````
