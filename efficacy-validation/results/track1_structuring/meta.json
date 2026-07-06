@@ -1,0 +1,15 @@
+{
+  "scenario": "track1_structuring",
+  "scenario_file": "scenarios/track1_structuring.py",
+  "seed": 104,
+  "run_id": "r1",
+  "anchor_ms": 1783367427299,
+  "git_sha": "1784c712009dcbf91a73ed9479894257c3d3250a",
+  "started": "2026-07-06T19:50:27.000Z",
+  "finished": "2026-07-06T19:52:20.000Z",
+  "events_sent": 420,
+  "rps_limit": 25.0,
+  "audit_rows_joined": 420,
+  "barrier_misses": 0,
+  "notes": "Structuring users have prior legitimate history."
+}

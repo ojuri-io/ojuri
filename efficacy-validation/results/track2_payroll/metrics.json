@@ -1,0 +1,47 @@
+{
+  "totals": {
+    "transactions": 360,
+    "fraud": 0,
+    "legit": 360
+  },
+  "verdicts_fraud": {},
+  "verdicts_legit": {
+    "ACCEPT": 271,
+    "DECLINE": 89
+  },
+  "recall_flagged": null,
+  "recall_declined": null,
+  "precision_flagged": 0.0,
+  "false_positive_rate": 0.2472,
+  "time_to_first_detection": null,
+  "attribution_fraud_flagged": {},
+  "attribution_legit_flagged": {
+    "PRE_RULE:demo: very-large amount auto-block": 88,
+    "ML:paa-features(top=AMOUNT_HIGH:request)": 1
+  },
+  "score_stats_fraud": {},
+  "score_stats_legit": {
+    "n": 360,
+    "mean": 0.0021,
+    "p05": 0.0,
+    "p25": 0.0,
+    "p50": 0.0,
+    "p75": 0.0,
+    "p95": 0.0001,
+    "min": 0,
+    "max": 0.7532
+  },
+  "score_stats_fraud_ml_only": {},
+  "score_stats_legit_ml_only": {
+    "n": 272,
+    "mean": 0.0028,
+    "p05": 0.0,
+    "p25": 0.0,
+    "p50": 0.0,
+    "p75": 0.0,
+    "p95": 0.0002,
+    "min": 0,
+    "max": 0.7532
+  },
+  "features_default_rate": 0.4806
+}

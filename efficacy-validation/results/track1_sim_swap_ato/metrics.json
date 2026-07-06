@@ -1,0 +1,104 @@
+{
+  "totals": {
+    "transactions": 400,
+    "fraud": 15,
+    "legit": 385
+  },
+  "verdicts_fraud": {
+    "DECLINE": 14,
+    "ACCEPT": 1
+  },
+  "verdicts_legit": {
+    "ACCEPT": 333,
+    "DECLINE": 18,
+    "REVIEW": 34
+  },
+  "recall_flagged": 0.9333,
+  "recall_declined": 0.9333,
+  "precision_flagged": 0.2121,
+  "false_positive_rate": 0.1351,
+  "time_to_first_detection": {
+    "fraud_txn_index": 1,
+    "of_fraud_txns": 15,
+    "event_time_offset_s": 0.0
+  },
+  "attribution_fraud_flagged": {
+    "ML:paa-features(top=AMOUNT_HIGH:request)": 4,
+    "PRE_RULE:demo: very-large amount auto-block": 10
+  },
+  "attribution_legit_flagged": {
+    "PRE_RULE:demo: very-large amount auto-block": 16,
+    "PRE_RULE:demo: moderate payment review": 34,
+    "ML:default-features": 1,
+    "ML:paa-features(top=CLUSTERING_COEF:paa)": 1
+  },
+  "score_stats_fraud": {
+    "n": 15,
+    "mean": 0.2987,
+    "p05": 0.0,
+    "p25": 0.0,
+    "p50": 0.0,
+    "p75": 0.7406,
+    "p95": 1.0,
+    "min": 0,
+    "max": 1
+  },
+  "score_stats_legit": {
+    "n": 385,
+    "mean": 0.0045,
+    "p05": 0.0,
+    "p25": 0.0,
+    "p50": 0.0,
+    "p75": 0.0,
+    "p95": 0.0002,
+    "min": 0,
+    "max": 0.8546
+  },
+  "score_stats_fraud_ml_only": {
+    "n": 5,
+    "mean": 0.8962,
+    "p05": 0.5849,
+    "p25": 1.0,
+    "p50": 1.0,
+    "p75": 1.0,
+    "p95": 1.0,
+    "min": 0.4811,
+    "max": 1
+  },
+  "score_stats_legit_ml_only": {
+    "n": 335,
+    "mean": 0.0051,
+    "p05": 0.0,
+    "p25": 0.0,
+    "p50": 0.0,
+    "p75": 0.0,
+    "p95": 0.0002,
+    "min": 0,
+    "max": 0.8546
+  },
+  "features_default_rate": 0.125,
+  "by_subpattern": {
+    "100k_1M": {
+      "fraud_txns": 5,
+      "recall_flagged": 1.0,
+      "verdicts": {
+        "DECLINE": 5
+      }
+    },
+    "over_1M": {
+      "fraud_txns": 5,
+      "recall_flagged": 1.0,
+      "verdicts": {
+        "DECLINE": 5
+      }
+    },
+    "sub_100k": {
+      "fraud_txns": 5,
+      "recall_flagged": 0.8,
+      "verdicts": {
+        "DECLINE": 4,
+        "ACCEPT": 1
+      }
+    }
+  }
+}

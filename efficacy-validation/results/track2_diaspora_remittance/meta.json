@@ -1,0 +1,15 @@
+{
+  "scenario": "track2_diaspora_remittance",
+  "scenario_file": "scenarios/track2_diaspora_remittance.py",
+  "seed": 203,
+  "run_id": "r1",
+  "anchor_ms": 1783368174288,
+  "git_sha": "1784c712009dcbf91a73ed9479894257c3d3250a",
+  "started": "2026-07-06T20:02:54.000Z",
+  "finished": "2026-07-06T20:03:53.000Z",
+  "events_sent": 264,
+  "rps_limit": 25.0,
+  "audit_rows_joined": 264,
+  "barrier_misses": 0,
+  "notes": "Zero fraud by construction. 15% of remitters use a VPN."
+}

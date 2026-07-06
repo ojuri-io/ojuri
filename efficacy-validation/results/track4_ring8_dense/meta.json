@@ -1,0 +1,15 @@
+{
+  "scenario": "track4_ring8_dense",
+  "scenario_file": "scenarios/track4_ring8_dense.py",
+  "seed": 402,
+  "run_id": "r1",
+  "anchor_ms": 1783369332661,
+  "git_sha": "1784c712009dcbf91a73ed9479894257c3d3250a",
+  "started": "2026-07-06T20:22:12.000Z",
+  "finished": "2026-07-06T20:34:07.000Z",
+  "events_sent": 177,
+  "rps_limit": 25.0,
+  "audit_rows_joined": 177,
+  "barrier_misses": 0,
+  "notes": "~11 min wall time."
+}

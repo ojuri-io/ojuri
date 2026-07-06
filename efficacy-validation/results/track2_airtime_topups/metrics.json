@@ -1,0 +1,48 @@
+{
+  "totals": {
+    "transactions": 500,
+    "fraud": 0,
+    "legit": 500
+  },
+  "verdicts_fraud": {},
+  "verdicts_legit": {
+    "REVIEW": 219,
+    "ACCEPT": 275,
+    "DECLINE": 6
+  },
+  "recall_flagged": null,
+  "recall_declined": null,
+  "precision_flagged": 0.0,
+  "false_positive_rate": 0.45,
+  "time_to_first_detection": null,
+  "attribution_fraud_flagged": {},
+  "attribution_legit_flagged": {
+    "PRE_RULE:demo: moderate payment review": 219,
+    "PRE_RULE:demo: very-large amount auto-block": 6
+  },
+  "score_stats_fraud": {},
+  "score_stats_legit": {
+    "n": 500,
+    "mean": 0.0,
+    "p05": 0.0,
+    "p25": 0.0,
+    "p50": 0.0,
+    "p75": 0.0,
+    "p95": 0.0,
+    "min": 0,
+    "max": 0.0031
+  },
+  "score_stats_fraud_ml_only": {},
+  "score_stats_legit_ml_only": {
+    "n": 275,
+    "mean": 0.0,
+    "p05": 0.0,
+    "p25": 0.0,
+    "p50": 0.0,
+    "p75": 0.0,
+    "p95": 0.0001,
+    "min": 0,
+    "max": 0.0031
+  },
+  "features_default_rate": 0.358
+}

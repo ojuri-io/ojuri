@@ -1,0 +1,15 @@
+{
+  "scenario": "track3_shift_mix_time",
+  "scenario_file": "scenarios/track3_shift_mix_time.py",
+  "seed": 303,
+  "run_id": "r1",
+  "anchor_ms": 1783368354135,
+  "git_sha": "1784c712009dcbf91a73ed9479894257c3d3250a",
+  "started": "2026-07-06T20:05:54.000Z",
+  "finished": "2026-07-06T20:06:46.000Z",
+  "events_sent": 900,
+  "rps_limit": 25.0,
+  "audit_rows_joined": 900,
+  "barrier_misses": 0,
+  "notes": "Full NG context fields; business-hours event times."
+}

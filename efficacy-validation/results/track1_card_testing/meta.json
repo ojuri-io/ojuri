@@ -1,0 +1,15 @@
+{
+  "scenario": "track1_card_testing",
+  "scenario_file": "scenarios/track1_card_testing.py",
+  "seed": 103,
+  "run_id": "r1",
+  "anchor_ms": 1783367264966,
+  "git_sha": "1784c712009dcbf91a73ed9479894257c3d3250a",
+  "started": "2026-07-06T19:47:44.000Z",
+  "finished": "2026-07-06T19:50:27.000Z",
+  "events_sent": 403,
+  "rps_limit": 25.0,
+  "audit_rows_joined": 403,
+  "barrier_misses": 0,
+  "notes": "Barrier every 5th probe so velocity state accumulates mid-burst."
+}

@@ -1,0 +1,15 @@
+{
+  "scenario": "track2_agent_fanout",
+  "scenario_file": "scenarios/track2_agent_fanout.py",
+  "seed": 201,
+  "run_id": "r1",
+  "anchor_ms": 1783368044778,
+  "git_sha": "1784c712009dcbf91a73ed9479894257c3d3250a",
+  "started": "2026-07-06T20:00:44.000Z",
+  "finished": "2026-07-06T20:01:51.000Z",
+  "events_sent": 420,
+  "rps_limit": 25.0,
+  "audit_rows_joined": 420,
+  "barrier_misses": 0,
+  "notes": "Zero fraud by construction. Every flag is a false positive."
+}

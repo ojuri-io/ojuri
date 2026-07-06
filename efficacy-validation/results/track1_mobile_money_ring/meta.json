@@ -1,0 +1,15 @@
+{
+  "scenario": "track1_mobile_money_ring",
+  "scenario_file": "scenarios/track1_mobile_money_ring.py",
+  "seed": 101,
+  "run_id": "r1",
+  "anchor_ms": 1783366758619,
+  "git_sha": "1784c712009dcbf91a73ed9479894257c3d3250a",
+  "started": "2026-07-06T19:39:18.000Z",
+  "finished": "2026-07-06T19:44:37.000Z",
+  "events_sent": 454,
+  "rps_limit": 25.0,
+  "audit_rows_joined": 454,
+  "barrier_misses": 0,
+  "notes": "Ring amounts N18k-N75k (below the N100k demo DENY rule). Barriers on every hop so each prediction sees PAA state including all prior hops."
+}

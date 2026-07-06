@@ -1,0 +1,15 @@
+{
+  "scenario": "track4_community_stability",
+  "scenario_file": "scenarios/track4_community_stability.py",
+  "seed": 403,
+  "run_id": "r1",
+  "anchor_ms": 1783370047399,
+  "git_sha": "1784c712009dcbf91a73ed9479894257c3d3250a",
+  "started": "2026-07-06T20:34:07.000Z",
+  "finished": "2026-07-06T21:13:10.000Z",
+  "events_sent": 150,
+  "rps_limit": 25.0,
+  "audit_rows_joined": 150,
+  "barrier_misses": 0,
+  "notes": "~17 min wall time. Ring static after formation; only background flows."
+}

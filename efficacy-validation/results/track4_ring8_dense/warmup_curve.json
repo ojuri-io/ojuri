@@ -1,0 +1,406 @@
+{
+  "ticks": 10,
+  "first_tick_all_shared": "after_round2",
+  "total_churn_events": 8,
+  "rows": [
+    {
+      "label": "before_ring",
+      "elapsed_s": 0.0,
+      "events_sent": 25,
+      "pg_community_ids": {
+        "ev1u-t4ring8-r1-ring0": null,
+        "ev1u-t4ring8-r1-ring1": null,
+        "ev1u-t4ring8-r1-ring2": null,
+        "ev1u-t4ring8-r1-ring3": null,
+        "ev1u-t4ring8-r1-ring4": null,
+        "ev1u-t4ring8-r1-ring5": null,
+        "ev1u-t4ring8-r1-ring6": null,
+        "ev1u-t4ring8-r1-ring7": null
+      },
+      "redis_community_ids": {
+        "ev1u-t4ring8-r1-ring0": null,
+        "ev1u-t4ring8-r1-ring1": null,
+        "ev1u-t4ring8-r1-ring2": null,
+        "ev1u-t4ring8-r1-ring3": null,
+        "ev1u-t4ring8-r1-ring4": null,
+        "ev1u-t4ring8-r1-ring5": null,
+        "ev1u-t4ring8-r1-ring6": null,
+        "ev1u-t4ring8-r1-ring7": null
+      },
+      "all_share_one_community": false,
+      "distinct_communities": null,
+      "members_with_metadata": 0,
+      "churned_members": [],
+      "pagerank": {
+        "ev1u-t4ring8-r1-ring0": null,
+        "ev1u-t4ring8-r1-ring1": null,
+        "ev1u-t4ring8-r1-ring2": null,
+        "ev1u-t4ring8-r1-ring3": null,
+        "ev1u-t4ring8-r1-ring4": null,
+        "ev1u-t4ring8-r1-ring5": null,
+        "ev1u-t4ring8-r1-ring6": null,
+        "ev1u-t4ring8-r1-ring7": null
+      }
+    },
+    {
+      "label": "after_round1",
+      "elapsed_s": 87.9,
+      "events_sent": 53,
+      "pg_community_ids": {
+        "ev1u-t4ring8-r1-ring0": "39",
+        "ev1u-t4ring8-r1-ring1": "39",
+        "ev1u-t4ring8-r1-ring2": "39",
+        "ev1u-t4ring8-r1-ring3": "0",
+        "ev1u-t4ring8-r1-ring4": "0",
+        "ev1u-t4ring8-r1-ring5": "39",
+        "ev1u-t4ring8-r1-ring6": "39",
+        "ev1u-t4ring8-r1-ring7": "39"
+      },
+      "redis_community_ids": {
+        "ev1u-t4ring8-r1-ring0": "0",
+        "ev1u-t4ring8-r1-ring1": "0",
+        "ev1u-t4ring8-r1-ring2": "0",
+        "ev1u-t4ring8-r1-ring3": "0",
+        "ev1u-t4ring8-r1-ring4": "0",
+        "ev1u-t4ring8-r1-ring5": "39",
+        "ev1u-t4ring8-r1-ring6": "39",
+        "ev1u-t4ring8-r1-ring7": "39"
+      },
+      "all_share_one_community": false,
+      "distinct_communities": 2,
+      "members_with_metadata": 8,
+      "churned_members": [],
+      "pagerank": {
+        "ev1u-t4ring8-r1-ring0": "0",
+        "ev1u-t4ring8-r1-ring1": "0",
+        "ev1u-t4ring8-r1-ring2": "0",
+        "ev1u-t4ring8-r1-ring3": "0",
+        "ev1u-t4ring8-r1-ring4": "0",
+        "ev1u-t4ring8-r1-ring5": "0.00029650815154725414",
+        "ev1u-t4ring8-r1-ring6": "0.00032658257302690345",
+        "ev1u-t4ring8-r1-ring7": "0.0002567030100833712"
+      }
+    },
+    {
+      "label": "after_round2",
+      "elapsed_s": 175.9,
+      "events_sent": 81,
+      "pg_community_ids": {
+        "ev1u-t4ring8-r1-ring0": "36",
+        "ev1u-t4ring8-r1-ring1": "36",
+        "ev1u-t4ring8-r1-ring2": "36",
+        "ev1u-t4ring8-r1-ring3": "36",
+        "ev1u-t4ring8-r1-ring4": "36",
+        "ev1u-t4ring8-r1-ring5": "36",
+        "ev1u-t4ring8-r1-ring6": "36",
+        "ev1u-t4ring8-r1-ring7": "36"
+      },
+      "redis_community_ids": {
+        "ev1u-t4ring8-r1-ring0": "36",
+        "ev1u-t4ring8-r1-ring1": "36",
+        "ev1u-t4ring8-r1-ring2": "36",
+        "ev1u-t4ring8-r1-ring3": "36",
+        "ev1u-t4ring8-r1-ring4": "36",
+        "ev1u-t4ring8-r1-ring5": "36",
+        "ev1u-t4ring8-r1-ring6": "36",
+        "ev1u-t4ring8-r1-ring7": "36"
+      },
+      "all_share_one_community": true,
+      "distinct_communities": 1,
+      "members_with_metadata": 8,
+      "churned_members": [
+        "ev1u-t4ring8-r1-ring0",
+        "ev1u-t4ring8-r1-ring1",
+        "ev1u-t4ring8-r1-ring2",
+        "ev1u-t4ring8-r1-ring3",
+        "ev1u-t4ring8-r1-ring4",
+        "ev1u-t4ring8-r1-ring5",
+        "ev1u-t4ring8-r1-ring6",
+        "ev1u-t4ring8-r1-ring7"
+      ],
+      "pagerank": {
+        "ev1u-t4ring8-r1-ring0": "0.0006191510186425107",
+        "ev1u-t4ring8-r1-ring1": "0.0007080960862141159",
+        "ev1u-t4ring8-r1-ring2": "0.0006028454020230481",
+        "ev1u-t4ring8-r1-ring3": "0.0005972227116109829",
+        "ev1u-t4ring8-r1-ring4": "0.000634538607502347",
+        "ev1u-t4ring8-r1-ring5": "0.0006137131228569395",
+        "ev1u-t4ring8-r1-ring6": "0.0006167844326587107",
+        "ev1u-t4ring8-r1-ring7": "0.000622407123070776"
+      }
+    },
+    {
+      "label": "after_round3",
+      "elapsed_s": 263.9,
+      "events_sent": 109,
+      "pg_community_ids": {
+        "ev1u-t4ring8-r1-ring0": "36",
+        "ev1u-t4ring8-r1-ring1": "36",
+        "ev1u-t4ring8-r1-ring2": "36",
+        "ev1u-t4ring8-r1-ring3": "36",
+        "ev1u-t4ring8-r1-ring4": "36",
+        "ev1u-t4ring8-r1-ring5": "36",
+        "ev1u-t4ring8-r1-ring6": "36",
+        "ev1u-t4ring8-r1-ring7": "36"
+      },
+      "redis_community_ids": {
+        "ev1u-t4ring8-r1-ring0": "36",
+        "ev1u-t4ring8-r1-ring1": "36",
+        "ev1u-t4ring8-r1-ring2": "36",
+        "ev1u-t4ring8-r1-ring3": "36",
+        "ev1u-t4ring8-r1-ring4": "36",
+        "ev1u-t4ring8-r1-ring5": "36",
+        "ev1u-t4ring8-r1-ring6": "36",
+        "ev1u-t4ring8-r1-ring7": "36"
+      },
+      "all_share_one_community": true,
+      "distinct_communities": 1,
+      "members_with_metadata": 8,
+      "churned_members": [],
+      "pagerank": {
+        "ev1u-t4ring8-r1-ring0": "0.0006191510186425107",
+        "ev1u-t4ring8-r1-ring1": "0.0007080960862141159",
+        "ev1u-t4ring8-r1-ring2": "0.0006028454020230481",
+        "ev1u-t4ring8-r1-ring3": "0.0005972227116109829",
+        "ev1u-t4ring8-r1-ring4": "0.000634538607502347",
+        "ev1u-t4ring8-r1-ring5": "0.0006137131228569395",
+        "ev1u-t4ring8-r1-ring6": "0.0006167844326587107",
+        "ev1u-t4ring8-r1-ring7": "0.000622407123070776"
+      }
+    },
+    {
+      "label": "after_round4",
+      "elapsed_s": 351.9,
+      "events_sent": 137,
+      "pg_community_ids": {
+        "ev1u-t4ring8-r1-ring0": "36",
+        "ev1u-t4ring8-r1-ring1": "36",
+        "ev1u-t4ring8-r1-ring2": "36",
+        "ev1u-t4ring8-r1-ring3": "36",
+        "ev1u-t4ring8-r1-ring4": "36",
+        "ev1u-t4ring8-r1-ring5": "36",
+        "ev1u-t4ring8-r1-ring6": "36",
+        "ev1u-t4ring8-r1-ring7": "36"
+      },
+      "redis_community_ids": {
+        "ev1u-t4ring8-r1-ring0": "36",
+        "ev1u-t4ring8-r1-ring1": "36",
+        "ev1u-t4ring8-r1-ring2": "36",
+        "ev1u-t4ring8-r1-ring3": "36",
+        "ev1u-t4ring8-r1-ring4": "36",
+        "ev1u-t4ring8-r1-ring5": "36",
+        "ev1u-t4ring8-r1-ring6": "36",
+        "ev1u-t4ring8-r1-ring7": "36"
+      },
+      "all_share_one_community": true,
+      "distinct_communities": 1,
+      "members_with_metadata": 8,
+      "churned_members": [],
+      "pagerank": {
+        "ev1u-t4ring8-r1-ring0": "0.0006191510186425107",
+        "ev1u-t4ring8-r1-ring1": "0.0007080960862141159",
+        "ev1u-t4ring8-r1-ring2": "0.0006028454020230481",
+        "ev1u-t4ring8-r1-ring3": "0.0005972227116109829",
+        "ev1u-t4ring8-r1-ring4": "0.000634538607502347",
+        "ev1u-t4ring8-r1-ring5": "0.0006137131228569395",
+        "ev1u-t4ring8-r1-ring6": "0.0006167844326587107",
+        "ev1u-t4ring8-r1-ring7": "0.000622407123070776"
+      }
+    },
+    {
+      "label": "stabilize_tick1",
+      "elapsed_s": 409.4,
+      "events_sent": 145,
+      "pg_community_ids": {
+        "ev1u-t4ring8-r1-ring0": "36",
+        "ev1u-t4ring8-r1-ring1": "36",
+        "ev1u-t4ring8-r1-ring2": "36",
+        "ev1u-t4ring8-r1-ring3": "36",
+        "ev1u-t4ring8-r1-ring4": "36",
+        "ev1u-t4ring8-r1-ring5": "36",
+        "ev1u-t4ring8-r1-ring6": "36",
+        "ev1u-t4ring8-r1-ring7": "36"
+      },
+      "redis_community_ids": {
+        "ev1u-t4ring8-r1-ring0": "36",
+        "ev1u-t4ring8-r1-ring1": "36",
+        "ev1u-t4ring8-r1-ring2": "36",
+        "ev1u-t4ring8-r1-ring3": "36",
+        "ev1u-t4ring8-r1-ring4": "36",
+        "ev1u-t4ring8-r1-ring5": "36",
+        "ev1u-t4ring8-r1-ring6": "36",
+        "ev1u-t4ring8-r1-ring7": "36"
+      },
+      "all_share_one_community": true,
+      "distinct_communities": 1,
+      "members_with_metadata": 8,
+      "churned_members": [],
+      "pagerank": {
+        "ev1u-t4ring8-r1-ring0": "0.0006191510186425107",
+        "ev1u-t4ring8-r1-ring1": "0.0007080960862141159",
+        "ev1u-t4ring8-r1-ring2": "0.0006028454020230481",
+        "ev1u-t4ring8-r1-ring3": "0.0005972227116109829",
+        "ev1u-t4ring8-r1-ring4": "0.000634538607502347",
+        "ev1u-t4ring8-r1-ring5": "0.0006137131228569395",
+        "ev1u-t4ring8-r1-ring6": "0.0006167844326587107",
+        "ev1u-t4ring8-r1-ring7": "0.000622407123070776"
+      }
+    },
+    {
+      "label": "stabilize_tick2",
+      "elapsed_s": 467.0,
+      "events_sent": 153,
+      "pg_community_ids": {
+        "ev1u-t4ring8-r1-ring0": "36",
+        "ev1u-t4ring8-r1-ring1": "36",
+        "ev1u-t4ring8-r1-ring2": "36",
+        "ev1u-t4ring8-r1-ring3": "36",
+        "ev1u-t4ring8-r1-ring4": "36",
+        "ev1u-t4ring8-r1-ring5": "36",
+        "ev1u-t4ring8-r1-ring6": "36",
+        "ev1u-t4ring8-r1-ring7": "36"
+      },
+      "redis_community_ids": {
+        "ev1u-t4ring8-r1-ring0": "36",
+        "ev1u-t4ring8-r1-ring1": "36",
+        "ev1u-t4ring8-r1-ring2": "36",
+        "ev1u-t4ring8-r1-ring3": "36",
+        "ev1u-t4ring8-r1-ring4": "36",
+        "ev1u-t4ring8-r1-ring5": "36",
+        "ev1u-t4ring8-r1-ring6": "36",
+        "ev1u-t4ring8-r1-ring7": "36"
+      },
+      "all_share_one_community": true,
+      "distinct_communities": 1,
+      "members_with_metadata": 8,
+      "churned_members": [],
+      "pagerank": {
+        "ev1u-t4ring8-r1-ring0": "0.0006191510186425107",
+        "ev1u-t4ring8-r1-ring1": "0.0007080960862141159",
+        "ev1u-t4ring8-r1-ring2": "0.0006028454020230481",
+        "ev1u-t4ring8-r1-ring3": "0.0005972227116109829",
+        "ev1u-t4ring8-r1-ring4": "0.000634538607502347",
+        "ev1u-t4ring8-r1-ring5": "0.0006137131228569395",
+        "ev1u-t4ring8-r1-ring6": "0.0006167844326587107",
+        "ev1u-t4ring8-r1-ring7": "0.000622407123070776"
+      }
+    },
+    {
+      "label": "stabilize_tick3",
+      "elapsed_s": 524.5,
+      "events_sent": 161,
+      "pg_community_ids": {
+        "ev1u-t4ring8-r1-ring0": "36",
+        "ev1u-t4ring8-r1-ring1": "36",
+        "ev1u-t4ring8-r1-ring2": "36",
+        "ev1u-t4ring8-r1-ring3": "36",
+        "ev1u-t4ring8-r1-ring4": "36",
+        "ev1u-t4ring8-r1-ring5": "36",
+        "ev1u-t4ring8-r1-ring6": "36",
+        "ev1u-t4ring8-r1-ring7": "36"
+      },
+      "redis_community_ids": {
+        "ev1u-t4ring8-r1-ring0": "36",
+        "ev1u-t4ring8-r1-ring1": "36",
+        "ev1u-t4ring8-r1-ring2": "36",
+        "ev1u-t4ring8-r1-ring3": "36",
+        "ev1u-t4ring8-r1-ring4": "36",
+        "ev1u-t4ring8-r1-ring5": "36",
+        "ev1u-t4ring8-r1-ring6": "36",
+        "ev1u-t4ring8-r1-ring7": "36"
+      },
+      "all_share_one_community": true,
+      "distinct_communities": 1,
+      "members_with_metadata": 8,
+      "churned_members": [],
+      "pagerank": {
+        "ev1u-t4ring8-r1-ring0": "0.0006191510186425107",
+        "ev1u-t4ring8-r1-ring1": "0.0007080960862141159",
+        "ev1u-t4ring8-r1-ring2": "0.0006028454020230481",
+        "ev1u-t4ring8-r1-ring3": "0.0005972227116109829",
+        "ev1u-t4ring8-r1-ring4": "0.000634538607502347",
+        "ev1u-t4ring8-r1-ring5": "0.0006137131228569395",
+        "ev1u-t4ring8-r1-ring6": "0.0006167844326587107",
+        "ev1u-t4ring8-r1-ring7": "0.000622407123070776"
+      }
+    },
+    {
+      "label": "stabilize_tick4",
+      "elapsed_s": 624.1,
+      "events_sent": 169,
+      "pg_community_ids": {
+        "ev1u-t4ring8-r1-ring0": "36",
+        "ev1u-t4ring8-r1-ring1": "36",
+        "ev1u-t4ring8-r1-ring2": "36",
+        "ev1u-t4ring8-r1-ring3": "36",
+        "ev1u-t4ring8-r1-ring4": "36",
+        "ev1u-t4ring8-r1-ring5": "36",
+        "ev1u-t4ring8-r1-ring6": "36",
+        "ev1u-t4ring8-r1-ring7": "36"
+      },
+      "redis_community_ids": {
+        "ev1u-t4ring8-r1-ring0": "36",
+        "ev1u-t4ring8-r1-ring1": "36",
+        "ev1u-t4ring8-r1-ring2": "36",
+        "ev1u-t4ring8-r1-ring3": "36",
+        "ev1u-t4ring8-r1-ring4": "36",
+        "ev1u-t4ring8-r1-ring5": "36",
+        "ev1u-t4ring8-r1-ring6": "36",
+        "ev1u-t4ring8-r1-ring7": "36"
+      },
+      "all_share_one_community": true,
+      "distinct_communities": 1,
+      "members_with_metadata": 8,
+      "churned_members": [],
+      "pagerank": {
+        "ev1u-t4ring8-r1-ring0": "0.0006191510186425107",
+        "ev1u-t4ring8-r1-ring1": "0.0007080960862141159",
+        "ev1u-t4ring8-r1-ring2": "0.0006028454020230481",
+        "ev1u-t4ring8-r1-ring3": "0.0005972227116109829",
+        "ev1u-t4ring8-r1-ring4": "0.000634538607502347",
+        "ev1u-t4ring8-r1-ring5": "0.0006137131228569395",
+        "ev1u-t4ring8-r1-ring6": "0.0006167844326587107",
+        "ev1u-t4ring8-r1-ring7": "0.000622407123070776"
+      }
+    },
+    {
+      "label": "stabilize_tick5",
+      "elapsed_s": 692.6,
+      "events_sent": 177,
+      "pg_community_ids": {
+        "ev1u-t4ring8-r1-ring0": "36",
+        "ev1u-t4ring8-r1-ring1": "36",
+        "ev1u-t4ring8-r1-ring2": "36",
+        "ev1u-t4ring8-r1-ring3": "36",
+        "ev1u-t4ring8-r1-ring4": "36",
+        "ev1u-t4ring8-r1-ring5": "36",
+        "ev1u-t4ring8-r1-ring6": "36",
+        "ev1u-t4ring8-r1-ring7": "36"
+      },
+      "redis_community_ids": {
+        "ev1u-t4ring8-r1-ring0": "36",
+        "ev1u-t4ring8-r1-ring1": "36",
+        "ev1u-t4ring8-r1-ring2": "36",
+        "ev1u-t4ring8-r1-ring3": "36",
+        "ev1u-t4ring8-r1-ring4": "36",
+        "ev1u-t4ring8-r1-ring5": "36",
+        "ev1u-t4ring8-r1-ring6": "36",
+        "ev1u-t4ring8-r1-ring7": "36"
+      },
+      "all_share_one_community": true,
+      "distinct_communities": 1,
+      "members_with_metadata": 8,
+      "churned_members": [],
+      "pagerank": {
+        "ev1u-t4ring8-r1-ring0": "0.0006191510186425107",
+        "ev1u-t4ring8-r1-ring1": "0.0007080960862141159",
+        "ev1u-t4ring8-r1-ring2": "0.0006028454020230481",
+        "ev1u-t4ring8-r1-ring3": "0.0005972227116109829",
+        "ev1u-t4ring8-r1-ring4": "0.000634538607502347",
+        "ev1u-t4ring8-r1-ring5": "0.0006137131228569395",
+        "ev1u-t4ring8-r1-ring6": "0.0006167844326587107",
+        "ev1u-t4ring8-r1-ring7": "0.000622407123070776"
+      }
+    }
+  ]
+}

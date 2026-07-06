@@ -1,0 +1,15 @@
+{
+  "scenario": "track2_airtime_topups",
+  "scenario_file": "scenarios/track2_airtime_topups.py",
+  "seed": 204,
+  "run_id": "r1",
+  "anchor_ms": 1783368233998,
+  "git_sha": "1784c712009dcbf91a73ed9479894257c3d3250a",
+  "started": "2026-07-06T20:03:54.000Z",
+  "finished": "2026-07-06T20:05:02.000Z",
+  "events_sent": 500,
+  "rps_limit": 25.0,
+  "audit_rows_joined": 500,
+  "barrier_misses": 0,
+  "notes": "Zero fraud by construction."
+}

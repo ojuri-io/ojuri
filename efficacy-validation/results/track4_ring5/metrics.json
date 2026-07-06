@@ -1,0 +1,122 @@
+{
+  "totals": {
+    "transactions": 148,
+    "fraud": 30,
+    "legit": 118
+  },
+  "verdicts_fraud": {
+    "ACCEPT": 29,
+    "DECLINE": 1
+  },
+  "verdicts_legit": {
+    "ACCEPT": 103,
+    "REVIEW": 11,
+    "DECLINE": 4
+  },
+  "recall_flagged": 0.0333,
+  "recall_declined": 0.0333,
+  "precision_flagged": 0.0625,
+  "false_positive_rate": 0.1271,
+  "time_to_first_detection": {
+    "fraud_txn_index": 27,
+    "of_fraud_txns": 30,
+    "event_time_offset_s": 372.0
+  },
+  "attribution_fraud_flagged": {
+    "ML:paa-features(top=AMOUNT_HIGH:request)": 1
+  },
+  "attribution_legit_flagged": {
+    "PRE_RULE:demo: moderate payment review": 11,
+    "PRE_RULE:demo: very-large amount auto-block": 4
+  },
+  "score_stats_fraud": {
+    "n": 30,
+    "mean": 0.0355,
+    "p05": 0.0008,
+    "p25": 0.0016,
+    "p50": 0.0022,
+    "p75": 0.0023,
+    "p95": 0.0052,
+    "min": 0.0008,
+    "max": 0.9995
+  },
+  "score_stats_legit": {
+    "n": 118,
+    "mean": 0.0,
+    "p05": 0.0,
+    "p25": 0.0,
+    "p50": 0.0,
+    "p75": 0.0,
+    "p95": 0.0002,
+    "min": 0,
+    "max": 0.0013
+  },
+  "score_stats_fraud_ml_only": {
+    "n": 30,
+    "mean": 0.0355,
+    "p05": 0.0008,
+    "p25": 0.0016,
+    "p50": 0.0022,
+    "p75": 0.0023,
+    "p95": 0.0052,
+    "min": 0.0008,
+    "max": 0.9995
+  },
+  "score_stats_legit_ml_only": {
+    "n": 103,
+    "mean": 0.0,
+    "p05": 0.0,
+    "p25": 0.0,
+    "p50": 0.0,
+    "p75": 0.0,
+    "p95": 0.0003,
+    "min": 0,
+    "max": 0.0013
+  },
+  "features_default_rate": 0.2162,
+  "by_subpattern": {
+    "round1": {
+      "fraud_txns": 5,
+      "recall_flagged": 0.0,
+      "verdicts": {
+        "ACCEPT": 5
+      }
+    },
+    "round2": {
+      "fraud_txns": 5,
+      "recall_flagged": 0.0,
+      "verdicts": {
+        "ACCEPT": 5
+      }
+    },
+    "round3": {
+      "fraud_txns": 5,
+      "recall_flagged": 0.0,
+      "verdicts": {
+        "ACCEPT": 5
+      }
+    },
+    "round4": {
+      "fraud_txns": 5,
+      "recall_flagged": 0.0,
+      "verdicts": {
+        "ACCEPT": 5
+      }
+    },
+    "round5": {
+      "fraud_txns": 5,
+      "recall_flagged": 0.0,
+      "verdicts": {
+        "ACCEPT": 5
+      }
+    },
+    "round6": {
+      "fraud_txns": 5,
+      "recall_flagged": 0.2,
+      "verdicts": {
+        "ACCEPT": 4,
+        "DECLINE": 1
+      }
+    }
+  }
+}

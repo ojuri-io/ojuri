@@ -1,0 +1,15 @@
+{
+  "scenario": "track1_shared_device",
+  "scenario_file": "scenarios/track1_shared_device.py",
+  "seed": 106,
+  "run_id": "r1",
+  "anchor_ms": 1783367749222,
+  "git_sha": "1784c712009dcbf91a73ed9479894257c3d3250a",
+  "started": "2026-07-06T19:55:49.000Z",
+  "finished": "2026-07-06T19:58:15.000Z",
+  "events_sent": 400,
+  "rps_limit": 25.0,
+  "audit_rows_joined": 400,
+  "barrier_misses": 0,
+  "notes": "device_fingerprint identical across all eight senders."
+}

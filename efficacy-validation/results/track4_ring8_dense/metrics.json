@@ -1,0 +1,109 @@
+{
+  "totals": {
+    "transactions": 177,
+    "fraud": 96,
+    "legit": 81
+  },
+  "verdicts_fraud": {
+    "ACCEPT": 93,
+    "DECLINE": 3
+  },
+  "verdicts_legit": {
+    "ACCEPT": 70,
+    "REVIEW": 9,
+    "DECLINE": 2
+  },
+  "recall_flagged": 0.0312,
+  "recall_declined": 0.0312,
+  "precision_flagged": 0.2143,
+  "false_positive_rate": 0.1358,
+  "time_to_first_detection": {
+    "fraud_txn_index": 31,
+    "of_fraud_txns": 96,
+    "event_time_offset_s": 97.1
+  },
+  "attribution_fraud_flagged": {
+    "ML:paa-features(top=AMOUNT_HIGH:request)": 3
+  },
+  "attribution_legit_flagged": {
+    "PRE_RULE:demo: moderate payment review": 9,
+    "PRE_RULE:demo: very-large amount auto-block": 2
+  },
+  "score_stats_fraud": {
+    "n": 96,
+    "mean": 0.0325,
+    "p05": 0.0008,
+    "p25": 0.0009,
+    "p50": 0.001,
+    "p75": 0.0016,
+    "p95": 0.0027,
+    "min": 0.0006,
+    "max": 0.9998
+  },
+  "score_stats_legit": {
+    "n": 81,
+    "mean": 0.0,
+    "p05": 0.0,
+    "p25": 0.0,
+    "p50": 0.0,
+    "p75": 0.0,
+    "p95": 0.0,
+    "min": 0,
+    "max": 0.0001
+  },
+  "score_stats_fraud_ml_only": {
+    "n": 96,
+    "mean": 0.0325,
+    "p05": 0.0008,
+    "p25": 0.0009,
+    "p50": 0.001,
+    "p75": 0.0016,
+    "p95": 0.0027,
+    "min": 0.0006,
+    "max": 0.9998
+  },
+  "score_stats_legit_ml_only": {
+    "n": 70,
+    "mean": 0.0,
+    "p05": 0.0,
+    "p25": 0.0,
+    "p50": 0.0,
+    "p75": 0.0,
+    "p95": 0.0001,
+    "min": 0,
+    "max": 0.0001
+  },
+  "features_default_rate": 0.1864,
+  "by_subpattern": {
+    "round1": {
+      "fraud_txns": 24,
+      "recall_flagged": 0.0,
+      "verdicts": {
+        "ACCEPT": 24
+      }
+    },
+    "round2": {
+      "fraud_txns": 24,
+      "recall_flagged": 0.0417,
+      "verdicts": {
+        "ACCEPT": 23,
+        "DECLINE": 1
+      }
+    },
+    "round3": {
+      "fraud_txns": 24,
+      "recall_flagged": 0.0833,
+      "verdicts": {
+        "ACCEPT": 22,
+        "DECLINE": 2
+      }
+    },
+    "round4": {
+      "fraud_txns": 24,
+      "recall_flagged": 0.0,
+      "verdicts": {
+        "ACCEPT": 24
+      }
+    }
+  }
+}

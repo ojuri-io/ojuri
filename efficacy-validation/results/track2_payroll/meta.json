@@ -1,0 +1,15 @@
+{
+  "scenario": "track2_payroll",
+  "scenario_file": "scenarios/track2_payroll.py",
+  "seed": 202,
+  "run_id": "r1",
+  "anchor_ms": 1783368111550,
+  "git_sha": "1784c712009dcbf91a73ed9479894257c3d3250a",
+  "started": "2026-07-06T20:01:51.000Z",
+  "finished": "2026-07-06T20:02:54.000Z",
+  "events_sent": 360,
+  "rps_limit": 25.0,
+  "audit_rows_joined": 360,
+  "barrier_misses": 0,
+  "notes": "Zero fraud by construction. Salary distribution: N45k-N250k."
+}

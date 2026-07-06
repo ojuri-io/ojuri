@@ -1,0 +1,111 @@
+{
+  "totals": {
+    "transactions": 454,
+    "fraud": 24,
+    "legit": 430
+  },
+  "verdicts_fraud": {
+    "ACCEPT": 17,
+    "DECLINE": 7
+  },
+  "verdicts_legit": {
+    "ACCEPT": 373,
+    "REVIEW": 41,
+    "DECLINE": 16
+  },
+  "recall_flagged": 0.2917,
+  "recall_declined": 0.2917,
+  "precision_flagged": 0.1094,
+  "false_positive_rate": 0.1326,
+  "time_to_first_detection": {
+    "fraud_txn_index": 8,
+    "of_fraud_txns": 24,
+    "event_time_offset_s": 2580.0
+  },
+  "attribution_fraud_flagged": {
+    "ML:paa-features(top=AMOUNT_HIGH:request)": 1,
+    "PRE_RULE:demo: very-large amount auto-block": 6
+  },
+  "attribution_legit_flagged": {
+    "PRE_RULE:demo: moderate payment review": 41,
+    "PRE_RULE:demo: very-large amount auto-block": 14,
+    "ML:paa-features(top=AMOUNT_HIGH:request)": 1,
+    "ML:paa-features(top=PAGERANK:paa)": 1
+  },
+  "score_stats_fraud": {
+    "n": 24,
+    "mean": 0.0438,
+    "p05": 0.0,
+    "p25": 0.0006,
+    "p50": 0.0016,
+    "p75": 0.0033,
+    "p95": 0.0075,
+    "min": 0,
+    "max": 0.9992
+  },
+  "score_stats_legit": {
+    "n": 430,
+    "mean": 0.0051,
+    "p05": 0.0,
+    "p25": 0.0,
+    "p50": 0.0,
+    "p75": 0.0,
+    "p95": 0.0004,
+    "min": 0,
+    "max": 0.9976
+  },
+  "score_stats_fraud_ml_only": {
+    "n": 18,
+    "mean": 0.0584,
+    "p05": 0.0009,
+    "p25": 0.0015,
+    "p50": 0.003,
+    "p75": 0.0044,
+    "p95": 0.1563,
+    "min": 0.0008,
+    "max": 0.9992
+  },
+  "score_stats_legit_ml_only": {
+    "n": 375,
+    "mean": 0.0058,
+    "p05": 0.0,
+    "p25": 0.0,
+    "p50": 0.0,
+    "p75": 0.0,
+    "p95": 0.0005,
+    "min": 0,
+    "max": 0.9976
+  },
+  "features_default_rate": 0.1476,
+  "by_subpattern": {
+    "cycle1": {
+      "fraud_txns": 6,
+      "recall_flagged": 0.0,
+      "verdicts": {
+        "ACCEPT": 6
+      }
+    },
+    "cycle2": {
+      "fraud_txns": 6,
+      "recall_flagged": 0.1667,
+      "verdicts": {
+        "ACCEPT": 5,
+        "DECLINE": 1
+      }
+    },
+    "cycle3": {
+      "fraud_txns": 6,
+      "recall_flagged": 1.0,
+      "verdicts": {
+        "DECLINE": 6
+      }
+    },
+    "layering": {
+      "fraud_txns": 6,
+      "recall_flagged": 0.0,
+      "verdicts": {
+        "ACCEPT": 6
+      }
+    }
+  }
+}

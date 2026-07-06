@@ -1,0 +1,15 @@
+{
+  "scenario": "track1_mule_network",
+  "scenario_file": "scenarios/track1_mule_network.py",
+  "seed": 102,
+  "run_id": "r1",
+  "anchor_ms": 1783367077490,
+  "git_sha": "1784c712009dcbf91a73ed9479894257c3d3250a",
+  "started": "2026-07-06T19:44:37.000Z",
+  "finished": "2026-07-06T19:47:44.000Z",
+  "events_sent": 467,
+  "rps_limit": 25.0,
+  "audit_rows_joined": 467,
+  "barrier_misses": 0,
+  "notes": "Fan-in -> forward -> cash-out over ~4 simulated hours. Barriers between layers and every third transaction inside a layer."
+}

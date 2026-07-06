@@ -1,0 +1,15 @@
+{
+  "scenario": "track1_velocity_burst",
+  "scenario_file": "scenarios/track1_velocity_burst.py",
+  "seed": 107,
+  "run_id": "r1",
+  "anchor_ms": 1783367895663,
+  "git_sha": "1784c712009dcbf91a73ed9479894257c3d3250a",
+  "started": "2026-07-06T19:58:15.000Z",
+  "finished": "2026-07-06T20:00:44.000Z",
+  "events_sent": 410,
+  "rps_limit": 25.0,
+  "audit_rows_joined": 410,
+  "barrier_misses": 0,
+  "notes": "Barrier every 3rd burst txn; velocity windows are event-time in PAA."
+}

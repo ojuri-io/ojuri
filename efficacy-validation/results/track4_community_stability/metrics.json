@@ -1,0 +1,94 @@
+{
+  "totals": {
+    "transactions": 150,
+    "fraud": 10,
+    "legit": 140
+  },
+  "verdicts_fraud": {
+    "ACCEPT": 9,
+    "DECLINE": 1
+  },
+  "verdicts_legit": {
+    "ACCEPT": 120,
+    "REVIEW": 16,
+    "DECLINE": 4
+  },
+  "recall_flagged": 0.1,
+  "recall_declined": 0.1,
+  "precision_flagged": 0.0476,
+  "false_positive_rate": 0.1429,
+  "time_to_first_detection": {
+    "fraud_txn_index": 7,
+    "of_fraud_txns": 10,
+    "event_time_offset_s": 48.4
+  },
+  "attribution_fraud_flagged": {
+    "ML:paa-features(top=AMOUNT_HIGH:request)": 1
+  },
+  "attribution_legit_flagged": {
+    "PRE_RULE:demo: moderate payment review": 16,
+    "PRE_RULE:demo: very-large amount auto-block": 4
+  },
+  "score_stats_fraud": {
+    "n": 10,
+    "mean": 0.101,
+    "p05": 0.0007,
+    "p25": 0.0009,
+    "p50": 0.0013,
+    "p75": 0.0018,
+    "p95": 0.5502,
+    "min": 0.0007,
+    "max": 0.9987
+  },
+  "score_stats_legit": {
+    "n": 140,
+    "mean": 0.0001,
+    "p05": 0.0,
+    "p25": 0.0,
+    "p50": 0.0,
+    "p75": 0.0,
+    "p95": 0.0001,
+    "min": 0,
+    "max": 0.0133
+  },
+  "score_stats_fraud_ml_only": {
+    "n": 10,
+    "mean": 0.101,
+    "p05": 0.0007,
+    "p25": 0.0009,
+    "p50": 0.0013,
+    "p75": 0.0018,
+    "p95": 0.5502,
+    "min": 0.0007,
+    "max": 0.9987
+  },
+  "score_stats_legit_ml_only": {
+    "n": 120,
+    "mean": 0.0001,
+    "p05": 0.0,
+    "p25": 0.0,
+    "p50": 0.0,
+    "p75": 0.0,
+    "p95": 0.0001,
+    "min": 0,
+    "max": 0.0133
+  },
+  "features_default_rate": 0.2133,
+  "by_subpattern": {
+    "formation_cycle1": {
+      "fraud_txns": 5,
+      "recall_flagged": 0.0,
+      "verdicts": {
+        "ACCEPT": 5
+      }
+    },
+    "formation_cycle2": {
+      "fraud_txns": 5,
+      "recall_flagged": 0.2,
+      "verdicts": {
+        "ACCEPT": 4,
+        "DECLINE": 1
+      }
+    }
+  }
+}

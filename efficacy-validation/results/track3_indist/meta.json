@@ -1,0 +1,15 @@
+{
+  "scenario": "track3_indist",
+  "scenario_file": "scenarios/track3_indist.py",
+  "seed": 301,
+  "run_id": "r1",
+  "anchor_ms": 1783366627627,
+  "git_sha": "1784c712009dcbf91a73ed9479894257c3d3250a",
+  "started": "2026-07-06T19:37:07.000Z",
+  "finished": "2026-07-06T19:37:59.000Z",
+  "events_sent": 900,
+  "rps_limit": 25.0,
+  "audit_rows_joined": 900,
+  "barrier_misses": 0,
+  "notes": "In-distribution is a PROXY -- see model-provenance limitation."
+}
