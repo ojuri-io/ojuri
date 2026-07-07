@@ -8,6 +8,7 @@
 // view onto it.
 
 import { useMemo } from 'react';
+import { VarPicker } from '../components/var-picker.jsx';
 import { Ti } from '../components/shell.jsx';
 import { OPS, coerceLiteral, coerceList, fromJsonLogic, toJsonLogic } from './rule-templates.js';
 
@@ -80,7 +81,7 @@ function ValueInput({ field, op, value, onChange, disabled }) {
   );
 }
 
-function RuleBuilder({ expression, knownVars, onChange, disabled }) {
+function RuleBuilder({ expression, knownVars, varGroups, onChange, disabled }) {
   // Decode the JSON-Logic expression into the flat model the builder
   // can represent. Memo keeps the deserialize stable when nothing
   // changed upstream.
@@ -187,22 +188,12 @@ function RuleBuilder({ expression, knownVars, onChange, disabled }) {
               alignItems: 'center',
             }}
           >
-            <select
-              disabled={disabled}
+            <VarPicker
               value={c.field}
-              onChange={(e) => setClause(i, { field: e.target.value })}
-              className="mono"
-              style={{ fontSize: 11 }}
-            >
-              {knownVars.includes(c.field) ? null : (
-                <option value={c.field}>{c.field}</option>
-              )}
-              {knownVars.map((v) => (
-                <option key={v} value={v}>
-                  {v}
-                </option>
-              ))}
-            </select>
+              groups={varGroups && varGroups.length ? varGroups : [{ label: 'Variables', items: knownVars }]}
+              onChange={(v) => setClause(i, { field: v })}
+              disabled={disabled}
+            />
             <select
               disabled={disabled}
               value={c.op}
