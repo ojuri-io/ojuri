@@ -3,25 +3,38 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { Ti, PageHead, Modal, actionPill, hasPermission, permLock } from '../components/shell.jsx';
 import { SearchInput } from '../components/search-input.jsx';
-import { saveRule, deleteRule, setRuleActive, listRules } from '../api/client.js';
+import { saveRule, deleteRule, setRuleActive, listRules, getFeatureCatalog } from '../api/client.js';
 import { RuleBuilder, toJsonLogic } from './rule-builder.jsx';
 import { EXAMPLES } from './rule-templates.js';
 
 const RULE_OPS = ['var','==','!=','>','>=','<','<=','and','or','not','in'];
 
-const KNOWN_VARS = {
-  PRE: ['sender_id','receiver_id','amount','transaction_type','segment','features.amount_24h_sum','features.velocity_zscore','features.beneficiary_first_send','features.account_age_days','features.ip_asn','features.ip_country','features.ip_is_vpn','features.sender_country','features.txns_1h_count','features.receiver_id','config.vendor_ids'],
-  POST: ['sender_id','receiver_id','amount','transaction_type','segment','features.amount_24h_sum','features.velocity_zscore','features.beneficiary_first_send','features.account_age_days','features.ip_asn','features.ip_country','features.ip_is_vpn','features.sender_country','features.txns_1h_count','features.receiver_id','ml_score','ml_decision','config.vendor_ids']
-};
+// Top-level fields the rules engine puts on every RuleContext
+// (see buildRuleContext in predict.service.ts). The `features.<name>`
+// paths are appended at runtime from the live feature catalogue
+// (getFeatureCatalog), so the editor's variable validation never drifts
+// from what the model actually serves.
+const BASE_CONTEXT_VARS = [
+  'transaction_id','sender_id','receiver_id','amount','transaction_type',
+  'timestamp','segment','tenant_id','ip_country','transaction_country',
+  'destination_country','ip_is_vpn','device_is_trusted','is_authenticated',
+  'session_to_txn_seconds','account_age_days','channel','currency',
+];
+const POST_ONLY_VARS = ['ml_score','ml_decision'];
 
+// Sample context for the built-in rule tester. Top-level fields + a
+// `features` block using real catalogue feature names, so a rule
+// referencing e.g. features.velocity_1h tests meaningfully.
 const SAMPLE_TX = {
   sender_id: 'user_acme_42', receiver_id: 'acct_mule_a', amount: 250000, transaction_type: 'TRANSFER',
-  segment: 'p2p_transfer', ml_score: 0.91, ml_decision: 'DECLINE',
+  segment: 'p2p_transfer', ip_country: 'NL', transaction_country: 'NG', ip_is_vpn: true,
+  device_is_trusted: false, is_authenticated: true, session_to_txn_seconds: 6, account_age_days: 11,
+  channel: 'WEB', currency: 'NGN', ml_score: 0.91, ml_decision: 'DECLINE',
   features: {
-    amount_24h_sum: 870000, velocity_zscore: 4.3, beneficiary_first_send: true, account_age_days: 11,
-    ip_asn: 56789, ip_country: 'NL', ip_is_vpn: true, sender_country: 'NG', txns_1h_count: 8, receiver_id: 'acct_mule_a'
+    velocity_1h: 18, velocity_24h: 40, unique_receivers_24h: 22, amount_mean_30d: 4200,
+    amount_std_30d: 900, graph_pagerank: 0.02, graph_in_degree: 6, graph_out_degree: 4,
+    is_agent_assisted: 0, customer_is_corporate: 0, pair_is_first_send: 1, pair_round_trip_count_30d: 0,
   },
-  config: { vendor_ids: ['acct_glassmark','acct_helios_food'] }
 };
 
 // Pretty JSON
@@ -135,6 +148,7 @@ function RuleEditor({ toast, rules, setRules, user }) {
   // analysts; falls back to 'json' automatically when the current
   // expression is too complex for the flat builder to render.
   const [editMode, setEditMode] = useState('visual');
+  const [featureVars, setFeatureVars] = useState([]);
 
   const active = rules.find(r => r.id === activeId);
 
@@ -165,6 +179,21 @@ function RuleEditor({ toast, rules, setRules, user }) {
     return () => clearInterval(t);
   }, []);
 
+  // Known feature variables come from the live catalogue, not a hardcoded
+  // list — an adopter overlay adds features and the editor must know them.
+  useEffect(() => {
+    let alive = true;
+    getFeatureCatalog().then((cat) => {
+      if (alive && cat?.features) setFeatureVars(cat.features.map((f) => `features.${f.name}`));
+    });
+    return () => { alive = false; };
+  }, []);
+
+  const knownVars = useMemo(() => {
+    const base = [...BASE_CONTEXT_VARS, ...featureVars];
+    return stage === 'POST' ? [...base, ...POST_ONLY_VARS] : base;
+  }, [stage, featureVars]);
+
   const parsed = useMemo(() => {
     try { return { ok: true, value: JSON.parse(editorJson) }; }
     catch (e) { return { ok: false, error: e.message }; }
@@ -181,15 +210,18 @@ function RuleEditor({ toast, rules, setRules, user }) {
   const varIssues = useMemo(() => {
     if (!parsed.ok) return [];
     const vars = collectVars(parsed.value);
-    const known = new Set(KNOWN_VARS[stage]);
-    const unknown = vars.filter(v => !known.has(v));
-    const postOnly = ['ml_score','ml_decision'];
-    const usedPostOnly = stage === 'PRE' ? vars.filter(v => postOnly.includes(v)) : [];
+    const known = new Set(knownVars);
+    // Until the catalogue has loaded, don't flag feature.* paths as unknown.
+    const catalogueReady = featureVars.length > 0;
+    const unknown = catalogueReady
+      ? vars.filter(v => !known.has(v))
+      : vars.filter(v => !known.has(v) && !v.startsWith('features.'));
+    const usedPostOnly = stage === 'PRE' ? vars.filter(v => POST_ONLY_VARS.includes(v)) : [];
     return [
       ...unknown.map(v => ({ kind:'unknown', path:v })),
       ...usedPostOnly.map(v => ({ kind:'post-only', path:v }))
     ];
-  }, [parsed, stage]);
+  }, [parsed, stage, knownVars, featureVars]);
 
   const filteredRules = rules.filter(r => !search || (r.name || '').toLowerCase().includes(search.toLowerCase()));
 
@@ -433,7 +465,7 @@ function RuleEditor({ toast, rules, setRules, user }) {
                   <ul style={{margin:'4px 0 0 16px', padding:0, lineHeight:1.6}}>
                     {varIssues.map((iss, i) => (
                       <li key={i}>
-                        {iss.kind === 'unknown' && <>Unknown variable <code className="mono" style={{background:'rgba(255,255,255,0.4)', padding:'1px 5px', borderRadius:3}}>{iss.path}</code> — server will silently skip this rule.</>}
+                        {iss.kind === 'unknown' && <>Unknown variable <code className="mono" style={{background:'rgba(255,255,255,0.4)', padding:'1px 5px', borderRadius:3}}>{iss.path}</code> — not a request field or catalogue feature. It resolves to <code className="mono">undefined</code> at evaluation, so the rule may never match. Check the name against the Features catalogue.</>}
                         {iss.kind === 'post-only' && <>Variable <code className="mono" style={{background:'rgba(255,255,255,0.4)', padding:'1px 5px', borderRadius:3}}>{iss.path}</code> only exists at POST stage.</>}
                       </li>
                     ))}
@@ -471,7 +503,7 @@ function RuleEditor({ toast, rules, setRules, user }) {
                     {parsed.ok ? (
                       <RuleBuilder
                         expression={parsed.value}
-                        knownVars={KNOWN_VARS[stage]}
+                        knownVars={knownVars}
                         disabled={!canUpdate}
                         onChange={(model) => {
                           const next = toJsonLogic(model);
@@ -583,7 +615,7 @@ function RuleEditor({ toast, rules, setRules, user }) {
                     <span style={{fontSize:10, color:'var(--color-text-tertiary)'}}>{stage} stage</span>
                   </div>
                   <div style={{display:'flex', flexWrap:'wrap', gap:4}}>
-                    {KNOWN_VARS[stage].map(v => (
+                    {knownVars.map(v => (
                       <span key={v} className="mono" style={{
                         background:'var(--color-background-secondary)', padding:'2px 7px', borderRadius:3, fontSize:11,
                         color: ['ml_score','ml_decision'].includes(v) ? 'var(--color-text-info)' : 'var(--color-text-secondary)'
