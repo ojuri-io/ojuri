@@ -3,6 +3,9 @@
 // and every feature.<name> from the live catalogue, grouped by category
 // with a type-to-filter box. Falls back to showing an unrecognised
 // current value at the top so hand-authored rules stay editable.
+//
+// Styling uses the shared design tokens (src/tokens.css) so it adapts to
+// the active light/dark theme — no hardcoded colours.
 
 import { useEffect, useMemo, useRef, useState } from 'react';
 
@@ -33,6 +36,7 @@ export function VarPicker({ value, groups, onChange, disabled }) {
   }, [groups, q]);
 
   const pick = (v) => { onChange(v); setOpen(false); setQ(''); };
+  const unknownValue = value && !known.has(value);
 
   return (
     <div ref={wrapRef} style={{ position: 'relative' }}>
@@ -44,9 +48,9 @@ export function VarPicker({ value, groups, onChange, disabled }) {
         title={value}
         style={{
           width: '100%', textAlign: 'left', fontSize: 11, padding: '4px 8px',
-          border: '1px solid var(--color-border, rgba(255,255,255,0.15))', borderRadius: 4,
-          background: 'var(--color-background-secondary, rgba(255,255,255,0.04))',
-          color: known.has(value) ? 'inherit' : 'var(--color-text-warning, #d8a24a)',
+          border: '1px solid var(--border)', borderRadius: 4,
+          background: 'var(--surface-alt)',
+          color: unknownValue ? 'var(--color-text-warning)' : 'var(--color-text-primary)',
           cursor: disabled ? 'default' : 'pointer', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
         }}
       >
@@ -58,36 +62,34 @@ export function VarPicker({ value, groups, onChange, disabled }) {
           style={{
             position: 'absolute', zIndex: 40, top: 'calc(100% + 4px)', left: 0, width: 'min(340px, 88vw)',
             maxHeight: 320, overflowY: 'auto',
-            background: 'var(--color-background-elevated, #1c1e24)',
-            border: '1px solid var(--color-border, rgba(255,255,255,0.15))', borderRadius: 6,
-            boxShadow: '0 8px 24px rgba(0,0,0,0.4)',
+            background: 'var(--surface-raised)', color: 'var(--color-text-primary)',
+            border: '1px solid var(--border)', borderRadius: 6, boxShadow: 'var(--shadow-lg)',
           }}
         >
-          <div style={{ position: 'sticky', top: 0, padding: 6, background: 'inherit', borderBottom: '1px solid var(--color-border, rgba(255,255,255,0.1))' }}>
+          <div style={{ position: 'sticky', top: 0, padding: 6, background: 'var(--surface-raised)', borderBottom: '1px solid var(--border)' }}>
             <input
               ref={inputRef}
               value={q}
               onChange={(e) => setQ(e.target.value)}
               placeholder="Filter variables…"
               className="mono"
-              style={{ width: '100%', fontSize: 11, padding: '5px 8px', borderRadius: 4, border: '1px solid var(--color-border, rgba(255,255,255,0.15))', background: 'var(--color-background-secondary, rgba(0,0,0,0.25))', color: 'inherit' }}
+              style={{ width: '100%', fontSize: 11, padding: '5px 8px', borderRadius: 4, border: '1px solid var(--border)', background: 'var(--surface)', color: 'var(--color-text-primary)' }}
             />
           </div>
 
-          {!known.has(value) && value && (
-            <button type="button" className="mono" onClick={() => pick(value)}
-              style={rowStyle(true)}>
-              {value} <span style={{ opacity: 0.6, fontStyle: 'italic' }}>· current (not in catalogue)</span>
+          {unknownValue && (
+            <button type="button" className="mono" onClick={() => pick(value)} style={rowStyle(true)}>
+              {value} <span style={{ color: 'var(--color-text-tertiary)', fontStyle: 'italic' }}>· current (not in catalogue)</span>
             </button>
           )}
 
           {filtered.length === 0 && (
-            <div style={{ padding: 12, fontSize: 11, opacity: 0.6 }}>No variables match “{q}”.</div>
+            <div style={{ padding: 12, fontSize: 11, color: 'var(--color-text-tertiary)' }}>No variables match “{q}”.</div>
           )}
 
           {filtered.map((g) => (
             <div key={g.label}>
-              <div style={{ padding: '6px 10px 3px', fontSize: 9.5, letterSpacing: 0.6, textTransform: 'uppercase', opacity: 0.5 }}>{g.label}</div>
+              <div style={{ padding: '6px 10px 3px', fontSize: 9.5, letterSpacing: 0.6, textTransform: 'uppercase', color: 'var(--color-text-tertiary)' }}>{g.label}</div>
               {g.items.map((v) => (
                 <button key={v} type="button" className="mono" onClick={() => pick(v)} style={rowStyle(v === value)}>
                   {v}
@@ -104,8 +106,9 @@ export function VarPicker({ value, groups, onChange, disabled }) {
 function rowStyle(active) {
   return {
     display: 'block', width: '100%', textAlign: 'left', fontSize: 11, padding: '5px 12px',
-    border: 'none', background: active ? 'var(--color-background-active, rgba(120,150,255,0.16))' : 'transparent',
-    color: 'inherit', cursor: 'pointer', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+    border: 'none', background: active ? 'var(--color-background-secondary)' : 'transparent',
+    color: 'var(--color-text-primary)', cursor: 'pointer',
+    overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
   };
 }
 
