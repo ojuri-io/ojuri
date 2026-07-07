@@ -178,10 +178,11 @@ reason codes vary with the live feature snapshot:
 
 > **What you'll see on a fresh install.** Two things surprise first-time
 > users, both expected:
-> - `"model_version": "default"` — the demo ONNX model scores every
->   prediction, but no version is registered in the model registry yet,
->   so the label falls back to `default`. It becomes `v1.x` once you
->   register a trained model (see [Training a model](#training-a-model-mla)).
+> - `"model_version": "v1.0"` — the shipped demo ONNX model is
+>   registered as ACTIVE by the `db-migrate` seed, with per-transaction-
+>   type thresholds (CASH_OUT 0.70, TRANSFER 0.30, …). It's a demo-grade
+>   model — train and register your own before trusting the scores (see
+>   [Training a model](#training-a-model-mla)).
 > - The seeded **demo rules** run before the model and will `REVIEW` or
 >   `DENY` some common shapes out of the box — `segment: "high_value"`,
 >   amounts ≥ ₦100k, and `PAYMENT` between 500 and 10 000. A flagged
