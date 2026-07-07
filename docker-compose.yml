@@ -543,6 +543,10 @@ services:
       - DB_PASSWORD=${POSTGRES_PASSWORD:-postgres}
       - KNEX_MIGRATIONS_DIR=/app/dist/database/migrations
       - KNEX_SEEDS_DIR=/app/dist/database/seeds
+      # Demo rules seed INACTIVE by default (their amount thresholds are
+      # demo props that dominate real traffic). Set true for the demo
+      # dataset walkthrough. See docs/RULES.md.
+      - SEED_DEMO_RULES_ACTIVE=${SEED_DEMO_RULES_ACTIVE:-false}
     depends_on:
       postgres:
         condition: service_healthy

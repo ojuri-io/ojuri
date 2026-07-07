@@ -12,8 +12,16 @@ import { Knex } from "knex";
  * features. Production users would replace these with their own
  * tenant-specific business rules.
  *
+ * Seeded INACTIVE unless SEED_DEMO_RULES_ACTIVE=true: the amount
+ * thresholds are demo-dataset props, not market-reviewed values, and
+ * left active they dominate real traffic (declining every txn >= 100k
+ * and reviewing every 500-10k PAYMENT) while shadowing the FATF pack
+ * — measured in efficacy-validation/report.md (finding F2). Activate
+ * them for the demo dataset via the env var or per-rule in Sentinel.
+ *
  * Idempotent: each rule is keyed by `name`; running the seed twice
- * does not duplicate rows.
+ * does not duplicate rows, and existing rows keep whatever isActive
+ * state an operator set.
  */
 
 interface DemoRule {
@@ -77,6 +85,7 @@ const DEMO_RULES: DemoRule[] = [
 ];
 
 export async function seed(knex: Knex): Promise<void> {
+  const activateOnInsert = process.env.SEED_DEMO_RULES_ACTIVE === "true";
   for (const rule of DEMO_RULES) {
     const existing = await knex("rules").where({ name: rule.name }).first();
     if (existing) continue;
@@ -87,7 +96,7 @@ export async function seed(knex: Knex): Promise<void> {
       priority: rule.priority,
       action: rule.action,
       expression: JSON.stringify(rule.expression),
-      isActive: true,
+      isActive: activateOnInsert,
       createdBy: "demo-seed",
     });
   }
