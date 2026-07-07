@@ -290,7 +290,11 @@ persona-driven benchmark in
 [`docs/FRAUD_SIMULATION.md`](docs/FRAUD_SIMULATION.md): ~128k transactions
 with six fraud typologies, scored per typology before and after a
 label-driven retrain. It's how the numbers in [Status](#status) were
-produced, and it runs against your own deployment.
+produced, and it runs against your own deployment. Match its reference
+configuration before comparing numbers: demo rule pack disabled and
+`review_margin=0.08` (`PUT /v1/admin/settings/runtime/review_margin`, or
+Sentinel → Settings) — the review band is what turns model uncertainty
+into analyst labels, and it ships at 0.
 
 ---
 
@@ -530,8 +534,11 @@ REVIEW band that turns model uncertainty into analyst labels.
 
 Detection is validated end-to-end by a reproducible 128k-transaction persona
 simulation — 34% of fraud caught cold, 98.8% after one label-driven retrain
-at 1.1% FPR. See [`docs/FRAUD_SIMULATION.md`](docs/FRAUD_SIMULATION.md) to
-run it against your own deployment.
+at 1.1% FPR. Those numbers were measured with the demo rule pack disabled
+and `review_margin=0.08` (a default fresh install seeds the review margin
+at 0, so the ML never returns REVIEW until you set one). See
+[`docs/FRAUD_SIMULATION.md`](docs/FRAUD_SIMULATION.md) for the full run
+configuration and to run it against your own deployment.
 
 Scoped follow-ups (see [`ROADMAP.md`](ROADMAP.md)): Helm chart and Terraform
 module, TypeScript and Python client SDKs, canary traffic split by API-key
