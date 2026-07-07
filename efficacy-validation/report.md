@@ -145,6 +145,14 @@ Real-time scenarios (event time = wall time), background trickle keeps PAA's rec
 
 **The launch-narrative attribution does not hold in the shipped configuration:** ring/graph detection (PAA) produces features but zero decisions; the FATF rule pack produces zero decisions; the ML layer detects integration context rather than fraud patterns; the two demo amount rules do most of the flagging, on fraud and legitimate traffic alike.
 
+## Relationship to the 128k fraud-simulation benchmark
+
+[`docs/FRAUD_SIMULATION.md`](../docs/FRAUD_SIMULATION.md) reports 34.2 % of fraud caught cold → 98.8 % after one label-driven retrain at 1.1 % FPR. That result and this report do not contradict each other; they answer different questions under different configurations:
+
+- **Its cold-model phase corroborates this report.** Phase 1 of the simulation ("rules carry everything; the ML contributes almost nothing") matches Track 1 per-typology: fan-out mules 0 % vs our mule network 0 %, ring cycles 0.7 % vs our ring behaviour 5.6 %, below-band structuring 0 % vs our 0 %, ATO caught by rules in both.
+- **Its headline number is post-retrain.** Running the retraining loop was explicitly out of scope here (this report quantifies the day-1 gap only). The retrained artifact from that run (`models/versions/v1.1/`, F1 = 0.992, `new_labels: 3395`) exists locally but is neither committed nor deployed — the committed `fraud_model.onnx` is the cold model.
+- **Its reference run used a tuned configuration:** demo rules *disabled* and `review_margin=0.08`. This report measures the shipped defaults (demo rules active, review margin 0), which is why its FP rates (0.0–1.1 %) and Track 2's (4.3–45 %) differ — the delta *is* finding F2.
+
 ## Limitations and run conditions
 
 1. **Model provenance is unverifiable.** The deployed `fraud_model.onnx` (sha256 `62bd51…`) matches no committed metadata; the local v1.0 meta records a different hash. "In-distribution" in Track 3 is therefore a documented proxy, and no claim in this report relies on the meta's F1/recall figures.
