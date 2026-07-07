@@ -14,6 +14,25 @@ from src.config import config
 
 logger = logging.getLogger(__name__)
 
+# Optional integration-context features. An integrator sending only the
+# six required predict fields leaves every one of these at its catalogue
+# default, so a model that leans on them scores bare payloads as fraud
+# (efficacy-validation finding F3). Names must match
+# models/feature-catalog.v1.json.
+CONTEXT_FEATURE_NAMES = (
+    "channel_code",
+    "currency_code",
+    "customer_age_days",
+    "account_age_days",
+    "has_kyc_id",
+    "id_type_code",
+    "is_authenticated",
+    "ip_is_vpn",
+    "device_is_trusted",
+    "device_type_code",
+    "session_to_txn_seconds",
+)
+
 
 class DataPreprocessor:
     """
@@ -67,7 +86,11 @@ class DataPreprocessor:
         logger.info("Starting preprocessing pipeline...")
         logger.info(f"  Input shape: {X.shape}")
         logger.info(f"  Class distribution: {dict(y.value_counts())}")
-        
+
+        # Resolve context-feature positions from the named columns before
+        # dropping to numpy (the split works on positional arrays).
+        context_idx = self._resolve_context_indices(X)
+
         # Convert to numpy
         X_array = X.values.astype(np.float32)
         y_array = y.values.astype(np.int32)
@@ -108,6 +131,11 @@ class DataPreprocessor:
         logger.info(f"  Val: {len(X_val)} samples")
         logger.info(f"  Test: {len(X_test)} samples")
         
+        # Step 2.5: Context-field dropout augmentation (training only).
+        # Val/test keep their real payloads so the deployment gate still
+        # measures full-context performance.
+        X_train, y_train = self._augment_context_dropout(X_train, y_train, context_idx)
+
         # Step 3: SMOTE oversampling (only on training data)
         logger.info("Step 3: SMOTE oversampling...")
         X_train, y_train = self._apply_smote(X_train, y_train)
@@ -141,6 +169,51 @@ class DataPreprocessor:
             X[:n_train], X[n_train:n_rem], X[n_rem:],
             y_train, y[n_train:n_rem], y[n_rem:],
         )
+
+    def _resolve_context_indices(self, X: pd.DataFrame) -> list:
+        if not isinstance(X, pd.DataFrame):
+            logger.warning("Context dropout: input is not a named DataFrame — skipping")
+            return []
+        idx = [X.columns.get_loc(n) for n in CONTEXT_FEATURE_NAMES if n in X.columns]
+        missing = [n for n in CONTEXT_FEATURE_NAMES if n not in X.columns]
+        if missing:
+            logger.warning("Context dropout: features absent from frame: %s", missing)
+        return idx
+
+    def _augment_context_dropout(
+        self,
+        X: np.ndarray,
+        y: np.ndarray,
+        context_idx: list,
+    ) -> Tuple[np.ndarray, np.ndarray]:
+        """Append copies of a fraction of rows with context features
+        zeroed, labels preserved. The model sees each retained pattern
+        both with and without integration context and must find fraud
+        signal in behaviour/amount/graph features rather than in the
+        mere presence of context fields."""
+        if not config.CONTEXT_DROPOUT_ENABLED:
+            logger.info("Step 2.5: Context dropout disabled — skipping")
+            return X, y
+        frac = config.CONTEXT_DROPOUT_FRACTION
+        if not context_idx or frac <= 0 or len(X) == 0:
+            logger.info("Step 2.5: Context dropout no-op (no indices / zero fraction)")
+            return X, y
+
+        rng = np.random.default_rng(42)
+        n_aug = int(round(len(X) * frac))
+        if n_aug < 1:
+            return X, y
+        pick = rng.choice(len(X), size=n_aug, replace=False)
+        dropped = X[pick].copy()
+        dropped[:, context_idx] = 0.0
+
+        X_out = np.vstack([X, dropped])
+        y_out = np.concatenate([y, y[pick]])
+        logger.info(
+            "Step 2.5: Context dropout added %d bare-context rows (%.0f%% of %d) across %d features",
+            n_aug, frac * 100, len(X), len(context_idx),
+        )
+        return X_out, y_out
 
     def _apply_smote(
         self,

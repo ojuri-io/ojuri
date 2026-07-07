@@ -79,6 +79,11 @@ class Config:
     TRAINING_DATA_SIZE: int = int(os.getenv('TRAINING_DATA_SIZE', '50000'))
     SMOTE_RATIO: float = float(os.getenv('SMOTE_RATIO', '1.0'))
     CV_FOLDS: int = int(os.getenv('CV_FOLDS', '5'))
+    # Context-field dropout augmentation: teaches the model to score on
+    # behaviour, not payload richness, so a bare-payload integration
+    # can't be scored as blanket fraud (efficacy-validation finding F3).
+    CONTEXT_DROPOUT_ENABLED: bool = os.getenv('CONTEXT_DROPOUT_ENABLED', 'true').lower() == 'true'
+    CONTEXT_DROPOUT_FRACTION: float = float(os.getenv('CONTEXT_DROPOUT_FRACTION', '0.4'))
     # Absolute F1 floor for auto-activation. A candidate below this is
     # registered as CANDIDATE (operator review) even when it beats the
     # incumbent — guards against garbage-in/garbage-out cold starts.
