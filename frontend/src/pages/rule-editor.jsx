@@ -148,7 +148,7 @@ function RuleEditor({ toast, rules, setRules, user }) {
   // analysts; falls back to 'json' automatically when the current
   // expression is too complex for the flat builder to render.
   const [editMode, setEditMode] = useState('visual');
-  const [featureVars, setFeatureVars] = useState([]);
+  const [catFeatures, setCatFeatures] = useState([]);
 
   const active = rules.find(r => r.id === activeId);
 
@@ -184,15 +184,28 @@ function RuleEditor({ toast, rules, setRules, user }) {
   useEffect(() => {
     let alive = true;
     getFeatureCatalog().then((cat) => {
-      if (alive && cat?.features) setFeatureVars(cat.features.map((f) => `features.${f.name}`));
+      if (alive && Array.isArray(cat?.features)) setCatFeatures(cat.features);
     });
     return () => { alive = false; };
   }, []);
+
+  const featureVars = useMemo(() => catFeatures.map((f) => `features.${f.name}`), [catFeatures]);
 
   const knownVars = useMemo(() => {
     const base = [...BASE_CONTEXT_VARS, ...featureVars];
     return stage === 'POST' ? [...base, ...POST_ONLY_VARS] : base;
   }, [stage, featureVars]);
+
+  // Grouped for the searchable VarPicker: request context, then one
+  // group per feature category, then ML vars on the POST stage.
+  const varGroups = useMemo(() => {
+    const groups = [{ label: 'Request context', items: BASE_CONTEXT_VARS }];
+    const byCat = {};
+    for (const f of catFeatures) (byCat[f.category || 'other'] ||= []).push(`features.${f.name}`);
+    for (const cat of Object.keys(byCat)) groups.push({ label: `Feature · ${cat}`, items: byCat[cat] });
+    if (stage === 'POST') groups.push({ label: 'ML (POST only)', items: POST_ONLY_VARS });
+    return groups;
+  }, [catFeatures, stage]);
 
   const parsed = useMemo(() => {
     try { return { ok: true, value: JSON.parse(editorJson) }; }
@@ -504,6 +517,7 @@ function RuleEditor({ toast, rules, setRules, user }) {
                       <RuleBuilder
                         expression={parsed.value}
                         knownVars={knownVars}
+                        varGroups={varGroups}
                         disabled={!canUpdate}
                         onChange={(model) => {
                           const next = toJsonLogic(model);
