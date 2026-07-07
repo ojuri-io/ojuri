@@ -54,6 +54,18 @@ _LOOKUP_DIR = Path(
 _LOOKUP_CACHE: Dict[str, Dict[str, float]] = {}
 
 
+def _parse_event_ts(series: pd.Series) -> pd.Series:
+    """
+    `transactions.timestamp` is a bigint of Unix MILLISECONDS (the
+    predict DTO contract). Bare `pd.to_datetime` treats integers as
+    nanoseconds, which collapsed every calendar feature to 1970-01-01
+    constants at training time.
+    """
+    if pd.api.types.is_numeric_dtype(series):
+        return pd.to_datetime(series, unit="ms")
+    return pd.to_datetime(series)
+
+
 def _load_lookup(name: str) -> Dict[str, float]:
     """
     Mirror of `src/shared/features/lookup-table.ts`. Reads
@@ -605,7 +617,7 @@ class DataLoader:
         """
         if "timestamp" in df.columns:
             try:
-                ts = pd.to_datetime(df["timestamp"])
+                ts = _parse_event_ts(df["timestamp"])
                 if not ts.empty and ts.notna().any():
                     return float(ts.max().timestamp())
             except Exception:
@@ -620,7 +632,7 @@ class DataLoader:
     ) -> np.ndarray:
         """Apply a `dt.*` extractor with NaN tolerance — fall back to default on any error."""
         try:
-            ts = pd.to_datetime(df["timestamp"])
+            ts = _parse_event_ts(df["timestamp"])
             return extract(ts).astype("float32").values
         except Exception as e:
             logger.debug("Could not compute time field: %s — using default %s", e, default_value)
