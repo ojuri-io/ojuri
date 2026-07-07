@@ -78,10 +78,11 @@ Variables you can reference in `{ "var": "..." }`:
 
 ## Default rule packs
 
-`npm run db:seed` installs two packs out of the box. Both are
+`npm run db:seed` installs three packs out of the box. All are
 idempotent — they skip rules whose `name` already exists, so adopters
 can edit, disable, or delete them post-seed without re-introducing the
-defaults on the next seed run.
+defaults on the next seed run. The FATF and behavioral packs seed
+active; the demo pack seeds inactive unless `SEED_DEMO_RULES_ACTIVE=true`.
 
 ### Pack 1: demo rules (`01_demo_rules.ts`)
 
@@ -111,6 +112,32 @@ before seeding, or update the rules post-seed via
 `PATCH /v1/admin/rules/:id`. The high-risk corridor list is
 deliberately conservative — extend it with your own AML risk
 classifications.
+
+### Pack 3: behavioral rules (`04_behavioral_rule_pack.ts`)
+
+Two POST-stage rules that turn PAA's velocity/graph signals into
+verdicts the ML model misses on trusted, authenticated traffic. Both
+route to REVIEW (analyst queue), which also generates a label for the
+retraining loop.
+
+| Name | Stage | Action | What it catches |
+|---|---|---|---|
+| `behavioral: velocity spike (non-agent, non-corporate)` | POST | REVIEW | `features.velocity_1h ≥ 15` on an individual account — the velocity-anomaly signature (rapid burst) the model scores as legitimate when the session looks trusted. |
+| `behavioral: high fan-out spray (non-agent, non-corporate)` | POST | REVIEW | `features.unique_receivers_24h ≥ 12` on an individual account — paying out to many distinct receivers, the fan-out signature of a spray or a freshly recruited disburser. |
+
+Both rules exclude agents (`is_agent_assisted = 0`) and corporates
+(`customer_is_corporate = 0`): mobile-money agents and payroll accounts
+are legitimately high-velocity / high-fan-out. Every PAA signal these
+rules read defaults to 0 on a Redis cache miss, so the pack stays silent
+until PAA has accumulated real state — no cold-start false positives.
+
+Measured against the efficacy-validation harness (`efficacy-validation/`):
+the pack lifts velocity-anomaly recall from 0.00 to 0.80 while adding
+**zero** false positives across agent-network, payroll, airtime, and
+diaspora-remittance legitimate traffic. Mule networks and rings remain
+below rule reach — their signal is behavioral-over-time, which is the
+ML model's job, not a single-feature threshold. Tune the two thresholds
+in `04_behavioral_rule_pack.ts` to your own traffic's velocity profile.
 
 ## Examples
 
