@@ -543,6 +543,12 @@ services:
       - DB_PASSWORD=${POSTGRES_PASSWORD:-postgres}
       - KNEX_MIGRATIONS_DIR=/app/dist/database/migrations
       - KNEX_SEEDS_DIR=/app/dist/database/seeds
+    # The runtime image ships only dist/ + node_modules — models/ is
+    # mounted, exactly as on the RDA replicas. Without it the
+    # 00_initial_model_version seed silently skips, leaving the model
+    # registry empty and the segment-threshold seed unable to run.
+    volumes:
+      - ./models:/app/models:ro
     depends_on:
       postgres:
         condition: service_healthy

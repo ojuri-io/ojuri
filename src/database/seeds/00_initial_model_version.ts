@@ -5,7 +5,10 @@ import { Knex } from "knex";
 import { DB_TABLES } from "../../shared/enums/db-tables.enum";
 import { InitialModelSeedEntry } from "../types/initial-model-seed.types";
 
-const VERSION_LABEL = process.env.SEED_INITIAL_MODEL_VERSION ?? "v1.0";
+// "default" on purpose: the response's model_version keeps signalling
+// "shipped demo model" on a fresh install, and v1.x stays reserved for
+// adopter-trained models (MLA's first train also labels itself v1.0).
+const VERSION_LABEL = process.env.SEED_INITIAL_MODEL_VERSION ?? "default";
 const MODEL_RELATIVE_PATH = process.env.SEED_INITIAL_MODEL_PATH ?? "models/fraud_model.onnx";
 const CATALOG_RELATIVE_PATH = "models/feature-catalog.v1.json";
 const DEFAULT_THRESHOLD = 0.65;
