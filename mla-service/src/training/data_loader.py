@@ -148,7 +148,10 @@ class DataLoader:
                 "receiverId" as receiver_id,
                 amount,
                 "transactionType" as transaction_type,
-                "createdAt" as timestamp,
+                -- Event time (ms bigint), NOT "createdAt": serving derives
+                -- calendar features from the event timestamp, and the two
+                -- diverge on backfills, imports, and replays.
+                timestamp,
                 COALESCE("groundTruthFraud", "fraudLabel") as fraud_label,
                 "groundTruthFraud" IS NOT NULL as is_ground_truth,
                 "fraudProbability" as fraud_probability,
