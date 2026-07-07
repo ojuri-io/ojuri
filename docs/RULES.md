@@ -88,7 +88,15 @@ defaults on the next seed run.
 Four PRE-stage rules keyed on `amount` / `transaction_type` / `segment`
 so the `data/demo/sample-transactions.json` dataset produces a visible
 mix of ACCEPT / REVIEW / DECLINE on a fresh deploy with no PAA cache.
-Adopters running on real data will typically want to delete these.
+
+They seed **inactive** by default: the thresholds are demo-dataset
+props (`DENY` everything ≥ ₦100k, `REVIEW` every ₦500–10k `PAYMENT`),
+and left active they flag large slices of real traffic while their
+priorities shadow most of the FATF pack (measured in
+`efficacy-validation/report.md`, finding F2). Activate them with
+`SEED_DEMO_RULES_ACTIVE=true` before the first seed run, or per-rule in
+Sentinel → Rules. Existing deployments are untouched — the seed never
+overwrites an operator's `isActive` state.
 
 ### Pack 2: FATF default pack (`03_fatf_rule_pack.ts`)
 

@@ -543,12 +543,10 @@ services:
       - DB_PASSWORD=${POSTGRES_PASSWORD:-postgres}
       - KNEX_MIGRATIONS_DIR=/app/dist/database/migrations
       - KNEX_SEEDS_DIR=/app/dist/database/seeds
-    # The runtime image ships only dist/ + node_modules — models/ is
-    # mounted, exactly as on the RDA replicas. Without it the
-    # 00_initial_model_version seed silently skips, leaving the model
-    # registry empty and the segment-threshold seed unable to run.
-    volumes:
-      - ./models:/app/models:ro
+      # Demo rules seed INACTIVE by default (their amount thresholds are
+      # demo props that dominate real traffic). Set true for the demo
+      # dataset walkthrough. See docs/RULES.md.
+      - SEED_DEMO_RULES_ACTIVE=${SEED_DEMO_RULES_ACTIVE:-false}
     depends_on:
       postgres:
         condition: service_healthy

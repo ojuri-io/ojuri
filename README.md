@@ -178,18 +178,17 @@ reason codes vary with the live feature snapshot:
 
 > **What you'll see on a fresh install.** Two things surprise first-time
 > users, both expected:
-> - `"model_version": "default"` — the shipped demo ONNX model, which
->   the `db-migrate` seed registers as ACTIVE under the label `default`
->   with per-transaction-type thresholds (CASH_OUT 0.70, TRANSFER 0.30,
->   …). The label flips to `v1.x` once you train and promote your own
->   model (see [Training a model](#training-a-model-mla)) — if it still
->   says `default`, you're on the demo model.
-> - The seeded **demo rules** run before the model and will `REVIEW` or
->   `DENY` some common shapes out of the box — `segment: "high_value"`,
->   amounts ≥ ₦100k, and `PAYMENT` between 500 and 10 000. A flagged
->   response with `"decision_source": "PRE_RULE"` is a rule firing, not
->   the model. Disable or edit them in Sentinel → Rules (or the
->   `01_demo_rules` seed) once you've added your own.
+> - `"model_version": "default"` — the demo ONNX model scores every
+>   prediction, but no version is registered in the model registry yet,
+>   so the label falls back to `default`. It becomes `v1.x` once you
+>   register a trained model (see [Training a model](#training-a-model-mla)).
+> - The **demo rules** seed *inactive* by default — their amount
+>   thresholds (`DENY` ≥ ₦100k, `REVIEW` on ₦500–10k `PAYMENT`s) are
+>   demo-dataset props that would otherwise flag large slices of real
+>   traffic and shadow the FATF pack. Set `SEED_DEMO_RULES_ACTIVE=true`
+>   before first boot (or toggle them in Sentinel → Rules) when walking
+>   through the demo dataset. A flagged response with
+>   `"decision_source": "PRE_RULE"` is a rule firing, not the model.
 
 That's clone to a scored transaction. Next: bring up the
 [dashboard](#running-the-dashboard), [seed demo data](#demo--test-data),
@@ -287,6 +286,12 @@ docker compose --profile demo run --rm demo-seed   # against the running stack
 node scripts/demo-traffic.mjs                      # or from the host (RDA_URL=… to override)
 ````
 
+The demo dataset is paired with the demo rule pack, which seeds
+*inactive* by default. For the intended ACCEPT/REVIEW/DECLINE mix,
+activate it first: `SEED_DEMO_RULES_ACTIVE=true` in `.env` before the
+first `docker compose up`, or flip the four `demo:` rules on in
+Sentinel → Rules.
+
 To measure detection quality — not just populate the UI — run the
 persona-driven benchmark in
 [`docs/FRAUD_SIMULATION.md`](docs/FRAUD_SIMULATION.md): ~128k transactions
@@ -374,7 +379,9 @@ silently serve random predictions.
   vector as risky. Add context fields (as in the Quick start example) or
   send more traffic so PAA warms the cache.
 - **`PRE_RULE` on a request you expected the model to score** — a seeded
-  demo rule fired first; see the fresh-install note in Quick start.
+  rule fired first: one of the FATF pack, or a demo rule if you enabled
+  them (`SEED_DEMO_RULES_ACTIVE=true`); see the fresh-install note in
+  Quick start.
 - **Lost the admin password** — `npm run reset:admin`.
 
 ---
