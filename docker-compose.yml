@@ -547,6 +547,13 @@ services:
       # demo props that dominate real traffic). Set true for the demo
       # dataset walkthrough. See docs/RULES.md.
       - SEED_DEMO_RULES_ACTIVE=${SEED_DEMO_RULES_ACTIVE:-false}
+    # The runtime image ships only dist/ + node_modules — models/ is
+    # mounted, exactly as on the RDA replicas. Without it the
+    # 00_initial_model_version seed silently skips, leaving the model
+    # registry empty and the segment-threshold seed unable to run.
+    # (Restores the mount dropped when #101 merged over #100.)
+    volumes:
+      - ./models:/app/models:ro
     depends_on:
       postgres:
         condition: service_healthy
