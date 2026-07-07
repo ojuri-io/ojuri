@@ -241,27 +241,34 @@ function resolveDerived(
 
     // ── calendar ───────────────────────────────────────────────
     case "hour_of_day":
-      return new Date(safeNumber(request.timestamp, now / 1000) * 1000).getUTCHours();
+      return eventDate(request, now).getUTCHours();
     case "day_of_week":
-      return new Date(safeNumber(request.timestamp, now / 1000) * 1000).getUTCDay();
+      return eventDate(request, now).getUTCDay();
     case "is_weekend": {
-      const d = new Date(safeNumber(request.timestamp, now / 1000) * 1000).getUTCDay();
+      const d = eventDate(request, now).getUTCDay();
       return d === 0 || d === 6 ? 1 : 0;
     }
     case "is_payday_window": {
-      const day = new Date(safeNumber(request.timestamp, now / 1000) * 1000).getUTCDate();
+      const day = eventDate(request, now).getUTCDate();
       // 25th + 30th are common NG payroll dates; widen ±2 days each
       // side to catch the period of elevated legit activity.
       return (day >= 23 && day <= 27) || day >= 28 ? 1 : 0;
     }
     case "is_off_hours": {
-      const h = new Date(safeNumber(request.timestamp, now / 1000) * 1000).getUTCHours();
+      const h = eventDate(request, now).getUTCHours();
       return h <= 5 || h === 23 ? 1 : 0;
     }
 
     default:
       return numericDefault(spec);
   }
+}
+
+// request.timestamp is Unix MILLISECONDS per the predict DTO contract
+// (and what PAA/MLA consume). An earlier version multiplied it by 1000
+// as if it were seconds, which scrambled every calendar feature.
+function eventDate(request: Record<string, unknown>, now: number): Date {
+  return new Date(safeNumber(request.timestamp, now));
 }
 
 function numericDefault(spec: FeatureSpec): number {
