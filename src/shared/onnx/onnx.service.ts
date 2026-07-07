@@ -46,6 +46,7 @@ class OnnxService {
   private inferenceCircuitBreaker!: CircuitBreaker<any[], any>;
   private isModelLoaded: boolean = false;
   private isCalibrationHealthy: boolean = false;
+  private contextSensitivityGap: number | null = null;
   private unsubscribeActiveChange: (() => void) | null = null;
 
   constructor() {
@@ -87,6 +88,7 @@ class OnnxService {
     try {
       await this.loadModel();
       await this.runCalibrationProbe();
+      await this.runContextSensitivityProbe();
       // Subscribe synchronously so any ACTIVE-flip that happens between
       // `loadModel()` and the first request can't slip past us. The
       // dynamic import is still required to break the circular dep with
@@ -185,6 +187,80 @@ class OnnxService {
       });
       this.isCalibrationHealthy = false;
     }
+  }
+
+  /**
+   * Warn when the model's score is dominated by integration-context
+   * fields (is_authenticated, device_is_trusted, channel, currency,
+   * session length) rather than behaviour. Two probe vectors describe
+   * the SAME plausible transaction; only the context fields differ —
+   * present on one, absent (an integrator that sends the six required
+   * fields and nothing else) on the other. A large gap means bare-
+   * payload integrators get blanket declines and full-payload fraud
+   * sails through — the exact degeneracy measured in
+   * efficacy-validation/report.md (finding F3).
+   *
+   * Warning only, never a readiness failure: the model still functions;
+   * the operator needs to know its scores track payload richness.
+   */
+  private async runContextSensitivityProbe(): Promise<void> {
+    if (this.sessions.length === 0 || !this.isModelLoaded) {
+      this.contextSensitivityGap = null;
+      return;
+    }
+
+    const WARN_GAP = 0.5;
+    try {
+      const bare = await this.runRawInference(this.buildContextProbeVector({ context: false }));
+      const full = await this.runRawInference(this.buildContextProbeVector({ context: true }));
+      const gap = Number(Math.abs(bare - full).toFixed(4));
+      this.contextSensitivityGap = gap;
+
+      if (gap > WARN_GAP) {
+        onnxLogger.warn(
+          "contextSensitivityProbe",
+          "Model score swings by " + gap.toFixed(4) + " on optional integration-context " +
+            "fields alone (same transaction, context fields present vs absent). " +
+            "Integrators sending only the required fields will see near-blanket " +
+            "flags while contextual fraud scores low. Retrain with context-field " +
+            "dropout or require the context fields from integrators.",
+          { bareScore: Number(bare.toFixed(4)), fullScore: Number(full.toFixed(4)), gap }
+        );
+        return;
+      }
+      onnxLogger.success("contextSensitivityProbe", "Context-field sensitivity within bounds", {
+        bareScore: Number(bare.toFixed(4)),
+        fullScore: Number(full.toFixed(4)),
+        gap,
+      });
+    } catch (err) {
+      this.contextSensitivityGap = null;
+      onnxLogger.warn("contextSensitivityProbe", "Probe threw — sensitivity unknown", {
+        error: err instanceof Error ? err.message : String(err),
+      });
+    }
+  }
+
+  /**
+   * One plausible mid-size transfer, twice. Indices follow the v1
+   * catalogue; only integration-context positions vary between the
+   * two variants.
+   */
+  private buildContextProbeVector(opts: { context: boolean }): Float32Array {
+    const dim = Number(process.env.MODEL_INPUT_DIMENSION) || 64;
+    const v = new Float32Array(dim);
+    v[26] = 5000;     // amount
+    v[28] = 4;        // transaction_type_code (TRANSFER)
+    v[31] = 0;        // is_inflow
+    v[35] = 400;      // account_age_days
+    if (opts.context) {
+      v[29] = 2;      // channel_code (MOBILE)
+      v[33] = 1;      // currency_code (NGN)
+      v[39] = 1;      // is_authenticated
+      v[53] = 1;      // device_is_trusted
+      v[57] = 120;    // session_to_txn_seconds
+    }
+    return v;
   }
 
   /**
@@ -416,10 +492,12 @@ class OnnxService {
     // level — without this the registry could swap in a broken artefact and
     // /readyz would stay UP while every predict returns the fail-closed 1.0.
     await this.runCalibrationProbe();
+    await this.runContextSensitivityProbe();
     onnxLogger.success("applyActiveVersion", "Hot-reloaded ACTIVE model", {
       sourceUri,
       modelPath: this.modelPath,
       calibrationHealthy: this.isCalibrationHealthy,
+      contextSensitivityGap: this.contextSensitivityGap,
     });
   }
 
@@ -645,12 +723,18 @@ class OnnxService {
   /**
    * Get model info
    */
-  getModelInfo(): { path: string; loaded: boolean; inputDimensions: number } {
+  getModelInfo(): {
+    path: string;
+    loaded: boolean;
+    inputDimensions: number;
+    contextSensitivityGap: number | null;
+  } {
     const expectedDim = Number(process.env.MODEL_INPUT_DIMENSION) || 0;
     return {
       path: this.modelPath,
       loaded: this.isModelLoaded,
       inputDimensions: expectedDim,
+      contextSensitivityGap: this.contextSensitivityGap,
     };
   }
 }
