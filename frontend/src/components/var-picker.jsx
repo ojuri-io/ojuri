@@ -8,6 +8,7 @@
 // the active light/dark theme — no hardcoded colours.
 
 import { useEffect, useMemo, useRef, useState } from 'react';
+import { Ti } from './shell.jsx';
 
 function useOutsideClose(ref, onClose) {
   useEffect(() => {
@@ -47,14 +48,19 @@ export function VarPicker({ value, groups, onChange, disabled }) {
         onClick={() => setOpen((o) => !o)}
         title={value}
         style={{
-          width: '100%', textAlign: 'left', fontSize: 11, padding: '4px 8px',
+          width: '100%', display: 'flex', alignItems: 'center', gap: 6, textAlign: 'left', fontSize: 11, padding: '4px 8px',
           border: '1px solid var(--border)', borderRadius: 4,
           background: 'var(--surface-alt)',
           color: unknownValue ? 'var(--color-text-warning)' : 'var(--color-text-primary)',
-          cursor: disabled ? 'default' : 'pointer', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+          cursor: disabled ? 'default' : 'pointer',
         }}
       >
-        {value || '—'}
+        <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{value || '—'}</span>
+        <Ti
+          name="chevron-down"
+          size={13}
+          style={{ flexShrink: 0, color: 'var(--color-text-tertiary)', transform: open ? 'rotate(180deg)' : 'none', transition: 'transform 120ms ease' }}
+        />
       </button>
 
       {open && (
