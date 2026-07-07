@@ -61,6 +61,40 @@ Only if all three hold, register the candidate and flip it ACTIVE
 (`POST /v1/admin/models`, then `.../status`), which hot-swaps RDA and
 re-runs the probe.
 
+## Measured trial run (2026-07-07, fraud-sim data)
+
+A first end-to-end run on this stack, to characterise the mechanism
+before a production retrain. 11,092 labelled rows (429 fraud / 10,663
+legit) from the fraud-sim, `CONTEXT_DROPOUT_FRACTION=0.4`.
+
+| Model | Context gap (gate 1) | Track-1 recall velocity / mule / ring (gate 2) |
+|---|---|---|
+| Shipped `default` | 0.9998 | 0.00 / 0.00 / 0.04 |
+| Retrain, dropout **off** | 0.9725 | — |
+| Retrain, dropout **on** | **0.0009** | 0.00 / 0.00 / 0.04 |
+
+**What this establishes.** Gate 1 passes decisively — the dropout, not
+the fresh data, closes the context gap (the no-dropout retrain on the
+same rows stays at 0.97). Full-context F1 held at 0.949. **But gate 2
+did not move**: the retrained model's behavioural-typology recall was
+identical to the shipped model's.
+
+The reason is the training data, not the mechanism: the fraud-sim's
+fraud is context-signalled (ATO = VPN + untrusted device, new-account =
+unauthenticated), so the model learns those, and context dropout makes
+it robust to *missing* context — but it cannot learn velocity/graph
+typologies the data does not label as fraud. Fixing the context gap is
+**necessary but not sufficient** for typology coverage.
+
+Practical consequence: the augmentation is worth shipping (it fixes a
+real integration-robustness defect), but the ML only becomes a
+*behavioural* detector when retrained on data where velocity- and
+graph-shaped fraud is actually labelled — real accumulated chargebacks,
+or a fraud-sim variant that emphasises those typologies. Until then the
+behavioural rule pack (`04_behavioral_rule_pack.ts`) is what catches
+velocity/fan-out fraud; the two are complementary layers, not
+substitutes. The trial candidate was **not** deployed.
+
 ## Tuning
 
 - `CONTEXT_DROPOUT_FRACTION` too high starves the model of the genuine

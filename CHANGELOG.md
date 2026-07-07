@@ -7,6 +7,72 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.3.0] - 2026-07-07
+
+This release acts on an independent efficacy validation of the shipped
+stack (`efficacy-validation/`). It fixes four correctness gaps between
+what the platform did and what its own contracts/README claimed, and
+adds two detection improvements. Existing deployments are unaffected —
+both seed changes skip rows that already exist — but **fresh installs
+behave differently on day 1** (see Changed).
+
+### Added
+
+- **Behavioral rule pack (`04_behavioral_rule_pack.ts`)** — two POST-stage
+  REVIEW rules on PAA-derived features (`velocity_1h`,
+  `unique_receivers_24h`), guarded to exclude agents and corporates.
+  Turns PAA's velocity/graph signals into verdicts the ML model misses
+  on trusted, authenticated traffic. Measured against the efficacy
+  harness: velocity-anomaly recall 0.00 → 0.80 with zero added false
+  positives on agent-network, payroll, airtime, and remittance traffic.
+  Every feature it reads defaults to 0 on a Redis miss, so the pack is
+  cold-start-safe.
+- **Context-field dropout augmentation (MLA)** — training appends
+  context-zeroed copies of a fraction (`CONTEXT_DROPOUT_FRACTION`,
+  default 0.4) of the training rows so the model scores on behaviour,
+  not payload richness, fixing the shipped model's trust-context
+  degeneracy (a bare payload scored ~1.0, full context ~0.0).
+  `CONTEXT_DROPOUT_ENABLED` (default on). See
+  `mla-service/docs/CONTEXT_DROPOUT_RETRAIN.md` for the runbook and the
+  measured result: the mechanism closes the context gap (0.9998 →
+  0.0009) but does not by itself add behavioural typology recall — that
+  requires training data containing those patterns as fraud.
+- **Context-sensitivity probe (RDA)** — alongside the calibration probe,
+  every model load and hot-swap scores the same transaction with and
+  without context fields and warns (exposing the gap via
+  `getModelInfo()`) when the model keys on integration context rather
+  than behaviour.
+
+### Changed
+
+- **The demo rule pack now seeds inactive by default.** Its amount
+  thresholds are demo-dataset props that flag large slices of real
+  traffic (declining every txn ≥ ₦100k, reviewing every ₦500–10k
+  PAYMENT) and shadow the FATF pack. Set `SEED_DEMO_RULES_ACTIVE=true`
+  before the first seed run to restore the old behaviour for the demo
+  dataset. Existing rules keep their operator-set `isActive` state.
+- **Fresh installs now register the shipped model and per-type
+  thresholds.** The `db-migrate` container previously lacked the
+  `models/` mount, so the initial-model seed silently skipped — every
+  decision fell back to a flat 0.65 threshold with an empty registry.
+  Fresh installs now score with the registered `default` model and its
+  segment thresholds (CASH_OUT 0.70, TRANSFER 0.30, …), so day-1
+  verdicts differ from 1.2.0's. `v1.x` stays reserved for adopter-trained
+  models.
+- **Calendar features are computed correctly for the first time.** Both
+  RDA serving and MLA training mis-handled the millisecond event
+  timestamp (RDA multiplied by 1000; MLA parsed as nanoseconds and
+  trained on ingestion time), so `hour_of_day` / `day_of_week` /
+  `is_weekend` / `is_payday_window` / `is_off_hours` were noise.
+  Verified zero decision change on the deployed model (it barely
+  weighted these), but retrain before relying on time-of-day signals.
+
+### Notes
+
+- Deployments upgrading from 1.2.0 will see a one-time
+  context-sensitivity warning in the RDA logs against the shipped model
+  — that is the new probe working, not a regression.
+
 ## [1.2.0] - 2026-07-02
 
 This release closes the label feedback loop — the core mechanism that
