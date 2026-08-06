@@ -14,7 +14,7 @@ jest.mock("@utils/metrics", () => ({
   metricsService: { recordVelocityTruncation: jest.fn() },
 }));
 
-const NOW = 1_700_000_000_000;
+const NOW = Date.now();
 const DAY = 24 * 60 * 60 * 1000;
 
 function event(sender: string, timestamp: number, amount = 100, receiver = "r"): TransactionEvent {

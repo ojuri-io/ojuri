@@ -18,6 +18,7 @@ interface SeedRule {
   priority: number;
   expression: RuleExpression;
   stage?: string;
+  tenantId?: string;
 }
 
 function makeService(rules: SeedRule[]): RulesService {
@@ -30,7 +31,7 @@ function makeService(rules: SeedRule[]): RulesService {
     action: RuleAction.DECLINE,
     expression: r.expression,
     isActive: true,
-    tenantId: null,
+    tenantId: r.tenantId ?? null,
   }));
   const repo = { listActiveOrdered: async () => rows } as never;
   return new RulesService(repo, {} as never);
@@ -122,6 +123,29 @@ describe("request-only PRE classification", () => {
     await svc.reload();
 
     expect(svc.evaluateRequestOnlyPre(ctx)).toBeNull();
+  });
+
+  // The cutoff used to be a global minimum, so one tenant's rule
+  // silently disabled the short-circuit for every other tenant.
+  it("scopes the priority cutoff per tenant", async () => {
+    const svc = makeService([
+      { id: "1", name: "other-tenant-velocity", priority: 5, tenantId: "other", expression: { ">=": [{ var: "features.velocity_1h" }, 1] } },
+      { id: "2", name: "vpn", priority: 50, expression: { "==": [{ var: "ip_is_vpn" }, true] } },
+    ]);
+    await svc.reload();
+
+    expect(svc.evaluateRequestOnlyPre({ ...ctx, tenant_id: "acme" })?.rule.name).toBe("vpn");
+    expect(svc.evaluateRequestOnlyPre({ ...ctx, tenant_id: "other" })).toBeNull();
+  });
+
+  it("still defers to a shared feature rule that outranks the hit", async () => {
+    const svc = makeService([
+      { id: "1", name: "shared-velocity", priority: 5, expression: { ">=": [{ var: "features.velocity_1h" }, 1] } },
+      { id: "2", name: "vpn", priority: 50, expression: { "==": [{ var: "ip_is_vpn" }, true] } },
+    ]);
+    await svc.reload();
+
+    expect(svc.evaluateRequestOnlyPre({ ...ctx, tenant_id: "acme" })).toBeNull();
   });
 
   it("ignores POST rules entirely", async () => {

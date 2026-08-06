@@ -172,7 +172,9 @@ class KafkaConsumerService:
                                 fraud_prediction = int(transaction.get('fraud', False))
                                 fraud_probability = _first_present(
                                     transaction, 'fraud_probability', 'fraudProbability'
-                                ) or 0.0
+                                )
+                                if fraud_probability is None:
+                                    fraud_probability = 0.0
                                 # `or` would collapse a legitimate
                                 # False/0 label to the next key and then
                                 # to None, so only fraud=True labels

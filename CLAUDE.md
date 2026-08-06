@@ -2,6 +2,11 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+## Code style
+
+- Code must be easy for a human to understand first: plain naming, straightforward control flow, standard idioms for the language and framework. No cleverness that needs a comment to decode.
+- If less code solves the problem equally well, prefer less code — but never buy brevity at the cost of readability.
+
 ## Repository Layout
 
 This is a polyglot monorepo with **four independent backend services** that share PostgreSQL/Redis/Kafka infrastructure, plus a separate frontend SPA. Each service has its own dependencies and build:
@@ -88,7 +93,12 @@ RDA's `predict` flow is: Redis feature lookup → ONNX inference → Kafka publi
 
 PAA is the writer: it consumes `transactions.completed`, updates an in-memory transaction graph (`graphology`) and velocity windows, then queues batched writes to Redis and Postgres. Graph metadata is snapshotted for both sender and receiver on every event into a Map keyed by `userId`, then bulk-upserted to Postgres on the standard batch flush (size 100 / 10 s) — the Map dedupes hot users so Postgres pressure tracks unique-user rate, not event rate. Redis writes feed the next RDA prediction.
 
-**PAA is a singleton — do not scale it.** The graph and velocity state live in process memory. A second member in the `pattern-analysis` consumer group splits the partition assignment, so each replica runs PageRank/Louvain on a partial graph and rings whose members hash to different partitions become invisible. This is now **fenced, not just detected**: PAA takes a Redis leader lease (`ojuri:paa:leader`, `PAA_LEADER_LEASE_TTL_MS`, default 30 s) before it starts consuming, and a second instance exits rather than joining the group. A graceful shutdown releases the lease so a rolling restart hands over immediately instead of waiting out the TTL; losing the lease mid-run triggers shutdown. `PAA_REQUIRE_LEADER_LEASE=false` disables the fence. The `paa_group_members` gauge and the ERROR log remain as backstop observability.
+**PAA is a singleton — do not scale it.** The graph and velocity state live in process memory. A second member in the `pattern-analysis` consumer group splits the partition assignment, so each replica runs PageRank/Louvain on a partial graph and rings whose members hash to different partitions become invisible. PAA takes a Redis leader lease (`ojuri:paa:leader`, `PAA_LEADER_LEASE_TTL_MS`, default 30 s) before it starts consuming; a second instance waits up to `PAA_LEADER_ACQUIRE_TIMEOUT_MS` for handover, then exits rather than joining the group. Two properties matter and are easy to get wrong:
+
+- **Renewal fails closed.** An unreachable Redis is not "still the leader" — the key expires server-side regardless, so a partition outlasting the TTL means a challenger has already taken over. The lease surrenders on elapsed time, not only on a confirmed loss.
+- **A fenced-out instance discards its buffers.** Its graph is by definition partial, and `redisUpdateService`/`postgresService` would otherwise flush that snapshot over what the new leader has already written. `stop({ discard: true })` drops them; the flushing path is for SIGTERM only.
+
+This is a lease, not a fencing token: it cannot stop a process paused past the TTL from issuing one last write. `PAA_REQUIRE_LEADER_LEASE=false` disables the fence. The `paa_group_members` gauge and the ERROR log remain as backstop observability.
 
 ### Blocked-transaction investigation path
 When `PredictService` returns `decision === "DECLINE"`, RDA publishes the same `TransactionEvent` to **two** topics fire-and-forget: the primary `transactions.completed` (consumed by PAA + MLA, partitioned by `sender_id` for per-user ordering) and `transactions.blocked` (consumed only by FIA, partitioned by `transaction_id` so a single high-fraud sender does not pin all FIA work to one partition). The dual publish is intentional — FIA runs at LLM-inference latencies (seconds) and must never share a queue with PAA's millisecond pipeline.

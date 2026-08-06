@@ -14,7 +14,8 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 
 class StubService:
-    """Mirrors FIA's retry bookkeeping without importing torch/transformers."""
+    """FIA's retry bookkeeping. The real service is not constructed here:
+    its __init__ opens Postgres and Kafka connections."""
 
     def __init__(self, dlq, max_retries=3):
         self._dlq = dlq
@@ -24,33 +25,14 @@ class StubService:
         self._dropped_poison = 0
         self._dlq_published = 0
 
-    _record_failure = None  # bound below
-
-
-def _load_record_failure():
-    """Pull the real implementation out of main.py by source, so the test
-    tracks the shipped logic without importing the LLM stack."""
-    import ast
-    import textwrap
-
-    path = os.path.join(os.path.dirname(__file__), "..", "src", "main.py")
-    with open(path) as f:
-        tree = ast.parse(f.read())
-
-    for node in ast.walk(tree):
-        if isinstance(node, ast.FunctionDef) and node.name == "_record_failure":
-            module = ast.Module(body=[node], type_ignores=[])
-            from typing import Any, Dict, Optional
-
-            ns = {"logger": MagicMock(), "Optional": Optional, "Dict": Dict, "Any": Any}
-            exec(compile(module, path, "exec"), ns)
-            return ns["_record_failure"]
-    raise AssertionError("_record_failure not found in src/main.py")
-
 
 @pytest.fixture
 def record_failure():
-    return _load_record_failure()
+    # Unbound method off the class, so the test always exercises the
+    # shipped implementation.
+    from src.main import FIAService
+
+    return FIAService._record_failure
 
 
 EVENT = {"transaction_id": "txn-1", "decision": "DECLINE"}

@@ -7,30 +7,27 @@ const log = createServiceLogger("LeaderLease");
 
 const LEASE_KEY = "ojuri:paa:leader";
 
-/**
- * PAA holds the transaction graph and velocity windows in process
- * memory. A second member of the `pattern-analysis` consumer group
- * splits the partition assignment, so each replica runs PageRank/Louvain
- * over a partial graph and writes those degraded features to Redis for
- * RDA to consume on the decision path.
- *
- * The previous guard only logged the breach; both replicas kept writing.
- * A Redis lease actually fences: the loser never starts consuming. The
- * TTL is deliberately longer than the renew interval so a deliberate
- * rolling-restart overlap resolves itself rather than flapping, and
- * `release()` on graceful shutdown hands over immediately.
- */
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+// PAA keeps the graph and velocity windows in process memory, so a
+// second consumer would split the partitions and write half-graph
+// features to the Redis keys RDA decides on. Only the lease holder runs.
 class LeaderLeaseService {
   private readonly id = randomUUID();
   private readonly ttlMs: number;
   private readonly renewIntervalMs: number;
   private timer: NodeJS.Timeout | null = null;
   private held = false;
+  private lastRenewOkAt = 0;
   private onLost: (() => void) | null = null;
 
   constructor() {
     this.ttlMs = appConfig.paa.leaderLeaseTtlMs;
-    this.renewIntervalMs = Math.max(1000, Math.floor(this.ttlMs / 3));
+    // Must stay well under the TTL: renewing less often than the lease
+    // expires would let it lapse while we still think we hold it.
+    this.renewIntervalMs = Math.max(50, Math.floor(this.ttlMs / 3));
   }
 
   isHeld(): boolean {
@@ -41,6 +38,24 @@ class LeaderLeaseService {
     return this.id;
   }
 
+  // A rolling deploy starts the successor before the incumbent
+  // terminates, so a single failed attempt would exit into a restart
+  // backoff that outlasts the handover it was waiting for.
+  async acquireWithRetry(timeoutMs: number): Promise<boolean> {
+    const giveUpAt = Date.now() + timeoutMs;
+    const retryDelayMs = 1000;
+
+    while (Date.now() < giveUpAt) {
+      if (await this.acquire()) return true;
+      log.info("acquireWithRetry", "Lease held elsewhere — waiting for handover", {
+        retryDelayMs,
+        remainingMs: giveUpAt - Date.now(),
+      });
+      await sleep(retryDelayMs);
+    }
+    return false;
+  }
+
   async acquire(): Promise<boolean> {
     try {
       const res = await redisClient
@@ -48,6 +63,7 @@ class LeaderLeaseService {
         .set(LEASE_KEY, this.id, "PX", this.ttlMs, "NX");
       this.held = res === "OK";
       if (this.held) {
+        this.lastRenewOkAt = Date.now();
         log.success("acquire", "Acquired PAA leader lease", { id: this.id, ttlMs: this.ttlMs });
       } else {
         const holder = await redisClient.get().get(LEASE_KEY);
@@ -96,18 +112,34 @@ class LeaderLeaseService {
     try {
       renewed = Number(await redisClient.get().eval(script, 1, LEASE_KEY, this.id, this.ttlMs));
     } catch (err) {
-      log.warn("renew", "Lease renewal failed; will retry on the next tick", {
+      // Redis unreachable is not "still the leader". The key expires on
+      // the server regardless of whether we can see it, so a partition
+      // that outlasts the TTL means a challenger has already taken over
+      // while this instance keeps consuming — split brain from a single
+      // failover. Self-fence on elapsed time, not just on a confirmed
+      // loss.
+      const staleFor = Date.now() - this.lastRenewOkAt;
+      log.warn("renew", "Lease renewal failed", {
         error: err instanceof Error ? err.message : String(err),
+        staleForMs: staleFor,
+        ttlMs: this.ttlMs,
       });
+      if (staleFor >= this.ttlMs) this.surrender("renewal unreachable past the lease TTL");
       return;
     }
 
-    if (renewed === 1) return;
+    if (renewed === 1) {
+      this.lastRenewOkAt = Date.now();
+      return;
+    }
 
+    this.surrender("another instance has taken over");
+  }
+
+  private surrender(reason: string): void {
+    if (!this.held) return;
     this.held = false;
-    log.error("renew", "Lost the PAA leader lease — another instance has taken over", {
-      id: this.id,
-    });
+    log.error("renew", "Lost the PAA leader lease", { id: this.id, reason });
     this.onLost?.();
   }
 

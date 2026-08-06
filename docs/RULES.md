@@ -56,7 +56,7 @@ arrays. Leaves are literals or `{ "var": "<path>" }` references.
 | Boolean and     | `{ "and": [expr, expr, ...] }`                  | Short-circuits.                      |
 | Boolean or      | `{ "or": [expr, expr, ...] }`                   | Short-circuits.                      |
 | Negation        | `{ "not": expr }`                              |                                      |
-| Membership      | `{ "in": [value, [literal, literal, ...]] }`    | Haystack can be array or string.     |
+| Membership      | `{ "in": [value, [literal, literal, ...]] }`    | Haystack must be an array (max 200 entries). |
 
 Unsupported by design (keeps the engine cheap and auditable):
 arithmetic, regular expressions, string functions, user-defined

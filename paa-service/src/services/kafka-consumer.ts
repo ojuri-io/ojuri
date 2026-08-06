@@ -2,6 +2,7 @@ import { Kafka, Consumer, EachMessagePayload, logLevel } from "kafkajs";
 import appConfig from "@config/app.config";
 import { createServiceLogger, TraceContext } from "@utils/service-logger";
 import { metricsService } from "@utils/metrics";
+import { processedEvents } from "./processed-events.service";
 import { TransactionEvent } from "./types";
 
 const log = createServiceLogger("KafkaConsumer");
@@ -112,7 +113,17 @@ class KafkaConsumerService {
 
       const event: TransactionEvent = JSON.parse(message.value.toString());
 
-      await this.processWithRetry(event, 0);
+      // Outside processWithRetry: graph and velocity state are in-memory
+      // and not idempotent, so a redelivery must not be applied twice —
+      // but a retry of *this* delivery must still be allowed through, or
+      // a transient failure would be silently swallowed as a duplicate.
+      if (processedEvents.markIfNew(event.transaction_id)) {
+        await this.processWithRetry(event, 0);
+      } else {
+        log.debug("processMessage", "Duplicate event — skipping in-memory update", {
+          transactionId: event.transaction_id,
+        });
+      }
       await this.commitOffset(topic, partition, offset);
 
       metricsService.recordMessageProcessed();

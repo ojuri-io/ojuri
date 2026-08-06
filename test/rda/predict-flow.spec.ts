@@ -1,11 +1,8 @@
 /**
- * End-to-end behaviour of PredictService across the review fixes:
- *   - a breaker fallback degrades to REVIEW and is attributable
- *   - a degraded DECLINE does not dual-publish to the blocked topic
- *   - request-only PRE rules decide before the Redis feature load
- *   - the feature snapshot still reaches the audit row, just late
- *   - a failed prediction releases the transaction_id reservation
- *   - shadow scoring never blocks the response
+ * Covers the interactions a unit test of any single piece would miss:
+ * a degraded score must not reach the blocked topic, a request-only rule
+ * must not wait on Redis, and a failed prediction must free its
+ * transaction_id reservation.
  */
 
 import "reflect-metadata";
@@ -213,9 +210,10 @@ describe("request-only PRE rules", () => {
     if (outcome.kind !== "ok") return;
     expect(outcome.response.decision).toBe(Decision.DECLINE);
     expect(outcome.response.decision_source).toBe(DecisionSource.PRE_RULE);
-    // The load is kicked off for the audit trail, but the decision did
-    // not wait on it.
-    expect(h.audits[0]!.featuresSnapshot).toEqual({});
+    // Null, not empty — the rule decided without loading features, which
+    // must not be recorded as "Redis missed, scored on defaults".
+    expect(h.audits[0]!.featuresSnapshot).toBeNull();
+    expect(h.audits[0]!.featuresDefault).toBe(false);
   });
 
   it("still lands the feature snapshot on the audit row, just late", async () => {

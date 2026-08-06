@@ -1,3 +1,4 @@
+import { createHash } from "crypto";
 import fs from "fs";
 import os from "os";
 import path from "path";
@@ -46,7 +47,9 @@ describe("loadCalibration", () => {
 
   function writeMeta(payload: unknown): string {
     fs.writeFileSync(path.join(dir, "meta.json"), JSON.stringify(payload));
-    return path.join(dir, "model.onnx");
+    const modelPath = path.join(dir, "model.onnx");
+    fs.writeFileSync(modelPath, "onnx-bytes");
+    return modelPath;
   }
 
   it("reads the calibration block MLA bakes into meta.json", () => {
@@ -66,6 +69,27 @@ describe("loadCalibration", () => {
 
   it("returns null when meta.json is absent entirely", () => {
     expect(loadCalibration(path.join(dir, "model.onnx"))).toBeNull();
+  });
+
+  // The documented manual deploy copies only the .onnx, so a leftover
+  // meta.json would otherwise apply a different booster's mapping.
+  it("ignores a meta.json describing a different model", () => {
+    const modelPath = writeMeta({
+      sha256: "0".repeat(64),
+      calibration: { x_thresholds: [0, 1], y_thresholds: [0, 0.5] },
+    });
+    expect(loadCalibration(modelPath)).toBeNull();
+  });
+
+  it("accepts a meta.json whose sha256 matches the model on disk", () => {
+    const modelPath = path.join(dir, "model.onnx");
+    fs.writeFileSync(modelPath, "onnx-bytes");
+    const sha = createHash("sha256").update(fs.readFileSync(modelPath)).digest("hex");
+    fs.writeFileSync(
+      path.join(dir, "meta.json"),
+      JSON.stringify({ sha256: sha, calibration: { x_thresholds: [0, 1], y_thresholds: [0, 0.5] } })
+    );
+    expect(loadCalibration(modelPath)).not.toBeNull();
   });
 
   // A malformed block must degrade to raw scores, never throw on the

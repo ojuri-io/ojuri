@@ -94,7 +94,7 @@ describe("PAA → Redis feature contract", () => {
 describe("VelocityService windows and pair metrics", () => {
   const HOUR = 60 * 60 * 1000;
   const DAY = 24 * HOUR;
-  const now = 40 * DAY;
+  const now = Date.now();
 
   function seed(service: VelocityService): void {
     service.recordTransaction(event({ sender_id: "A", receiver_id: "B", amount: 100, timestamp: now - 30_000 }));

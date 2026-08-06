@@ -554,10 +554,13 @@ class OnnxService {
       await fsp.rename(tempPath, this.modelPath);
     }
 
+    // Load the model first: applying the incoming version's calibration
+    // to the outgoing model's scores would shift decisions for any
+    // request in flight during the swap.
+    await this.loadModel();
     // Calibration travels with the version directory, not the canonical
     // MODEL_PATH copy — resolve it from the source artefact.
     this.loadCalibrationFor(resolved);
-    await this.loadModel();
     // Re-probe after every hot-swap. A model that loads at the ONNX-runtime
     // level can still be wrong-dim, constant, or inverted at the prediction
     // level — without this the registry could swap in a broken artefact and

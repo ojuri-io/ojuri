@@ -121,6 +121,21 @@ class DecisionAuditRepo extends BaseRepository<IDecisionAudit, DecisionAudit> {
    * column will be NULL. Callers detect that as `row.context == null`
    * and the UI shows the empty-context skeleton until the next reload.
    */
+  /**
+   * Uniqueness is (tenantId, transactionId), so two tenants can hold the
+   * same transaction_id — a lookup by transaction alone can return the
+   * wrong tenant's row.
+   */
+  async findIdByTenantAndTransaction(
+    tenantId: string | null,
+    transactionId: string
+  ): Promise<string | undefined> {
+    const row = await DecisionAudit.query()
+      .select("id")
+      .findOne({ tenantId, transactionId });
+    return row?.id;
+  }
+
   async findLatestByTransactionId(transactionId: string): Promise<(DecisionAudit & { context?: TransactionContext | null }) | undefined> {
     const knex = DecisionAudit.knex();
     const row = (await knex

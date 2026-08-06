@@ -7,6 +7,7 @@
 
 import { useState, useEffect } from 'react';
 import { Ti, fmtNaira, truncId, displayName } from '../components/shell.jsx';
+import { decisionSourceLabel } from '../utils/decision-source.js';
 import {
   getDecision,
   overrideDecision,
@@ -856,9 +857,7 @@ function TransactionContext({ context }) {
 function DecisionPill({ decision, source, stage }) {
   const finalDecision = decision || 'ACCEPT';
   const tone = finalDecision === 'DECLINE' ? 'danger' : finalDecision === 'REVIEW' ? 'warn' : 'success';
-  const isOverride = source === 'REVIEWER_OVERRIDE';
-  const isRule = !isOverride && (source === 'PRE_RULE' || source === 'POST_RULE' || stage === 'PRE_RULE');
-  const label = isOverride ? 'OVERRIDE' : isRule ? 'RULE' : 'ML';
+  const label = decisionSourceLabel(source, stage);
   return (
     <span className={`pill ${tone}`} style={{padding:'4px 10px', fontSize:11, flexShrink:0}}>
       {finalDecision} · {label}

@@ -28,9 +28,12 @@ const appConfig = {
     fraudLabelPollIntervalMs: Number(process.env.FRAUD_LABEL_POLL_INTERVAL_MS) || 300000,
     dedupeWindowSize: Number(process.env.PAA_DEDUPE_WINDOW_SIZE) || 500000,
     maxTransactionsPerUser: Number(process.env.MAX_TRANSACTIONS_PER_USER) || 50000,
+    maxTrackedUsers: Number(process.env.MAX_VELOCITY_USERS) || 2000000,
     // Longer than the renew interval so a rolling restart's deliberate
     // overlap resolves without flapping.
     leaderLeaseTtlMs: Number(process.env.PAA_LEADER_LEASE_TTL_MS) || 30000,
+    // Long enough to outlast a rolling deploy's overlap window.
+    leaderAcquireTimeoutMs: Number(process.env.PAA_LEADER_ACQUIRE_TIMEOUT_MS) || 120000,
     requireLeaderLease: process.env.PAA_REQUIRE_LEADER_LEASE !== "false",
   },
   metrics: {

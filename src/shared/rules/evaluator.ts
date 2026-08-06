@@ -14,6 +14,20 @@ export const RULE_OPERATORS = [
   "in",
 ] as const;
 
+/** True when any `in` uses a non-array haystack — a shape that can no
+ *  longer match anything. */
+export function hasStringHaystack(expr: RuleExpression): boolean {
+  if (expr === null || typeof expr !== "object") return false;
+  if (Array.isArray(expr)) return expr.some((e) => hasStringHaystack(e));
+
+  for (const [op, args] of Object.entries(expr as Record<string, unknown>)) {
+    if (op === "var") continue;
+    if (op === "in" && Array.isArray(args) && !Array.isArray(args[1])) return true;
+    if (hasStringHaystack(args as RuleExpression)) return true;
+  }
+  return false;
+}
+
 /** Every `var` path an expression reads. Used by save-time validation and
  *  by the request-only classification that lets PRE rules short-circuit
  *  before the Redis feature read. */

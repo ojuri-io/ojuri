@@ -8,6 +8,7 @@
 import "reflect-metadata";
 import AuditWriteQueue from "../../src/shared/audit/audit-write-queue";
 import { QueuedAuditRecord } from "../../src/shared/audit/decision-audit.types";
+import { DecisionAudit } from "../../src/shared/audit/model/decision-audit.model";
 import { Decision } from "../../src/shared/enums/decision.enum";
 import { DecisionSource } from "../../src/shared/enums/decision-source.enum";
 
@@ -27,15 +28,72 @@ function record(id: string): QueuedAuditRecord {
   };
 }
 
+function pgError(code: string): Error & { code: string } {
+  return Object.assign(new Error(`postgres rejected: ${code}`), { code });
+}
+
 type QueueInternals = {
   buffer: QueuedAuditRecord[];
   flush(): Promise<void>;
+  flushWith(err: Error): Promise<void>;
   opts: { capacity: number; batchSize: number };
 };
 
 function internals(q: AuditWriteQueue): QueueInternals {
-  return q as unknown as QueueInternals;
+  const inner = q as unknown as QueueInternals;
+  // No DB is bound in unit tests, so plain flush() already throws. This
+  // lets a test choose *which* error Postgres returns.
+  inner.flushWith = async (err: Error) => {
+    const knex = (DecisionAudit as unknown as { knex: () => unknown }).knex;
+    (DecisionAudit as unknown as { knex: () => unknown }).knex = () => {
+      throw err;
+    };
+    try {
+      await inner.flush();
+    } finally {
+      (DecisionAudit as unknown as { knex: () => unknown }).knex = knex;
+    }
+  };
+  return inner;
 }
+
+describe("AuditWriteQueue poison handling", () => {
+  // Retrying a batch Postgres will never accept blocks the queue head,
+  // fills the buffer, and makes enqueue() throw — turning an audit
+  // outage into a total outage of the decision path. The trigger is
+  // mundane: deploying code before its migration.
+  it("drops a batch rejected for a permanent reason instead of blocking the head", async () => {
+    const q = new AuditWriteQueue();
+    const inner = internals(q);
+    q.enqueue(record("a"));
+
+    await inner.flushWith(pgError("42703")); // undefined_column
+
+    expect(inner.buffer).toHaveLength(0);
+  });
+
+  it("re-queues on connection and resource failures", async () => {
+    for (const code of ["08006", "53300", "57P01", "40001"]) {
+      const q = new AuditWriteQueue();
+      const inner = internals(q);
+      q.enqueue(record("a"));
+
+      await inner.flushWith(pgError(code));
+
+      expect(inner.buffer.map((r) => r.id)).toEqual(["a"]);
+    }
+  });
+
+  it("re-queues errors that carry no SQLSTATE, which are usually socket failures", async () => {
+    const q = new AuditWriteQueue();
+    const inner = internals(q);
+    q.enqueue(record("a"));
+
+    await inner.flushWith(new Error("read ECONNRESET"));
+
+    expect(inner.buffer).toHaveLength(1);
+  });
+});
 
 describe("AuditWriteQueue failure handling", () => {
   it("re-queues a failed batch instead of dropping it", async () => {

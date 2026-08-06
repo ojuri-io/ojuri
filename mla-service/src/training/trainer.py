@@ -87,7 +87,7 @@ class ModelTrainer:
         use_continued = effective_mode == "CONTINUED" and prior_model is not None
 
         if use_continued:
-            params = {**self.params, "n_estimators": continued_trees}
+            params = {**self._fresh_params(), "n_estimators": continued_trees}
             model = XGBClassifier(**params)
             logger.info(f"Mode=CONTINUED — seeding from prior model, adding {continued_trees} trees")
             model.fit(
@@ -138,10 +138,8 @@ class ModelTrainer:
         return model, calibrator, metrics
 
     def _fresh_params(self) -> Dict[str, Any]:
-        """The class advertised early stopping and passed an eval_set, but
-        never configured `early_stopping_rounds` — so every run trained
-        all n_estimators trees and the eval_set was collected and
-        discarded."""
+        """An eval_set is passed on every path, so without this the
+        validation set is collected and silently ignored."""
         if self.early_stopping_rounds <= 0:
             return self.params
         return {**self.params, "early_stopping_rounds": self.early_stopping_rounds}

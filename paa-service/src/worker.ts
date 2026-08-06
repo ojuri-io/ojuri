@@ -39,15 +39,6 @@ async function processTransaction(event: TransactionEvent): Promise<void> {
       });
 
       try {
-        // Graph and velocity state are in-memory and not idempotent, so
-        // an at-least-once redelivery must not be applied twice.
-        if (!processedEvents.markIfNew(event.transaction_id)) {
-          log.debug("processTransaction", "Duplicate event — skipping in-memory update", {
-            transactionId: event.transaction_id,
-          });
-          return;
-        }
-
         // 1. Update graph with new transaction
         log.debug("processTransaction", "Updating transaction graph");
         graphService.addTransaction(event);
@@ -154,7 +145,11 @@ async function loadHistoricalData(): Promise<void> {
 
     const { transactions } = await postgresService.loadGraphData(tailSince);
 
+    // The committed Kafka offset is routinely older than the newest
+    // persisted edge, so this replay overlaps events Kafka will deliver
+    // again. Mark them here or the overlap is applied twice.
     for (const transaction of transactions) {
+      processedEvents.markIfNew(transaction.transaction_id);
       graphService.addTransaction(transaction);
       velocityService.recordTransaction(transaction);
     }
@@ -298,28 +293,30 @@ function startSingletonGuard(): void {
 }
 
 /**
- * Graceful shutdown
+ * `fenced` means we lost the leader lease: another instance is already
+ * writing, so our buffers hold a partial-graph snapshot that must be
+ * dropped rather than flushed over the new leader's writes.
  */
-async function shutdown(metricsServer: http.Server): Promise<void> {
+async function shutdown(metricsServer: http.Server, { fenced = false } = {}): Promise<void> {
   if (isShuttingDown) return;
   isShuttingDown = true;
 
-  log.entry("shutdown", "Shutting down PAA worker");
+  log.entry("shutdown", "Shutting down PAA worker", { fenced });
 
   try {
     await kafkaConsumer.disconnect();
     // Before dropping the Redis connection, so the successor can take
     // over immediately instead of waiting out the TTL.
     await leaderLease.release();
-    redisUpdateService.stop();
-    await postgresService.stop();
+    redisUpdateService.stop({ discard: fenced });
+    await postgresService.stop({ discard: fenced });
     await redisClient.disconnect();
     await closeDatabase();
 
     metricsServer.close();
 
     log.success("shutdown", "PAA worker shutdown complete");
-    process.exit(0);
+    process.exit(fenced ? 1 : 0);
   } catch (err) {
     log.error("shutdown", "Error during shutdown", {
       error: err instanceof Error ? err.message : String(err),
@@ -362,14 +359,14 @@ async function main(): Promise<void> {
     // assignment and compute graph metrics over half the graph, writing
     // degraded features to Redis for RDA's decision path.
     if (appConfig.paa.requireLeaderLease) {
-      const acquired = await leaderLease.acquire();
+      const acquired = await leaderLease.acquireWithRetry(appConfig.paa.leaderAcquireTimeoutMs);
       if (!acquired) {
         log.error("main", "Exiting: another PAA instance is the leader. PAA is a singleton.");
         process.exit(1);
       }
       leaderLease.startRenewal(() => {
-        log.error("main", "Leader lease lost — shutting down to avoid a split graph");
-        shutdown(metricsServer);
+        log.error("main", "Leader lease lost — discarding buffered writes and shutting down");
+        shutdown(metricsServer, { fenced: true });
       });
     } else {
       log.warn("main", "PAA_REQUIRE_LEADER_LEASE=false — singleton fencing is disabled");

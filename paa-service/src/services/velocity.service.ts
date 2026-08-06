@@ -27,9 +27,11 @@ class VelocityService {
   // senders — the population fraud detection cares most about — so
   // amount_mean_30d and velocity_7d were computed on a partial tail.
   private readonly maxTransactionsPerUser: number;
+  private readonly maxTrackedUsers: number;
 
   constructor() {
     this.maxTransactionsPerUser = appConfig.paa.maxTransactionsPerUser;
+    this.maxTrackedUsers = appConfig.paa.maxTrackedUsers;
     this.startPeriodicCleanup();
   }
 
@@ -48,7 +50,10 @@ class VelocityService {
     }
 
     this.insertAscending(transactions, record);
-    this.evictOutOfWindow(transactions, record.timestamp);
+    // Wall clock, not the record's timestamp: `timestamp` is
+    // client-supplied, so a single future-dated event would evict a
+    // sender's entire history and reset their velocity profile to zero.
+    this.evictOutOfWindow(transactions, Date.now());
   }
 
   // Kept sorted on write so reads never pay a sort, and so a late-
@@ -296,6 +301,35 @@ class VelocityService {
     if (cleanedTransactions > 0) {
       log.info("cleanupOldTransactions", "Cleaned up old transactions", { cleanedUsers, cleanedTransactions });
     }
+
+    this.enforceTrackedUserCap();
+  }
+
+  /**
+   * Time-based retention alone leaves the *number* of tracked users
+   * unbounded, and PAA is a singleton with no horizontal scale — an OOM
+   * means RDA serves stale features until a cold restart plus full
+   * hydration completes. Evict the least-recently-active users first.
+   */
+  private enforceTrackedUserCap(): void {
+    const overage = this.userTransactions.size - this.maxTrackedUsers;
+    if (overage <= 0) return;
+
+    const lastSeen = [...this.userTransactions.entries()].map(([userId, txns]) => ({
+      userId,
+      at: txns[txns.length - 1]?.timestamp ?? 0,
+    }));
+    lastSeen.sort((a, b) => a.at - b.at);
+
+    for (const { userId } of lastSeen.slice(0, overage)) {
+      this.userTransactions.delete(userId);
+    }
+
+    metricsService.recordVelocityUserEviction(overage);
+    log.warn("enforceTrackedUserCap", "Evicted least-recently-active users", {
+      evicted: overage,
+      cap: this.maxTrackedUsers,
+    });
   }
 
   getStats(): { totalUsers: number; totalTransactions: number } {

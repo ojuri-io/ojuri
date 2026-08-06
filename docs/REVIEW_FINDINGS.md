@@ -41,6 +41,36 @@ Five further defects found while validating them are tracked as OJR-22…26.
 | OJR-25 | MED  | Performance   | Cap-driven graph prune rescans every node per insert       | FIXED  |
 | OJR-26 | LOW  | Correctness   | Readiness probe vectors use hardcoded catalogue indices    | FIXED  |
 
+## Second round — defects introduced by the first round
+
+Three independent reviews of the fixes above found that several traded one
+failure mode for a worse one. Tracked as OJR-27…40 and fixed on the same branch.
+
+| ID     | Sev  | Area        | Finding                                                      | Status |
+|--------|------|-------------|--------------------------------------------------------------|--------|
+| OJR-27 | HIGH | Resilience  | Fenced-out PAA flushed stale buffers over the new leader's writes | FIXED |
+| OJR-28 | HIGH | Resilience  | Lease renewal failed *open* — a Redis blip meant split brain  | FIXED  |
+| OJR-29 | HIGH | Resilience  | Audit requeue turned a poison batch into a total predict outage | FIXED |
+| OJR-30 | HIGH | Correctness | Dedupe inside the retry unit silently dropped retried events  | FIXED  |
+| OJR-31 | HIGH | ML          | Drift watermark advanced to wall-clock, skipping labels forever | FIXED |
+| OJR-32 | HIGH | Security    | `recordDurable` duplicate path could return another tenant's audit id | FIXED |
+| OJR-33 | HIGH | Security    | Client-supplied timestamp could wipe a sender's velocity history | FIXED |
+| OJR-34 | MED  | ML          | Drift feed scored rule and breaker rows as model predictions   | FIXED  |
+| OJR-35 | MED  | Resilience  | `AUDIT_SYNC_WRITE` returned 500, not the documented 503        | FIXED  |
+| OJR-36 | MED  | Correctness | Late audit patch was a guaranteed no-op in sync mode           | FIXED  |
+| OJR-37 | MED  | Correctness | `featuresDefault: true` asserted defaults were used when none were loaded | FIXED |
+| OJR-38 | MED  | Correctness | Hydration replay bypassed the dedupe window it relied on       | FIXED  |
+| OJR-39 | MED  | Performance | Request-only rule cutoff was global, not per tenant            | FIXED  |
+| OJR-40 | MED  | Resilience  | Unbounded velocity user map; no global cap on a singleton      | FIXED  |
+
+Smaller items fixed in the same pass: retrain cooldown now covers every trigger
+(not just drift); `CONTINUED` mode gained the early stopping `FRESH` got; the
+drift threshold is re-anchored on restart; `unhandledRejection` no longer kills
+RDA; rule expressions have node and haystack caps; legacy `in`-on-string rules
+are flagged at load instead of silently never matching; `BREAKER_FALLBACK` is no
+longer narrated by FIA or rendered by the SPA as a model decision; a stale
+`meta.json` can no longer supply another model's calibration.
+
 Highest-leverage cluster: **OJR-01 + OJR-02 + OJR-03** — the calibration pipeline is
 disconnected from serving and mis-fit on synthetic data, and the drift monitor the
 retraining story is built around never receives data.
@@ -67,9 +97,19 @@ Read these before assuming the areas are closed.
 - **OJR-21 is directionally better, not attribution.** Gain importances are global, not
   per-transaction. `basis: MODEL_WEIGHTED` says the magnitude came from the model, not that
   the number is a Shapley value. TreeSHAP for DECLINE/REVIEW in FIA is the real answer.
-- **OJR-14's dedupe window is memory-only.** It covers a rebalance or a producer-buffer
-  replay, not a cold boot; after a restart, replayed events can double-count until
-  hydration completes.
+- **OJR-14's dedupe window is memory-only.** It is now seeded from the hydration replay,
+  which covers the overlap between the last committed Kafka offset and the newest
+  persisted edge. A replay reaching further back than `PAA_DEDUPE_WINDOW_SIZE` events
+  can still double-count.
+- **The PAA lease is not a fencing token.** It self-fences on renewal timeout and
+  discards buffered writes when fenced out, which closes the split-brain paths found in
+  review. It still cannot stop a process paused past the TTL from issuing one final
+  write before it notices. Making that impossible needs an epoch stamped at acquire and
+  checked on every Redis/Postgres write — worth doing before PAA runs anywhere its
+  process can be suspended (aggressive cgroup throttling, VM migration).
+- **`AUDIT_SYNC_WRITE` puts an unbatched INSERT on the hot path.** One round-trip per
+  decision, no batching. It is a throughput ceiling, not a free durability upgrade;
+  a slow Postgres becomes 503s on authorization.
 
 ---
 

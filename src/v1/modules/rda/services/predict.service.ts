@@ -178,9 +178,12 @@ class PredictService {
         threshold: modelMeta.threshold,
         championVersion: modelMeta.championVersion,
         shadowVersion: modelMeta.shadowVersion,
-        reasonCodes: [],
-        featuresSnapshot: {},
-        isDefault: true,
+        // null, not empty: the rule decided without ever loading
+        // features, which is a different claim from "Redis missed, so we
+        // scored on defaults". The audit row must not assert the latter.
+        reasonCodes: null,
+        featuresSnapshot: null,
+        isDefault: false,
       });
       // The decision doesn't need features, but the audit trail does.
       // Load them behind the response and patch the queued row.
@@ -353,14 +356,26 @@ class PredictService {
     const latencyMs = Date.now() - ctx.startTime;
     metricsService.recordDecision(ctx.finalDecision);
 
+    // Attach the handler now: persistAudit can throw, and an unhandled
+    // rejection from an already-started promise would take the process
+    // down. Redis failing and the audit queue backing up correlate.
+    const late = lateAudit?.catch((err) => {
+      log.warn("audit", "Late audit enrichment failed", { err: String(err) });
+      return null;
+    });
+
     const t0 = performance.now();
-    const auditId = await this.persistAudit(ctx, latencyMs);
+    // Sync mode writes straight through, so there is no queued row left
+    // to patch — the late fields have to land before the insert.
+    const record = DecisionAuditFactory.createRecord(ctx, latencyMs);
+    if (appConfig.audit.syncWrite) {
+      Object.assign(record, (late && (await late)) ?? {});
+    }
+    const auditId = await this.persistAudit(record);
     metricsService.recordPredictStage("audit_enqueue", performance.now() - t0);
 
-    if (lateAudit) {
-      lateAudit
-        .then((fields) => this.decisionAudit.patchLate(auditId, fields))
-        .catch((err) => log.warn("audit", "Late audit enrichment failed", { err: String(err) }));
+    if (late && !appConfig.audit.syncWrite) {
+      void late.then((fields) => fields && this.decisionAudit.patchLate(auditId, fields));
     }
 
     this.dispatchAsyncEffects(ctx, auditId);
@@ -378,8 +393,7 @@ class PredictService {
     }));
   }
 
-  private async persistAudit(ctx: PredictDecisionContext, latencyMs: number): Promise<string> {
-    const record = DecisionAuditFactory.createRecord(ctx, latencyMs);
+  private async persistAudit(record: DecisionAuditRecord): Promise<string> {
     if (!appConfig.audit.syncWrite) return this.decisionAudit.enqueue(record);
     return this.decisionAudit.recordDurable(record);
   }

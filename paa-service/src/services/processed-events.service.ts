@@ -1,29 +1,20 @@
 import appConfig from "@config/app.config";
 import { metricsService } from "@utils/metrics";
 
-/**
- * Kafka delivery is at-least-once and PAA commits offsets after
- * processing, so a crash between the in-memory graph/velocity update and
- * the commit replays events that were already counted. Postgres upserts
- * are conflict-safe; edge weights, velocity windows and node counters are
- * not — a replay permanently inflates them. The producer's LevelDB buffer
- * replay creates the same exposure.
- *
- * Bounded FIFO of recently-seen transaction ids. Memory-only by design:
- * a restart re-hydrates graph state from Postgres/Redis anyway, so the
- * window only needs to cover a rebalance or buffer replay, not a cold
- * boot.
- */
+// Kafka is at-least-once and offsets commit after processing, so a
+// replay re-applies events to graph and velocity counters that already
+// counted them — and unlike the Postgres upserts, that inflation is
+// permanent. Seeded on restart from worker.ts's hydration replay.
 class ProcessedEventsService {
-  private seen: Set<string> = new Set();
-  private order: string[] = [];
-  private readonly capacity: number;
+  private readonly seen = new Set<string>();
+  private readonly ring: string[];
+  private next = 0;
 
   constructor(capacity: number = appConfig.paa.dedupeWindowSize) {
-    this.capacity = Math.max(1, capacity);
+    this.ring = new Array(Math.max(1, capacity));
   }
 
-  /** True when this id has not been processed inside the window. */
+  /** True when this id has not been seen inside the window. */
   markIfNew(transactionId: string | undefined | null): boolean {
     if (!transactionId) return true;
     if (this.seen.has(transactionId)) {
@@ -31,12 +22,12 @@ class ProcessedEventsService {
       return false;
     }
 
+    const evicted = this.ring[this.next];
+    if (evicted !== undefined) this.seen.delete(evicted);
+
+    this.ring[this.next] = transactionId;
+    this.next = (this.next + 1) % this.ring.length;
     this.seen.add(transactionId);
-    this.order.push(transactionId);
-    if (this.order.length > this.capacity) {
-      const evicted = this.order.splice(0, this.order.length - this.capacity);
-      for (const id of evicted) this.seen.delete(id);
-    }
     return true;
   }
 
@@ -46,7 +37,8 @@ class ProcessedEventsService {
 
   clear(): void {
     this.seen.clear();
-    this.order = [];
+    this.ring.fill(undefined as unknown as string);
+    this.next = 0;
   }
 }
 

@@ -220,6 +220,15 @@ class MLAService:
 
                     logger.info(f"   Next version will be: {self.next_version}")
 
+                    # Otherwise the threshold sits at the config default
+                    # until the next retrain, un-anchoring it from the
+                    # model actually serving traffic.
+                    self.drift_detector.calibrate_f1_threshold(
+                        (latest_model_info.get("metrics") or {}).get("f1_score"),
+                        config.DRIFT_F1_MARGIN,
+                        config.MIN_DEPLOY_F1,
+                    )
+
                 else:
                     logger.warning("⚠️  XGBoost JSON booster not found - cannot load for A/B testing")
                     logger.warning("   First retraining will deploy without comparison")
@@ -285,25 +294,28 @@ class MLAService:
             logger.warning("Retraining already in progress, skipping...")
             return
 
-        # Without a cooldown a drift signal re-fires on every subsequent
-        # check: the detector window is only cleared on a *successful*
-        # deployment, so an A/B-rejected candidate leaves it full and the
-        # next check trips immediately — a retrain loop bounded only by
-        # training time.
-        elapsed = time.time() - self._last_retrain_attempt_at
-        if elapsed < config.RETRAIN_COOLDOWN_SECONDS:
-            logger.info(
-                "Drift detected but within the retrain cooldown (%.0fs of %ss elapsed) — skipping",
-                elapsed,
-                config.RETRAIN_COOLDOWN_SECONDS,
-            )
-            self._stats["drift_retrains_suppressed"] = (
-                self._stats.get("drift_retrains_suppressed", 0) + 1
-            )
-            return
-
-        self._last_retrain_attempt_at = time.time()
         self._run_training_pipeline(drift_metrics)
+
+    def _cooldown_blocks(self, reason: str) -> bool:
+        """
+        The detector window is only cleared on a *successful* deployment,
+        so an A/B-rejected candidate leaves it full and the next check
+        trips again immediately. An operator-requested retrain is an
+        explicit instruction and is never suppressed.
+        """
+        if reason in ("manual", "initial_training"):
+            return False
+
+        elapsed = time.time() - self._last_retrain_attempt_at
+        if elapsed >= config.RETRAIN_COOLDOWN_SECONDS:
+            return False
+
+        logger.info(
+            "Retrain trigger '%s' suppressed — %.0fs of the %ss cooldown elapsed",
+            reason, elapsed, config.RETRAIN_COOLDOWN_SECONDS,
+        )
+        self._stats["retrains_suppressed"] = self._stats.get("retrains_suppressed", 0) + 1
+        return True
 
     def _run_training_pipeline(self, drift_metrics):
         """Run the full training pipeline.
@@ -323,9 +335,6 @@ class MLAService:
         correct status + metrics instead of unconditionally marking
         every attempt "succeeded".
         """
-        self.retraining_in_progress = True
-        self._stats["retrainings_started"] += 1
-        self._stats["last_retraining_started_at"] = time.time()
         result: Dict[str, Any] = {
             "deployed": False,
             "metrics": None,
@@ -333,6 +342,19 @@ class MLAService:
             "failure_reason": None,
             "model_version": None,
         }
+
+        # Checked here rather than per-caller so drift and label-volume
+        # triggers can't each start a run in the same tick.
+        trigger = drift_metrics.get("reason", "drift")
+        if self._cooldown_blocks(trigger):
+            result["reason"] = "cooldown"
+            result["failure_reason"] = "within the retrain cooldown"
+            return result
+
+        self._last_retrain_attempt_at = time.time()
+        self.retraining_in_progress = True
+        self._stats["retrainings_started"] += 1
+        self._stats["last_retraining_started_at"] = time.time()
 
         try:
             logger.info("")
@@ -668,11 +690,18 @@ class MLAService:
             rows = conn.execute(
                 text(
                     'SELECT a."championScore", a."finalDecision", t."groundTruthFraud", '
-                    '       t.amount, t."accountAgeDays", t."sessionToTxnSeconds" '
+                    '       t.amount, t."accountAgeDays", t."sessionToTxnSeconds", '
+                    '       extract(epoch from t."groundTruthRecordedAt") AS recorded_at '
                     'FROM transactions t '
                     'JOIN "decisionAuditLog" a ON a."transactionId" = t."transactionId" '
                     'WHERE t."groundTruthRecordedAt" > to_timestamp(:mark) '
                     '  AND t."groundTruthFraud" IS NOT NULL '
+                    # Rule and breaker-fallback rows carry a score the
+                    # model never produced (0 for PRE rules, 1.0 for the
+                    # breaker), so scoring them as model predictions
+                    # would let a policy change or an outage trigger a
+                    # retrain. Matches the training loader's filter.
+                    '  AND (a."decisionSource" IS NULL OR a."decisionSource" = \'ML\') '
                     'ORDER BY t."groundTruthRecordedAt" ASC '
                     'LIMIT :limit'
                 ),
@@ -680,8 +709,9 @@ class MLAService:
             ).fetchall()
 
         fed = 0
+        newest_recorded_at = self._drift_feed_watermark
         for row in rows:
-            score, decision, actual, amount, account_age, session_secs = row
+            score, decision, actual, amount, account_age, session_secs, recorded_at = row
             features = {
                 name: float(value)
                 for name, value in (
@@ -694,13 +724,19 @@ class MLAService:
             self.drift_detector.update(
                 prediction=1 if str(decision).upper() == "DECLINE" else 0,
                 actual=int(bool(actual)),
-                probability=float(score or 0.0),
+                probability=float(score) if score is not None else 0.0,
                 features=features,
             )
             fed += 1
+            if recorded_at is not None:
+                newest_recorded_at = max(newest_recorded_at, float(recorded_at))
 
         if fed:
-            self._drift_feed_watermark = time.time()
+            # Advance to the newest row actually consumed, not to now:
+            # a backlog larger than the LIMIT would otherwise have its
+            # remainder skipped permanently, and the first poll after a
+            # cold start (watermark 0) would discard the entire history.
+            self._drift_feed_watermark = newest_recorded_at
             self._stats["drift_samples_fed"] = self._stats.get("drift_samples_fed", 0) + fed
             logger.info("Fed %d newly-labelled decisions into the drift windows", fed)
 

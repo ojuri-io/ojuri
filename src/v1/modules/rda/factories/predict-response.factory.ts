@@ -15,7 +15,7 @@ class PredictResponseFactory {
       fraud_probability: round4(ctx.mlScore),
       decision: ctx.finalDecision,
       decision_source: ctx.decisionSource,
-      reason_codes: ctx.reasonCodes,
+      reason_codes: ctx.reasonCodes ?? [],
       model_version: ctx.championVersion,
       threshold: ctx.threshold,
       rule: ctx.rule

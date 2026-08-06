@@ -1,16 +1,24 @@
+import { createHash } from "crypto";
 import fs from "fs";
 import path from "path";
 import { CalibrationSpec } from "./onnx.types";
 
 /**
- * Reads the isotonic breakpoints MLA bakes into a version's `meta.json`.
- * The paired `calibrator.npz` is numpy-native and deliberately not
- * parsed here — the JSON copy is the cross-language contract.
+ * Reads the sidecar `meta.json` MLA writes next to a model — but only if
+ * it describes *this* model. The documented manual deploy copies just
+ * the `.onnx`, so a stale meta.json left beside it would otherwise
+ * supply another booster's calibration and reason weights.
  */
 export function readModelMeta(modelFilePath: string): Record<string, unknown> | null {
   const metaPath = path.join(path.dirname(modelFilePath), "meta.json");
-  if (!fs.existsSync(metaPath)) return null;
-  return JSON.parse(fs.readFileSync(metaPath, "utf8")) as Record<string, unknown>;
+  if (!fs.existsSync(metaPath) || !fs.existsSync(modelFilePath)) return null;
+
+  const meta = JSON.parse(fs.readFileSync(metaPath, "utf8")) as Record<string, unknown>;
+  const declared = meta.sha256;
+  if (typeof declared !== "string") return meta;
+
+  const actual = createHash("sha256").update(fs.readFileSync(modelFilePath)).digest("hex");
+  return actual === declared ? meta : null;
 }
 
 /** Normalised gain importances for the reason-code features, if the

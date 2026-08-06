@@ -68,8 +68,8 @@ export interface PreRuleContextInput {
   threshold: number;
   championVersion: string;
   shadowVersion: string | null;
-  reasonCodes: ReasonCode[];
-  featuresSnapshot: Record<string, number>;
+  reasonCodes: ReasonCode[] | null;
+  featuresSnapshot: Record<string, number> | null;
   isDefault: boolean;
 }
 
@@ -87,8 +87,8 @@ export interface MlDecisionContextInput {
   championVersion: string;
   shadowVersion: string | null;
   shadowScore: number | null;
-  reasonCodes: ReasonCode[];
-  featuresSnapshot: Record<string, number>;
+  reasonCodes: ReasonCode[] | null;
+  featuresSnapshot: Record<string, number> | null;
   isDefault: boolean;
 }
 
@@ -106,7 +106,7 @@ export interface PredictDecisionContext {
   championVersion: string;
   shadowVersion: string | null;
   shadowScore: number | null;
-  reasonCodes: ReasonCode[];
-  featuresSnapshot: Record<string, number>;
+  reasonCodes: ReasonCode[] | null;
+  featuresSnapshot: Record<string, number> | null;
   isDefault: boolean;
 }

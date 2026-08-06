@@ -9,6 +9,19 @@ import AuditQueueBackpressureError from "@shared/error/audit-queue-backpressure.
 
 const log = createServiceLogger("AuditWriteQueue");
 
+// Postgres SQLSTATE classes worth retrying: connection failure,
+// insufficient resources, operator intervention, transaction rollback.
+// Anything else (undefined column, bad data, constraint violation) will
+// fail identically on every retry.
+const TRANSIENT_SQLSTATE_CLASSES = ["08", "53", "57", "40"];
+
+function isTransient(err: unknown): boolean {
+  const code = (err as { code?: unknown })?.code;
+  // No SQLSTATE at all is usually a driver/socket error — retry those.
+  if (typeof code !== "string") return true;
+  return TRANSIENT_SQLSTATE_CLASSES.some((cls) => code.startsWith(cls));
+}
+
 const DEFAULTS: AuditWriteQueueOptions = {
   capacity: Number(process.env.AUDIT_QUEUE_CAPACITY) || 50_000,
   flushIntervalMs: Number(process.env.AUDIT_QUEUE_FLUSH_MS) || 50,
@@ -103,33 +116,43 @@ class AuditWriteQueue {
       }
       this.consecutiveFailures = 0;
     } catch (err) {
-      // A transient Postgres blip used to discard the whole batch: the
-      // rows were already spliced out and never re-tried, so decisions
-      // returned to clients vanished from the audit trail. Put them back
-      // at the head, and only give up once the buffer would overflow.
       this.consecutiveFailures++;
-      const requeued = this.requeue(batch);
-      log.error("flush", "Audit batch write failed", {
+      metricsService.recordAuditWriteFailure("flush_error");
+
+      // Retrying a batch Postgres will never accept (missing column,
+      // bad data, failed constraint) blocks the queue head forever, and
+      // a full queue makes enqueue() throw — which would turn an audit
+      // outage into a total outage of the decision path. Only transient
+      // failures go back on the queue.
+      if (isTransient(err)) {
+        this.requeue(batch);
+        log.error("flush", "Audit batch write failed; retrying", {
+          err: String(err),
+          batchSize: batch.length,
+          consecutiveFailures: this.consecutiveFailures,
+        });
+        return;
+      }
+
+      metricsService.recordAuditWriteFailure("dropped", batch.length);
+      log.error("flush", "Audit batch rejected by Postgres; dropping to the log", {
         err: String(err),
         batchSize: batch.length,
-        requeued,
-        dropped: batch.length - requeued,
-        consecutiveFailures: this.consecutiveFailures,
+        deadLetter: batch.map((r) => ({ id: r.id, transactionId: r.transactionId })),
       });
-      metricsService.recordAuditWriteFailure("flush_error");
-      if (batch.length > requeued) {
-        metricsService.recordAuditWriteFailure("dropped", batch.length - requeued);
-      }
     } finally {
       this.flushing = false;
     }
   }
 
-  private requeue(batch: QueuedAuditRecord[]): number {
-    const room = Math.max(0, this.opts.capacity - this.buffer.length);
-    const keep = batch.slice(0, room);
-    this.buffer.unshift(...keep);
-    return keep.length;
+  private requeue(batch: QueuedAuditRecord[]): void {
+    const room = this.opts.capacity - this.buffer.length;
+    const dropped = batch.length - room;
+    if (dropped > 0) {
+      metricsService.recordAuditWriteFailure("dropped", dropped);
+      log.error("flush", "Audit buffer full; dropping oldest rows", { dropped });
+    }
+    this.buffer.unshift(...batch.slice(Math.max(0, dropped)));
   }
 }
 

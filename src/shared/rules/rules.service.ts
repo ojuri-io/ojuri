@@ -2,7 +2,7 @@ import type Redis from "ioredis";
 import { singleton } from "tsyringe";
 import { createServiceLogger } from "@shared/utils/logger/service-logger";
 import RedisClient from "@shared/redis-client/redis-client";
-import { collectVarPaths, evaluate } from "./evaluator";
+import { collectVarPaths, evaluate, hasStringHaystack } from "./evaluator";
 import { validateExpression } from "./rule-validation";
 import RuleRepo from "./repositories/rule.repo";
 import { Rule } from "./model/rule.model";
@@ -18,9 +18,9 @@ class RulesService {
   private preRules: RuleRecord[] = [];
   private postRules: RuleRecord[] = [];
   // Best (numerically lowest) priority among PRE rules that read a
-  // `features.*` path. A request-only hit may only short-circuit the
-  // feature load when it outranks every rule this pass cannot see.
-  private preFeatureDependentBestPriority: number = Number.POSITIVE_INFINITY;
+  // `features.*` path, split by whether they apply to every tenant.
+  private preFeatureBestPriorityShared: number = Number.POSITIVE_INFINITY;
+  private preFeatureBestPriorityByTenant: Map<string, number> = new Map();
   private timer: NodeJS.Timeout | null = null;
   private subscriber: Redis | null = null;
   private loaded = false;
@@ -79,10 +79,22 @@ class RulesService {
 
     this.preRules = pre;
     this.postRules = post;
-    this.preFeatureDependentBestPriority = pre
-      .filter((r) => !r.requestOnly)
-      .reduce((best, r) => Math.min(best, r.priority), Number.POSITIVE_INFINITY);
+    this.preFeatureBestPriorityShared = Number.POSITIVE_INFINITY;
+    this.preFeatureBestPriorityByTenant = new Map();
+    for (const rule of pre) {
+      if (rule.requestOnly) continue;
+      if (!rule.tenantId) {
+        this.preFeatureBestPriorityShared = Math.min(
+          this.preFeatureBestPriorityShared,
+          rule.priority
+        );
+        continue;
+      }
+      const current = this.preFeatureBestPriorityByTenant.get(rule.tenantId) ?? Infinity;
+      this.preFeatureBestPriorityByTenant.set(rule.tenantId, Math.min(current, rule.priority));
+    }
     this.loaded = true;
+    this.warnOnDeadRules([...pre, ...post]);
 
     log.debug("reload", "Rules reloaded", {
       pre: pre.length,
@@ -103,21 +115,30 @@ class RulesService {
 
   /**
    * PRE-stage pass over rules that read request fields only, run before
-   * the Redis feature load so a hit can skip it entirely.
-   *
-   * Returns a hit only when it outranks every feature-dependent PRE rule.
-   * Without that guard, short-circuiting here would let a low-priority
+   * the Redis feature load so a hit can skip it entirely. Only returns a
+   * hit that outranks every feature-dependent PRE rule this tenant can
+   * see — otherwise short-circuiting would let a low-priority
    * request-only rule beat a high-priority feature rule that the full
    * ordered pass would have matched first.
    */
   evaluateRequestOnlyPre(ctx: RuleContext): RuleHit | null {
+    const cutoff = this.featureDependentCutoff(ctx.tenant_id);
     for (const rule of this.preRules) {
       if (!rule.requestOnly) continue;
-      if (rule.priority >= this.preFeatureDependentBestPriority) break;
+      if (rule.priority >= cutoff) break;
       if (this.tenantMismatch(rule, ctx)) continue;
       if (this.matches(rule, ctx)) return { rule, stage: "PRE" as RuleStage };
     }
     return null;
+  }
+
+  // Scoped per tenant: one tenant's low-priority feature rule must not
+  // disable the short-circuit for every other tenant.
+  private featureDependentCutoff(tenantId: string | undefined): number {
+    const tenantBest = tenantId
+      ? this.preFeatureBestPriorityByTenant.get(tenantId) ?? Number.POSITIVE_INFINITY
+      : Number.POSITIVE_INFINITY;
+    return Math.min(this.preFeatureBestPriorityShared, tenantBest);
   }
 
   evaluate(stage: RuleStage, ctx: RuleContext): RuleHit | null {
@@ -127,6 +148,23 @@ class RulesService {
       if (this.matches(rule, ctx)) return { rule, stage };
     }
     return null;
+  }
+
+  /**
+   * Rules stored before `in` was restricted to array haystacks now
+   * evaluate false on every transaction. That is indistinguishable from
+   * "correctly not matching", so a fraud control can go dark silently —
+   * only save-time validation rejects the shape, and it never ran on
+   * rows that predate it.
+   */
+  private warnOnDeadRules(rules: RuleRecord[]): void {
+    for (const rule of rules) {
+      if (!hasStringHaystack(rule.expression)) continue;
+      log.error("reload", "Rule can never match: `in` with a non-array haystack", {
+        ruleId: rule.id,
+        ruleName: rule.name,
+      });
+    }
   }
 
   private tenantMismatch(rule: RuleRecord, ctx: RuleContext): boolean {

@@ -4,6 +4,9 @@ import { RuleExpression, RuleStage } from "./rule.types";
 import { RULE_OPERATORS } from "./evaluator";
 
 const FEATURE_PREFIX = "features.";
+const MAX_DEPTH = 32;
+const MAX_NODES = 500;
+const MAX_HAYSTACK = 200;
 
 /**
  * Context keys a rule may read. Mirrors `PredictService.buildRuleContext`;
@@ -47,19 +50,33 @@ export function knownVars(stage: RuleStage): Set<string> {
  */
 export function validateExpression(expr: RuleExpression, stage: RuleStage): void {
   const problems: string[] = [];
-  const allowed = knownVars(stage);
-  walk(expr, allowed, problems, 0);
+  walk(expr, knownVars(stage), problems, 0, { nodes: 0 });
   if (problems.length > 0) throw new RuleValidationError(problems);
 }
 
-function walk(expr: RuleExpression, allowed: Set<string>, problems: string[], depth: number): void {
-  if (depth > 32) {
-    problems.push("expression nests deeper than 32 levels");
+function walk(
+  expr: RuleExpression,
+  allowed: Set<string>,
+  problems: string[],
+  depth: number,
+  budget: { nodes: number }
+): void {
+  // Every saved rule is re-evaluated on each request, so an oversized
+  // expression is a standing cost on the decision path, not just a
+  // slow save.
+  if (++budget.nodes > MAX_NODES) {
+    problems.push(`expression exceeds ${MAX_NODES} nodes`);
+    return;
+  }
+  if (depth > MAX_DEPTH) {
+    problems.push(`expression nests deeper than ${MAX_DEPTH} levels`);
     return;
   }
   if (expr === null || typeof expr !== "object") return;
+  // An argument list is a container, not a nesting level — counting it
+  // would make `and`/`or` hit the cap at half the stated depth.
   if (Array.isArray(expr)) {
-    for (const e of expr) walk(e, allowed, problems, depth + 1);
+    for (const e of expr) walk(e, allowed, problems, depth, budget);
     return;
   }
 
@@ -97,11 +114,15 @@ function walk(expr: RuleExpression, allowed: Set<string>, problems: string[], de
       problems.push("'in' takes [needle, haystack]");
       return;
     }
-    if (!Array.isArray(args[1])) problems.push("'in' requires an array haystack");
-    walk(args[0] as RuleExpression, allowed, problems, depth + 1);
-    walk(args[1] as RuleExpression, allowed, problems, depth + 1);
+    if (!Array.isArray(args[1])) {
+      problems.push("'in' requires an array haystack");
+    } else if (args[1].length > MAX_HAYSTACK) {
+      problems.push(`'in' haystack exceeds ${MAX_HAYSTACK} entries`);
+    }
+    walk(args[0] as RuleExpression, allowed, problems, depth + 1, budget);
+    walk(args[1] as RuleExpression, allowed, problems, depth + 1, budget);
     return;
   }
 
-  walk(args as RuleExpression, allowed, problems, depth + 1);
+  walk(args as RuleExpression, allowed, problems, depth + 1, budget);
 }

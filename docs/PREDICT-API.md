@@ -211,11 +211,11 @@ your own features through here without touching the catalogue.
 | `fraud`             | boolean                                       | `decision === "DECLINE"`. |
 | `fraud_probability` | 0 ≤ x ≤ 1                                     | Champion-model probability, rounded to 4 dp. |
 | `decision`          | `ACCEPT` \| `DECLINE` \| `REVIEW`             | Final, post-rule. |
-| `decision_source`   | `ML` \| `PRE_RULE` \| `POST_RULE`             | Which layer made the call. |
+| `decision_source`   | `ML` \| `PRE_RULE` \| `POST_RULE` \| `BREAKER_FALLBACK` | Which layer made the call. `BREAKER_FALLBACK` means inference never ran — the score is a fail-safe constant, not a model output. |
 | `reason_codes`      | array                                         | Top contributing features. See [`docs/REASON-CODES.md`](REASON-CODES.md). |
 | `model_version`     | string                                        | The champion that scored this request. |
 | `threshold`         | number                                        | Threshold used for this segment + model. |
-| `rule`              | object \| undefined                           | Present when `decision_source !== "ML"`. |
+| `rule`              | object \| undefined                           | Present for `PRE_RULE` / `POST_RULE` only. |
 | `audit_id`          | uuid \| undefined                             | Foreign key into `decisionAuditLog`. Absent only when the audit write failed (which is swallowed by design — see [`docs/AUDIT.md`](AUDIT.md)). |
 | `latency_ms`        | number                                        | End-to-end service time, not including network. |
 | `timestamp`         | number                                        | Server-side reply time, Unix ms. |

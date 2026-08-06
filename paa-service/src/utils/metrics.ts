@@ -18,6 +18,7 @@ class MetricsService {
   private forcedGraphEvictions!: Counter<string>;
   private duplicateEventsSkipped!: Counter<string>;
   private velocityTruncations!: Counter<string>;
+  private velocityUserEvictions!: Counter<string>;
 
   // Redis metrics
   private redisUpdateSuccess!: Counter<string>;
@@ -99,6 +100,12 @@ class MetricsService {
       registers: [this.registry],
     });
 
+    this.velocityUserEvictions = new Counter({
+      name: "paa_velocity_user_evictions_total",
+      help: "Users dropped from velocity tracking by the global cap. Non-zero means the tracked-user set exceeds MAX_VELOCITY_USERS and those senders score against empty windows.",
+      registers: [this.registry],
+    });
+
     this.redisUpdateSuccess = new Counter({
       name: "paa_redis_updates_success_total",
       help: "Successful Redis updates",
@@ -155,6 +162,10 @@ class MetricsService {
 
   recordVelocityTruncation(count = 1) {
     this.velocityTruncations.inc(count);
+  }
+
+  recordVelocityUserEviction(count = 1) {
+    this.velocityUserEvictions.inc(count);
   }
 
   updateConsumerLag(partition: number, lag: number) {

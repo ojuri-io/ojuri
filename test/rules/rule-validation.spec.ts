@@ -50,6 +50,30 @@ describe("rule expression validation", () => {
     ).toThrow(/unknown operator/);
   });
 
+  // Every saved rule runs on every request, so an oversized expression
+  // is a standing cost on the decision path, not just a slow save.
+  it("rejects an expression with too many nodes", () => {
+    const wide = { or: Array.from({ length: 400 }, () => ({ ">=": [{ var: "amount" }, 1] })) };
+    expect(() => validateExpression(wide as RuleExpression, "PRE" as RuleStage)).toThrow(/nodes/);
+  });
+
+  it("rejects an oversized `in` haystack", () => {
+    const huge = { in: [{ var: "sender_id" }, Array.from({ length: 500 }, (_, i) => `s${i}`)] };
+    expect(() => validateExpression(huge as RuleExpression, "PRE" as RuleStage)).toThrow(/haystack/);
+  });
+
+  it("accepts nesting up to the documented depth for and/or chains", () => {
+    let expr: RuleExpression = { ">=": [{ var: "amount" }, 1] };
+    for (let i = 0; i < 20; i++) expr = { and: [expr] };
+    expect(() => validateExpression(expr, "PRE" as RuleStage)).not.toThrow();
+  });
+
+  it("rejects nesting past the depth cap", () => {
+    let expr: RuleExpression = { ">=": [{ var: "amount" }, 1] };
+    for (let i = 0; i < 40; i++) expr = { not: expr };
+    expect(() => validateExpression(expr, "PRE" as RuleStage)).toThrow(/nests deeper/);
+  });
+
   it("rejects a string haystack for `in`", () => {
     expect(() =>
       validateExpression({ in: [{ var: "ip_country" }, "NGNE"] }, "PRE" as RuleStage)

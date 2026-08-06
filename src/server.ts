@@ -163,6 +163,11 @@ process
     app.close();
     process.exit(1);
   })
+  // Node terminates on an unhandled rejection by default. A background
+  // promise losing its handler must not take the decision path down.
+  .on("unhandledRejection", (reason) => {
+    logger.error({ err: reason }, "Unhandled promise rejection");
+  })
   .on("SIGINT", () => gracefulShutdown("SIGINT"))
   .on("SIGTERM", () => gracefulShutdown("SIGTERM"));
 

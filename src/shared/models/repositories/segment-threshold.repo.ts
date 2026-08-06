@@ -39,12 +39,15 @@ class SegmentThresholdRepo extends BaseRepository<ISegmentThreshold, SegmentThre
       isActive: true,
     }));
 
-    const inserted = await SegmentThreshold.knex()(SegmentThreshold.tableName)
+    const result = await SegmentThreshold.knex()(SegmentThreshold.tableName)
       .insert(rows)
       .onConflict(["segment", "modelVersion"])
       .ignore();
 
-    return Array.isArray(inserted) ? inserted.length : rows.length;
+    // ON CONFLICT DO NOTHING skips existing rows, so the driver's
+    // rowCount is the only honest answer to "how many were copied".
+    if (Array.isArray(result)) return result.length;
+    return (result as { rowCount?: number })?.rowCount ?? 0;
   }
 
   async upsert(input: { segment: string; modelVersion: string; threshold: number }): Promise<void> {

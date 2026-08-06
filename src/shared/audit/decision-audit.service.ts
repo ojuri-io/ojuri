@@ -59,8 +59,11 @@ class DecisionAuditService {
     const result = await this.record(rec);
     if (result.kind === "ok") return result.id;
     if (result.kind === "duplicate") {
-      const existing = await this.repo.findLatestByTransactionId(rec.transactionId);
-      if (existing) return existing.id;
+      const existingId = await this.repo.findIdByTenantAndTransaction(
+        rec.tenantId ?? null,
+        rec.transactionId
+      );
+      if (existingId) return existingId;
     }
     throw new AuditPersistenceError(rec.transactionId);
   }
@@ -138,18 +141,9 @@ class DecisionAuditService {
       reason: input.reason ?? null,
     });
 
-    // Propagate the verified verdict to `transactions.groundTruthFraud`
-    // so MLA's next retrain uses this row as a real label instead of
-    // the system's own prior decision. This is the feedback loop:
-    // human review → ground truth → next model.
-    //
-    // Mapping: DECLINE override = "reviewer confirmed fraud" = true.
-    //          ACCEPT  override = "reviewer cleared it"      = false.
-    //
-    // Best-effort — a missing matching transactions row (e.g. PAA
-    // hadn't flushed yet) just means we'll wait for the next
-    // override on a later prediction; we don't fail the override
-    // on a label-write hiccup.
+    // Feeds MLA's next retrain a human-verified label instead of the
+    // system's own prior decision. Best-effort: a missing transactions
+    // row just means the label arrives with a later override.
     if (row) {
       try {
         await this.repo.writeGroundTruth({
