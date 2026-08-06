@@ -40,6 +40,10 @@ Five further defects found while validating them are tracked as OJR-22…26.
 | OJR-24 | MED  | Resilience    | Audit flush drops whole batches with no retry              | FIXED  |
 | OJR-25 | MED  | Performance   | Cap-driven graph prune rescans every node per insert       | FIXED  |
 | OJR-26 | LOW  | Correctness   | Readiness probe vectors use hardcoded catalogue indices    | FIXED  |
+| OJR-41 | MED  | ML            | Label-volume watermark resets to process start on restart  | OPEN   |
+| OJR-42 | MED  | Deployment    | dev compose omits MLA_SERVICE_TOKEN → registration 401     | OPEN   |
+| OJR-43 | HIGH | Deployment    | `:ro` models mounts break versioned-artefact hot-reload    | OPEN   |
+| OJR-44 | MED  | Correctness   | ACTIVE model predating boot is never applied on cold start | OPEN   |
 
 ## Second round — defects introduced by the first round
 
@@ -342,3 +346,77 @@ tradeoff; the fidelity gap remains.
 - Evidence: `src/shared/onnx/reason-codes.ts:27–40`
 - Suggested direction: regenerate spec weights from model feature importances at training
   time and ship them in `meta.json`.
+
+---
+
+## Findings from live stack validation — 2026-08-06/07
+
+Discovered while running RDA + PAA + MLA against the compose infra and exercising the
+full adopter lifecycle (load test → chargeback labels → automatic retrain → registration
+→ activation → hot-reload).
+
+### OJR-41 — Label-volume watermark resets to process start `MED`
+
+`_label_watermark = time.time()` at monitor start (main.py:658), so labels recorded while
+MLA was down never count toward `LABEL_RETRAIN_THRESHOLD`. Observed live: 2,400 fresh
+labels in Postgres, `labels_pending_retrain: 0` after an MLA restart. A nightly-batch
+chargeback flow that lands during a deploy loses its retrain trigger entirely.
+
+- Evidence: `mla-service/src/main.py:658, 758–766` · observed via `:9095/stats`
+- Suggested direction: initialise the watermark from the last completed retrain
+  (`retrainRuns` / `mlaSettings`), not process start.
+
+### OJR-42 — dev compose omits MLA_SERVICE_TOKEN `MED`
+
+`docker-compose.yml` passes `MLA_SERVICE_TOKEN` to every prod RDA service;
+`docker-compose.dev.yml` does not, so in the documented dev flow MLA's registration
+bridge gets 401 (`Invalid or expired token`) and every trained model requires manual
+registration. Observed live on a label-volume retrain.
+
+- Evidence: `docker-compose.dev.yml` (no `MLA_SERVICE_TOKEN`) vs `docker-compose.yml:66`
+- Suggested direction: add the env passthrough to `rda-dev`.
+
+### OJR-43 — `:ro` models mounts break versioned-artefact hot-reload `HIGH`
+
+All four RDA services (3 prod + dev) mount `./models:/app/models:ro`, but
+`applyActiveVersion` copies the versioned artefact into the canonical `MODEL_PATH`
+(`copyFile` + `rename`). Activating any model whose `sourceUri` is not already the
+canonical path fails with `EROFS`; the previous model keeps serving (fail-safe holds) but
+registry-driven hot-reload can never complete in the shipped topology. Only the legacy
+`cp` -into-canonical flow works read-only, because `resolved === modelPath` skips the copy.
+
+- Evidence: `docker-compose*.yml` models mounts · `src/shared/onnx/onnx.service.ts:550–556` ·
+  observed live: `EROFS: read-only file system, copyfile '/app/models/versions/v1.0/model.onnx'`
+- Suggested direction: load directly from the resolved versioned path and treat the
+  canonical copy as best-effort (warn on EROFS), or mount `models/` writable for RDA.
+
+### OJR-44 — ACTIVE model predating boot is never applied `MED`
+
+The registry's first `reload()` runs before `OnnxService` subscribes to `onActiveChange`,
+and later reloads see no change — so on cold start RDA serves whatever `MODEL_PATH`
+contains even when the registry says a different version is ACTIVE. Observed live: after
+an rda-dev restart with v1.0 ACTIVE, no `activeChange` fired until the status was cycled
+RETIRED → ACTIVE.
+
+- Evidence: `src/shared/onnx/onnx.service.ts:385–429` · `model-registry.service.ts:88–127`
+- Suggested direction: after subscribing, explicitly apply `registry.getChampion()` when
+  its version/sourceUri differs from the loaded artefact (mirror the existing initial-
+  shadow handling).
+
+### Validation notes (not defects)
+
+- Load test: 2,000 requests @16 concurrency, all HTTP 200, p50 28.9 ms / p95 51.7 / p99
+  84.5, ~516 RPS, zero breaker fallbacks (pre-fix contended baseline: p99 295 ms).
+- Warm pass: 0/400 decisions on default features — PAA → Redis → RDA loop closed.
+- PAA consumed exactly 2,000/2,000 (dedupe correct); leader-lease handover observed live
+  on nodemon restart (waiter acquired 1 s after the holder released).
+- OJR-01/21 verified end-to-end: `calibratedScore` recorded on audit rows in observe
+  mode while decisions stay on the raw score; response reason codes carry
+  `basis: MODEL_WEIGHTED` after activation.
+- The calibration probe correctly refused a weak retrained model (gap 0.10 < 0.15 →
+  `/readyz` DOWN, old model kept serving); context-sensitivity gap fell 0.9998 → 0.0372
+  with the new context-dropout training.
+- Config residue: `mla-service/.env:26` still pins `DRIFT_F1_THRESHOLD=0.92`, overriding
+  the branch's 0.4 fallback until the first champion-relative re-anchor.
+- Measured: 30/200 early-PRE audit rows lost their late feature/reason-code patch to the
+  batch flush race (the documented, metric-counted tradeoff — ~15% at this load shape).
