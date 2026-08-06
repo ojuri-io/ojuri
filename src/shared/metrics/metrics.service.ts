@@ -47,6 +47,7 @@ class MetricsService {
 
   // Audit log
   private auditWriteFailures!: Counter<string>;
+  private shadowScoresDropped!: Counter<string>;
 
   // Idempotency cache
   private idempotencyLookups!: Counter<string>;
@@ -204,6 +205,12 @@ class MetricsService {
       registers: [this.registry],
     });
 
+    this.shadowScoresDropped = new Counter({
+      name: "fraud_detection_shadow_scores_dropped_total",
+      help: "Shadow scores that resolved after the audit row had already flushed",
+      registers: [this.registry],
+    });
+
     this.idempotencyLookups = new Counter({
       name: "fraud_detection_idempotency_lookups_total",
       help: "Idempotency-Key lookups by outcome",
@@ -352,8 +359,15 @@ class MetricsService {
    * error so predictions still succeed, but it gets counted so a
    * Prometheus alert can fire on a sustained spike.
    */
-  recordAuditWriteFailure(op: "record" | "override" | "duplicate" | "backpressure" | "flush_error", count = 1) {
+  recordAuditWriteFailure(
+    op: "record" | "override" | "duplicate" | "backpressure" | "flush_error" | "dropped",
+    count = 1,
+  ) {
     this.auditWriteFailures.inc({ op }, count);
+  }
+
+  recordShadowScoreDropped(count = 1) {
+    this.shadowScoresDropped.inc(count);
   }
 
   recordIdempotencyLookup(outcome: "hit" | "miss" | "conflict" | "in_flight") {

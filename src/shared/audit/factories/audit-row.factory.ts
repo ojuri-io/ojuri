@@ -18,6 +18,7 @@ export interface AuditInsertRow {
   championModelVersion: string;
   shadowModelVersion: string | null;
   championScore: number;
+  calibratedScore: number | null;
   shadowScore: number | null;
   threshold: number;
   mlDecision: Decision.ACCEPT | Decision.DECLINE | Decision.REVIEW;
@@ -54,6 +55,7 @@ class AuditRowFactory {
     row.championModelVersion = rec.championModelVersion;
     row.shadowModelVersion = rec.shadowModelVersion ?? null;
     row.championScore = rec.championScore;
+    row.calibratedScore = rec.calibratedScore ?? null;
     row.shadowScore = rec.shadowScore ?? null;
     row.threshold = rec.threshold;
 

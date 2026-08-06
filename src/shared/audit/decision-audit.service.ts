@@ -6,6 +6,7 @@ import DecisionAuditRepo, { AuditListFilters } from "./repositories/decision-aud
 import { DecisionAudit } from "./model/decision-audit.model";
 import AuditWriteQueue from "./audit-write-queue";
 import { GroundTruthSource } from "@shared/enums/ground-truth-source.enum";
+import AuditPersistenceError from "@shared/error/audit-persistence.error";
 import { DecisionAuditRecord, DecisionAuditRecordResult } from "./decision-audit.types";
 
 export type { DecisionAuditRecord, DecisionAuditRecordResult };
@@ -34,6 +35,34 @@ class DecisionAuditService {
     const id = randomUUID();
     this.queue.enqueue({ ...rec, id });
     return id;
+  }
+
+  /**
+   * Late-binding enrichment for values resolved after the response was
+   * sent — shadow scores, and the feature snapshot for decisions that
+   * short-circuited before the feature load. If the row has already
+   * flushed the patch is dropped rather than issuing an UPDATE that
+   * would race the insert.
+   */
+  patchLate(auditId: string, fields: Partial<DecisionAuditRecord>): void {
+    if (!this.queue.patch(auditId, fields)) {
+      metricsService.recordShadowScoreDropped();
+    }
+  }
+
+  /**
+   * Persist-before-respond. Used when AUDIT_SYNC_WRITE is on: a decision
+   * that cannot be audited must not be returned as if it had been, so
+   * a write failure propagates instead of being swallowed.
+   */
+  async recordDurable(rec: DecisionAuditRecord): Promise<string> {
+    const result = await this.record(rec);
+    if (result.kind === "ok") return result.id;
+    if (result.kind === "duplicate") {
+      const existing = await this.repo.findLatestByTransactionId(rec.transactionId);
+      if (existing) return existing.id;
+    }
+    throw new AuditPersistenceError(rec.transactionId);
   }
 
   async record(rec: DecisionAuditRecord): Promise<DecisionAuditRecordResult> {

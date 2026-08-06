@@ -2,6 +2,7 @@ import { FastifyReply, FastifyRequest } from "fastify";
 import { injectable } from "tsyringe";
 import httpStatus from "http-status";
 import RulesService from "@shared/rules/rules.service";
+import RuleValidationError from "@shared/error/rule-validation.error";
 import { ErrorResponse, SuccessResponse } from "@shared/utils/response.util";
 import { createServiceLogger } from "@shared/utils/logger/service-logger";
 import { CreateRuleDto, UpdateRuleDto } from "../dtos/rule.dto";
@@ -18,6 +19,9 @@ class RulesController {
       const row = await this.rulesService.create({ ...req.body, createdBy });
       return res.code(httpStatus.CREATED).send(SuccessResponse("Rule created", row));
     } catch (err) {
+      if (err instanceof RuleValidationError) {
+        return res.code(err.statusCode).send(ErrorResponse(err.message));
+      }
       // Capture the full error context (message, code, stack, and the
       // sanitized body) so the next 500 in production logs surfaces
       // the actual cause. Common offenders for this endpoint:
@@ -50,7 +54,15 @@ class RulesController {
     req: FastifyRequest<{ Params: { id: string }; Body: UpdateRuleDto }>,
     res: FastifyReply
   ) => {
-    const row = await this.rulesService.update(req.params.id, req.body);
+    let row;
+    try {
+      row = await this.rulesService.update(req.params.id, req.body);
+    } catch (err) {
+      if (err instanceof RuleValidationError) {
+        return res.code(err.statusCode).send(ErrorResponse(err.message));
+      }
+      throw err;
+    }
     if (!row) {
       return res
         .code(httpStatus.BAD_REQUEST)

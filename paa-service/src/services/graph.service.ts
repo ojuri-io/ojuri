@@ -37,6 +37,7 @@ class GraphService {
   private readonly pagerankDamping: number;
   private readonly updateInterval: number;
   private readonly triangleRecomputeMinIntervalMs: number;
+  private readonly recomputeMinIntervalMs: number;
   private readonly pruneAgeMs = 30 * 24 * 60 * 60 * 1000;
   private readonly pruneIntervalMs = 60 * 60 * 1000;
   private readonly hubMinOutDegree = 10;
@@ -51,6 +52,7 @@ class GraphService {
     this.pagerankDamping = appConfig.paa.pagerankDamping;
     this.updateInterval = appConfig.paa.graphUpdateInterval;
     this.triangleRecomputeMinIntervalMs = appConfig.paa.triangleRecomputeMinIntervalMs;
+    this.recomputeMinIntervalMs = appConfig.paa.recomputeMinIntervalMs;
     this.startScheduledPrune();
   }
 
@@ -146,7 +148,19 @@ class GraphService {
     const timeSinceLastUpdate = now - this.lastPagerankUpdate;
 
     if (timeSinceLastUpdate > this.updateInterval) return true;
-    if (this.transactionCount > 0 && this.transactionCount % 100 === 0) return true;
+
+    // The volume trigger needs the same time gate as the triangle
+    // trigger. Ungated, at 1000 TPS it fires every 100 ms, and
+    // computeNetworkMetrics (PageRank 100 iterations + O(k²)-per-node
+    // clustering + Louvain) runs synchronously on the consumer thread —
+    // the worker recomputes near-continuously and stalls Kafka polling.
+    if (
+      this.transactionCount > 0 &&
+      this.transactionCount % 100 === 0 &&
+      timeSinceLastUpdate >= this.recomputeMinIntervalMs
+    ) {
+      return true;
+    }
 
     if (
       this.dirtyTriangleCount > 0 &&
@@ -432,41 +446,65 @@ class GraphService {
     if (this.maxEventTimestamp === 0) return;
 
     const cutoff = this.maxEventTimestamp - this.pruneAgeMs;
-    const nodesToRemove: string[] = [];
+    const stale: string[] = [];
+    const all: Array<{ node: string; lastSeen: number }> = [];
 
     this.graph.forEachNode((node, attrs) => {
-      if (attrs.lastSeen < cutoff) {
-        nodesToRemove.push(node);
+      if (attrs.lastSeen < cutoff) stale.push(node);
+      if (opts.capDriven) all.push({ node, lastSeen: attrs.lastSeen });
+    });
+
+    const byLastSeen = (a: string, b: string) =>
+      this.graph.getNodeAttributes(a).lastSeen - this.graph.getNodeAttributes(b).lastSeen;
+
+    if (!opts.capDriven) {
+      for (const node of stale.sort(byLastSeen)) this.graph.dropNode(node);
+      if (stale.length > 0) {
+        log.info("pruneOldNodes", "Pruned stale nodes from graph", {
+          nodesRemoved: stale.length,
+          cutoff,
+        });
       }
-    });
-
-    const ordered = nodesToRemove.sort((a, b) => {
-      return this.graph.getNodeAttributes(a).lastSeen - this.graph.getNodeAttributes(b).lastSeen;
-    });
-
-    // Cap-driven prunes only drop the oldest 10% to free room; the
-    // scheduled prune drops everything past the cutoff because it's
-    // bounded by traffic shape, not graph size.
-    const toDrop = opts.capDriven ? ordered.slice(0, Math.floor(this.maxNodes * 0.1)) : ordered;
-
-    for (const node of toDrop) {
-      this.graph.dropNode(node);
+      return;
     }
 
-    if (toDrop.length > 0) {
+    // MAX_GRAPH_NODES was a soft cap: cap-driven prunes only ever
+    // considered nodes older than the 30-day staleness cutoff, so a graph
+    // whose nodes were all recent evicted nothing and `ensureNode` added
+    // the new node anyway — unbounded growth to OOM. Fall back to true
+    // LRU so the cap actually binds.
+    const target = Math.max(1, Math.floor(this.maxNodes * 0.1));
+    const ordered = stale.length >= target ? stale.sort(byLastSeen) : null;
+    const toDrop = ordered
+      ? ordered.slice(0, target)
+      : all.sort((a, b) => a.lastSeen - b.lastSeen).slice(0, target).map((n) => n.node);
+
+    const forced = toDrop.length - Math.min(stale.length, toDrop.length);
+    for (const node of toDrop) this.graph.dropNode(node);
+
+    if (forced > 0) {
+      metricsService.recordForcedGraphEviction(forced);
+      log.warn("pruneOldNodes", "Cap-driven eviction removed non-stale nodes", {
+        nodesRemoved: toDrop.length,
+        forced,
+        staleAvailable: stale.length,
+        maxNodes: this.maxNodes,
+      });
+    } else if (toDrop.length > 0) {
       log.info("pruneOldNodes", "Pruned old nodes from graph", {
         nodesRemoved: toDrop.length,
-        eligible: nodesToRemove.length,
+        eligible: stale.length,
         cutoff,
-        capDriven: opts.capDriven,
+        capDriven: true,
       });
     }
   }
 
   private startScheduledPrune(): void {
-    setInterval(() => {
+    const timer = setInterval(() => {
       this.pruneOldNodes();
     }, this.pruneIntervalMs);
+    if (timer.unref) timer.unref();
   }
 
   getStats(): { nodes: number; edges: number; transactionCount: number } {

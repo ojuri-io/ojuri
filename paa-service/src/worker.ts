@@ -12,6 +12,8 @@ import { velocityService } from "@services/velocity.service";
 import { redisUpdateService } from "@services/redis-update.service";
 import { postgresService } from "@services/postgres.service";
 import { redisClient } from "@services/redis-client";
+import { processedEvents } from "@services/processed-events.service";
+import { leaderLease } from "@services/leader-lease.service";
 import { closeDatabase } from "@services/database";
 import { TransactionEvent, CombinedFeatures } from "@services/types";
 import appConfig from "@config/app.config";
@@ -37,6 +39,15 @@ async function processTransaction(event: TransactionEvent): Promise<void> {
       });
 
       try {
+        // Graph and velocity state are in-memory and not idempotent, so
+        // an at-least-once redelivery must not be applied twice.
+        if (!processedEvents.markIfNew(event.transaction_id)) {
+          log.debug("processTransaction", "Duplicate event — skipping in-memory update", {
+            transactionId: event.transaction_id,
+          });
+          return;
+        }
+
         // 1. Update graph with new transaction
         log.debug("processTransaction", "Updating transaction graph");
         graphService.addTransaction(event);
@@ -260,12 +271,9 @@ function startLagMonitoring(): void {
   }, 30000);
 }
 
-// PAA holds the graph + velocity windows in process memory. A second
-// member in the consumer group splits the partition assignment, so
-// each replica's PageRank/Louvain runs on a partial graph and rings
-// crossing partitions become invisible. We don't refuse to start
-// (rolling restarts briefly overlap by design) — we surface the
-// breach loudly so ops sees it.
+// Backstop observability for the leader lease: the lease fences new
+// instances, but a group member that predates it (or a deployment with
+// PAA_REQUIRE_LEADER_LEASE=false) still needs to be visible.
 function startSingletonGuard(): void {
   const tick = async () => {
     if (isShuttingDown) return;
@@ -300,6 +308,9 @@ async function shutdown(metricsServer: http.Server): Promise<void> {
 
   try {
     await kafkaConsumer.disconnect();
+    // Before dropping the Redis connection, so the successor can take
+    // over immediately instead of waiting out the TTL.
+    await leaderLease.release();
     redisUpdateService.stop();
     await postgresService.stop();
     await redisClient.disconnect();
@@ -345,6 +356,23 @@ async function main(): Promise<void> {
       log.error("main", "Redis not ready — early feature writes will fail until it connects", {
         error: err instanceof Error ? err.message : String(err),
       });
+    }
+
+    // Fence before consuming. A second replica would split the partition
+    // assignment and compute graph metrics over half the graph, writing
+    // degraded features to Redis for RDA's decision path.
+    if (appConfig.paa.requireLeaderLease) {
+      const acquired = await leaderLease.acquire();
+      if (!acquired) {
+        log.error("main", "Exiting: another PAA instance is the leader. PAA is a singleton.");
+        process.exit(1);
+      }
+      leaderLease.startRenewal(() => {
+        log.error("main", "Leader lease lost — shutting down to avoid a split graph");
+        shutdown(metricsServer);
+      });
+    } else {
+      log.warn("main", "PAA_REQUIRE_LEADER_LEASE=false — singleton fencing is disabled");
     }
 
     // Connect to Kafka

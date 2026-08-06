@@ -1,4 +1,6 @@
+import appConfig from "@config/app.config";
 import { createServiceLogger } from "@utils/service-logger";
+import { metricsService } from "@utils/metrics";
 import { TransactionEvent, VelocityMetrics, PairVelocityMetrics } from "./types";
 
 const log = createServiceLogger("VelocityService");
@@ -20,9 +22,14 @@ class VelocityService {
   private readonly ONE_DAY = 24 * 60 * 60 * 1000;
   private readonly SEVEN_DAYS = 7 * 24 * 60 * 60 * 1000;
   private readonly THIRTY_DAYS = 30 * 24 * 60 * 60 * 1000;
-  private readonly MAX_TRANSACTIONS_PER_USER = 1000;
+  // Memory backstop only. Retention is time-based: a 1000-record FIFO
+  // against 30-day windows truncated exactly the highest-velocity
+  // senders — the population fraud detection cares most about — so
+  // amount_mean_30d and velocity_7d were computed on a partial tail.
+  private readonly maxTransactionsPerUser: number;
 
   constructor() {
+    this.maxTransactionsPerUser = appConfig.paa.maxTransactionsPerUser;
     this.startPeriodicCleanup();
   }
 
@@ -34,15 +41,45 @@ class VelocityService {
       receiver: event.receiver_id,
     };
 
-    if (!this.userTransactions.has(event.sender_id)) {
-      this.userTransactions.set(event.sender_id, []);
+    let transactions = this.userTransactions.get(event.sender_id);
+    if (!transactions) {
+      transactions = [];
+      this.userTransactions.set(event.sender_id, transactions);
     }
 
-    const transactions = this.userTransactions.get(event.sender_id)!;
-    transactions.push(record);
+    this.insertAscending(transactions, record);
+    this.evictOutOfWindow(transactions, record.timestamp);
+  }
 
-    if (transactions.length > this.MAX_TRANSACTIONS_PER_USER) {
-      transactions.shift();
+  // Kept sorted on write so reads never pay a sort, and so a late-
+  // arriving event is placed by its timestamp instead of landing at the
+  // tail and evicting the newest record.
+  private insertAscending(transactions: TransactionRecord[], record: TransactionRecord): void {
+    const last = transactions[transactions.length - 1];
+    if (!last || record.timestamp >= last.timestamp) {
+      transactions.push(record);
+      return;
+    }
+    let lo = 0;
+    let hi = transactions.length;
+    while (lo < hi) {
+      const mid = (lo + hi) >> 1;
+      if (transactions[mid]!.timestamp <= record.timestamp) lo = mid + 1;
+      else hi = mid;
+    }
+    transactions.splice(lo, 0, record);
+  }
+
+  private evictOutOfWindow(transactions: TransactionRecord[], now: number): void {
+    const cutoff = now - this.THIRTY_DAYS;
+    let stale = 0;
+    while (stale < transactions.length && transactions[stale]!.timestamp < cutoff) stale++;
+    if (stale > 0) transactions.splice(0, stale);
+
+    const overflow = transactions.length - this.maxTransactionsPerUser;
+    if (overflow > 0) {
+      transactions.splice(0, overflow);
+      metricsService.recordVelocityTruncation(overflow);
     }
   }
 
@@ -53,7 +90,8 @@ class VelocityService {
       return this.getDefaultMetrics();
     }
 
-    const sorted = [...transactions].sort((a, b) => b.timestamp - a.timestamp);
+    // Stored ascending; every helper below expects newest-first.
+    const sorted = transactions.slice().reverse();
 
     const velocity1m = this.countInWindow(sorted, currentTimestamp, this.ONE_MINUTE);
     const velocity5m = this.countInWindow(sorted, currentTimestamp, this.FIVE_MINUTES);
@@ -103,7 +141,7 @@ class VelocityService {
   ): PairVelocityMetrics {
     const forward = (this.userTransactions.get(senderId) ?? [])
       .filter((txn) => txn.receiver === receiverId)
-      .sort((a, b) => b.timestamp - a.timestamp);
+      .reverse();
     const reverse = (this.userTransactions.get(receiverId) ?? []).filter(
       (txn) => txn.receiver === senderId
     );
@@ -229,9 +267,10 @@ class VelocityService {
   }
 
   private startPeriodicCleanup(): void {
-    setInterval(() => {
+    const timer = setInterval(() => {
       this.cleanupOldTransactions();
     }, this.ONE_HOUR);
+    if (timer.unref) timer.unref();
   }
 
   private cleanupOldTransactions(): void {

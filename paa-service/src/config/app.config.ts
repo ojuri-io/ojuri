@@ -24,7 +24,14 @@ const appConfig = {
     batchSize: Number(process.env.BATCH_SIZE) || 100,
     maxGraphNodes: Number(process.env.MAX_GRAPH_NODES) || 1000000,
     triangleRecomputeMinIntervalMs: Number(process.env.TRIANGLE_RECOMPUTE_MIN_INTERVAL_MS) || 10000,
+    recomputeMinIntervalMs: Number(process.env.GRAPH_RECOMPUTE_MIN_INTERVAL_MS) || 30000,
     fraudLabelPollIntervalMs: Number(process.env.FRAUD_LABEL_POLL_INTERVAL_MS) || 300000,
+    dedupeWindowSize: Number(process.env.PAA_DEDUPE_WINDOW_SIZE) || 500000,
+    maxTransactionsPerUser: Number(process.env.MAX_TRANSACTIONS_PER_USER) || 50000,
+    // Longer than the renew interval so a rolling restart's deliberate
+    // overlap resolves without flapping.
+    leaderLeaseTtlMs: Number(process.env.PAA_LEADER_LEASE_TTL_MS) || 30000,
+    requireLeaderLease: process.env.PAA_REQUIRE_LEADER_LEASE !== "false",
   },
   metrics: {
     port: Number(process.env.METRICS_PORT) || 9090,

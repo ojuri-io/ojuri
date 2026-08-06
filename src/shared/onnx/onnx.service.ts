@@ -6,7 +6,12 @@ import { metricsService } from "@shared/metrics/metrics.service";
 import { createCircuitBreaker } from "@shared/circuit-breaker/circuit-breaker";
 import type CircuitBreaker from "opossum";
 import type { ModelVersion } from "@shared/models/model/model-version.model";
+import { loadCatalog } from "@shared/features/feature-catalog";
+import { applyCalibration, loadCalibration, loadReasonWeights } from "./calibration";
+import { setModelWeights } from "./reason-codes";
+import { CalibrationSpec, InferenceOutcome } from "./onnx.types";
 import fs from "fs";
+import fsp from "fs/promises";
 import path from "path";
 
 const onnxLogger = createServiceLogger("OnnxService");
@@ -48,6 +53,7 @@ class OnnxService {
   private isCalibrationHealthy: boolean = false;
   private contextSensitivityGap: number | null = null;
   private unsubscribeActiveChange: (() => void) | null = null;
+  private calibration: CalibrationSpec | null = null;
 
   constructor() {
     this.modelPath = path.resolve(appConfig.onnx.modelPath);
@@ -64,21 +70,64 @@ class OnnxService {
   private setupCircuitBreaker(): void {
     // Create circuit breaker for inference
     this.inferenceCircuitBreaker = createCircuitBreaker(
-      async (features: Float32Array) => this.runInference(features),
+      async (features: Float32Array): Promise<InferenceOutcome> => {
+        const score = await this.runInference(features);
+        return { score, calibratedScore: this.calibrate(score), degraded: false };
+      },
       {
         name: "onnx-inference",
         timeout: appConfig.circuitBreaker.onnx.timeout,
         errorThresholdPercentage: appConfig.circuitBreaker.onnx.errorThresholdPercentage,
         resetTimeout: appConfig.circuitBreaker.onnx.resetTimeout,
-        fallback: () => {
-          // FAIL-CLOSED policy - decline all transactions when model fails
-          onnxLogger.error("fallback", "ONNX circuit breaker fallback triggered - declining transaction", {
+        // `degraded` is what makes the fallback distinguishable downstream:
+        // without it an audit row cannot tell "the model scored 1.0" from
+        // "inference never ran". The caller — not the breaker — decides
+        // what a degraded score means for the decision.
+        fallback: (): InferenceOutcome => {
+          onnxLogger.error("fallback", "ONNX circuit breaker fallback triggered", {
             traceId: TraceContext.getTraceId(),
           });
-          return 1.0; // Return max probability to trigger decline
+          return { score: 1.0, calibratedScore: null, degraded: true };
         },
       }
     );
+  }
+
+  private calibrate(raw: number): number | null {
+    return this.calibration ? applyCalibration(this.calibration, raw) : null;
+  }
+
+  private loadCalibrationFor(modelFilePath: string): void {
+    try {
+      const weights = loadReasonWeights(modelFilePath);
+      setModelWeights(weights);
+      if (weights) {
+        onnxLogger.success("loadCalibration", "Reason-code weights taken from model importances", {
+          features: Object.keys(weights).length,
+        });
+      }
+      this.calibration = loadCalibration(modelFilePath);
+      if (this.calibration) {
+        onnxLogger.success("loadCalibration", "Isotonic calibration loaded", {
+          breakpoints: this.calibration.xThresholds.length,
+          mode: appConfig.onnx.calibrationMode,
+        });
+      } else {
+        onnxLogger.info("loadCalibration", "No calibration block in meta.json — serving raw scores", {
+          modelFilePath,
+        });
+      }
+    } catch (err) {
+      this.calibration = null;
+      setModelWeights(null);
+      onnxLogger.warn("loadCalibration", "Calibration load failed — serving raw scores", {
+        error: err instanceof Error ? err.message : String(err),
+      });
+    }
+  }
+
+  hasCalibration(): boolean {
+    return this.calibration !== null;
   }
 
   /**
@@ -86,6 +135,7 @@ class OnnxService {
    */
   async initialize(): Promise<void> {
     try {
+      this.loadCalibrationFor(this.modelPath);
       await this.loadModel();
       await this.runCalibrationProbe();
       await this.runContextSensitivityProbe();
@@ -242,58 +292,77 @@ class OnnxService {
   }
 
   /**
-   * One plausible mid-size transfer, twice. Indices follow the v1
-   * catalogue; only integration-context positions vary between the
-   * two variants.
+   * Probe vectors are addressed by catalogue NAME, never by literal
+   * index: an adopter overlay changes both the width and (on a base
+   * catalogue revision) the positions, and a probe silently reading
+   * the wrong slots would still report a confident healthy/unhealthy
+   * verdict.
    */
-  private buildContextProbeVector(opts: { context: boolean }): Float32Array {
-    const dim = Number(process.env.MODEL_INPUT_DIMENSION) || 64;
+  private buildVector(values: Record<string, number>): Float32Array {
+    const catalog = loadCatalog();
+    const dim = Math.max(catalog.inputDimension, Number(process.env.MODEL_INPUT_DIMENSION) || 0);
     const v = new Float32Array(dim);
-    v[26] = 5000;     // amount
-    v[28] = 4;        // transaction_type_code (TRANSFER)
-    v[31] = 0;        // is_inflow
-    v[35] = 400;      // account_age_days
-    if (opts.context) {
-      v[29] = 2;      // channel_code (MOBILE)
-      v[33] = 1;      // currency_code (NGN)
-      v[39] = 1;      // is_authenticated
-      v[53] = 1;      // device_is_trusted
-      v[57] = 120;    // session_to_txn_seconds
+    for (const [name, value] of Object.entries(values)) {
+      const feature = catalog.byName.get(name);
+      if (!feature) {
+        throw new Error(`probe vector references unknown catalogue feature '${name}'`);
+      }
+      v[feature.index] = value;
     }
     return v;
   }
 
   /**
-   * Build a 64-dim probe vector at catalogue positions. The values are
-   * chosen to be unambiguously legit or fraud along several axes any
-   * sensibly-trained model picks up — small amount + authenticated +
-   * trusted device + mature account + domestic for legit; vice versa
-   * for fraud. The vector itself never enters production; it's used
+   * One plausible mid-size transfer, twice. Only integration-context
+   * fields vary between the two variants.
+   */
+  private buildContextProbeVector(opts: { context: boolean }): Float32Array {
+    const base = {
+      amount: 5000,
+      transaction_type_code: 4,
+      is_inflow: 0,
+      account_age_days: 400,
+    };
+    if (!opts.context) return this.buildVector(base);
+    return this.buildVector({
+      ...base,
+      channel_code: 2,
+      currency_code: 1,
+      is_authenticated: 1,
+      device_is_trusted: 1,
+      session_to_txn_seconds: 120,
+    });
+  }
+
+  /**
+   * Values are chosen to be unambiguously legit or fraud along several
+   * axes any sensibly-trained model picks up — small amount +
+   * authenticated + trusted device + mature account for legit; vice
+   * versa for fraud. The vector never enters production; it's used
    * only inside the calibration probe.
    */
   private buildProbeVector(opts: { fraud: boolean }): Float32Array {
-    const dim = Number(process.env.MODEL_INPUT_DIMENSION) || 64;
-    const v = new Float32Array(dim);
-    if (opts.fraud) {
-      v[26] = 850000;   // amount
-      v[28] = 4;        // transaction_type_code (CASH_OUT-ish)
-      v[31] = 0;        // is_inflow=false
-      v[35] = 1;        // account_age_days=1
-      v[39] = 0;        // is_authenticated=false
-      v[52] = 1;        // ip_is_vpn=true
-      v[53] = 0;        // device_is_trusted=false
-      v[57] = 1;        // session_to_txn_seconds=1
-    } else {
-      v[26] = 42.5;     // amount
-      v[28] = 2;        // transaction_type_code (PAYMENT-ish)
-      v[31] = 0;        // is_inflow
-      v[35] = 730;      // account_age_days
-      v[39] = 1;        // is_authenticated=true
-      v[52] = 0;        // ip_is_vpn=false
-      v[53] = 1;        // device_is_trusted=true
-      v[57] = 180;      // session_to_txn_seconds
-    }
-    return v;
+    return opts.fraud
+      ? this.buildVector({
+          amount: 850000,
+          transaction_type_code: 4,
+          is_inflow: 0,
+          account_age_days: 1,
+          is_authenticated: 0,
+          ip_is_vpn: 1,
+          device_is_trusted: 0,
+          session_to_txn_seconds: 1,
+        })
+      : this.buildVector({
+          amount: 42.5,
+          transaction_type_code: 2,
+          is_inflow: 0,
+          account_age_days: 730,
+          is_authenticated: 1,
+          ip_is_vpn: 0,
+          device_is_trusted: 1,
+          session_to_txn_seconds: 180,
+        });
   }
 
   /**
@@ -448,7 +517,6 @@ class OnnxService {
     if (!sourceUri) return;
 
     if (metadata && typeof metadata.feature_schema_version === "string") {
-      const { loadCatalog } = await import("@shared/features/feature-catalog");
       const expected = loadCatalog().schemaVersion;
       const reported = metadata.feature_schema_version as string;
       if (reported !== expected) {
@@ -482,10 +550,13 @@ class OnnxService {
     // written file.
     if (resolved !== this.modelPath) {
       const tempPath = `${this.modelPath}.tmp`;
-      fs.copyFileSync(resolved, tempPath);
-      fs.renameSync(tempPath, this.modelPath);
+      await fsp.copyFile(resolved, tempPath);
+      await fsp.rename(tempPath, this.modelPath);
     }
 
+    // Calibration travels with the version directory, not the canonical
+    // MODEL_PATH copy — resolve it from the source artefact.
+    this.loadCalibrationFor(resolved);
     await this.loadModel();
     // Re-probe after every hot-swap. A model that loads at the ONNX-runtime
     // level can still be wrong-dim, constant, or inverted at the prediction
@@ -624,7 +695,7 @@ class OnnxService {
    * against a wider dimension via `MODEL_INPUT_DIMENSION`.
    * @returns Fraud probability (0.0 - 1.0)
    */
-  async predict(features: Float32Array): Promise<number> {
+  async predict(features: Float32Array): Promise<InferenceOutcome> {
     return this.inferenceCircuitBreaker.fire(features);
   }
 

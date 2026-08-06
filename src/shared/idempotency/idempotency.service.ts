@@ -176,10 +176,25 @@ class IdempotencyService {
   // idempotency response cache so a transaction_id can't be replayed
   // for the same window.
   async reserveTransactionId(tenantId: string, transactionId: string): Promise<boolean> {
-    const key = `ojuri:idem:txn:${tenantId}:${transactionId}`;
     const ttlSec = Math.max(60, Math.floor(IDEMPOTENCY_TTL_MS / 1000));
-    const set = await this.redis.get().set(key, "1", "EX", ttlSec, "NX");
+    const set = await this.redis.get().set(txnKey(tenantId, transactionId), "1", "EX", ttlSec, "NX");
     return set === "OK";
+  }
+
+  /**
+   * Drop a reservation whose prediction failed. Without this a 5xx keeps
+   * the transaction_id claimed for the full TTL, so the client's retry
+   * gets 409 with no cached response to replay.
+   */
+  async releaseTransactionId(tenantId: string, transactionId: string): Promise<void> {
+    try {
+      await this.redis.get().del(txnKey(tenantId, transactionId));
+    } catch (err) {
+      log.warn("releaseTransactionId", "Failed to release reservation; it will expire on TTL", {
+        transactionId,
+        err: String(err),
+      });
+    }
   }
 
   private async enforceTenantCap(tenantId: string): Promise<void> {
@@ -224,6 +239,10 @@ function lockKey(input: IdempotencyInput): string {
 
 function tenantSetKey(tenantId: string): string {
   return `ojuri:idem:tenant:${tenantId}`;
+}
+
+function txnKey(tenantId: string, transactionId: string): string {
+  return `ojuri:idem:txn:${tenantId}:${transactionId}`;
 }
 
 /**

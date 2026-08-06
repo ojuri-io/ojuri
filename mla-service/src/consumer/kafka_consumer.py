@@ -21,6 +21,14 @@ logger = get_logger()  # Use the configured MLA logger
 PSI_FEATURE_FIELDS = ('amount', 'account_age_days', 'session_to_txn_seconds')
 
 
+def _first_present(payload: dict, *keys):
+    """First key actually present, preserving falsy values."""
+    for key in keys:
+        if key in payload:
+            return payload[key]
+    return None
+
+
 def extract_psi_features(transaction: dict) -> dict:
     """
     Pull PSI-monitorable features from a transaction event. Absent
@@ -158,10 +166,21 @@ class KafkaConsumerService:
                                 transaction = message.value
                                 
                                 # Extract fields
-                                transaction_id = transaction.get('transaction_id') or transaction.get('transactionId')
+                                transaction_id = _first_present(
+                                    transaction, 'transaction_id', 'transactionId'
+                                )
                                 fraud_prediction = int(transaction.get('fraud', False))
-                                fraud_probability = transaction.get('fraud_probability') or transaction.get('fraudProbability', 0.0)
-                                fraud_label = transaction.get('fraud_label') or transaction.get('fraudLabel')
+                                fraud_probability = _first_present(
+                                    transaction, 'fraud_probability', 'fraudProbability'
+                                ) or 0.0
+                                # `or` would collapse a legitimate
+                                # False/0 label to the next key and then
+                                # to None, so only fraud=True labels
+                                # would ever reach the drift window —
+                                # F1 computed over a single class.
+                                fraud_label = _first_present(
+                                    transaction, 'fraud_label', 'fraudLabel'
+                                )
                                 
                                 # Log every message for debugging (first 10, then every 100th)
                                 total = labeled_count + unlabeled_count

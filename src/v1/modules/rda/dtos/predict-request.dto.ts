@@ -98,7 +98,7 @@ export interface PredictResponseDto {
   fraud: boolean;
   fraud_probability: number;
   decision: "ACCEPT" | "DECLINE" | "REVIEW";
-  decision_source: "ML" | "PRE_RULE" | "POST_RULE";
+  decision_source: "ML" | "PRE_RULE" | "POST_RULE" | "BREAKER_FALLBACK";
   reason_codes: ReasonCodeDto[];
   model_version: string;
   threshold: number;

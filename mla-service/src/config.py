@@ -58,7 +58,15 @@ class Config:
     # ═══════════════════════════════════════════════════════════════
     # Drift Detection Thresholds
     # ═══════════════════════════════════════════════════════════════
-    DRIFT_F1_THRESHOLD: float = float(os.getenv('DRIFT_F1_THRESHOLD', '0.92'))
+    # An absolute 0.92 floor is unreachable for this problem — the repo's
+    # own measured realistic F1 is 0.554 (IEEE-CIS) against a deploy gate
+    # of MIN_DEPLOY_F1=0.3 — so every check would report drift. The
+    # threshold is derived at runtime from the deployed model's own
+    # validation F1 minus a margin; this value is only the fallback for
+    # when no champion metrics are available.
+    DRIFT_F1_THRESHOLD: float = float(os.getenv('DRIFT_F1_THRESHOLD', '0.4'))
+    DRIFT_F1_MARGIN: float = float(os.getenv('DRIFT_F1_MARGIN', '0.05'))
+    RETRAIN_COOLDOWN_SECONDS: int = int(os.getenv('RETRAIN_COOLDOWN_SECONDS', '21600'))
     DRIFT_PSI_THRESHOLD: float = float(os.getenv('DRIFT_PSI_THRESHOLD', '0.25'))
     DRIFT_WINDOW_SIZE: int = int(os.getenv('DRIFT_WINDOW_SIZE', '1000'))
     
@@ -97,6 +105,7 @@ class Config:
     XGBOOST_LEARNING_RATE: float = float(os.getenv('XGBOOST_LEARNING_RATE', '0.1'))
     XGBOOST_SUBSAMPLE: float = float(os.getenv('XGBOOST_SUBSAMPLE', '0.8'))
     XGBOOST_COLSAMPLE_BYTREE: float = float(os.getenv('XGBOOST_COLSAMPLE_BYTREE', '0.8'))
+    XGBOOST_EARLY_STOPPING_ROUNDS: int = int(os.getenv('XGBOOST_EARLY_STOPPING_ROUNDS', '20'))
     
     # ═══════════════════════════════════════════════════════════════
     # Model Registry — filesystem-backed

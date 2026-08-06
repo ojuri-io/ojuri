@@ -88,7 +88,7 @@ RDA's `predict` flow is: Redis feature lookup → ONNX inference → Kafka publi
 
 PAA is the writer: it consumes `transactions.completed`, updates an in-memory transaction graph (`graphology`) and velocity windows, then queues batched writes to Redis and Postgres. Graph metadata is snapshotted for both sender and receiver on every event into a Map keyed by `userId`, then bulk-upserted to Postgres on the standard batch flush (size 100 / 10 s) — the Map dedupes hot users so Postgres pressure tracks unique-user rate, not event rate. Redis writes feed the next RDA prediction.
 
-**PAA is a singleton — do not scale it.** The graph and velocity state live in process memory. A second member in the `pattern-analysis` consumer group splits the partition assignment, so each replica runs PageRank/Louvain on a partial graph and rings whose members hash to different partitions become invisible. The worker logs an ERROR and the `paa_group_members` Prometheus gauge exceeds 1 if a second instance ever joins the group.
+**PAA is a singleton — do not scale it.** The graph and velocity state live in process memory. A second member in the `pattern-analysis` consumer group splits the partition assignment, so each replica runs PageRank/Louvain on a partial graph and rings whose members hash to different partitions become invisible. This is now **fenced, not just detected**: PAA takes a Redis leader lease (`ojuri:paa:leader`, `PAA_LEADER_LEASE_TTL_MS`, default 30 s) before it starts consuming, and a second instance exits rather than joining the group. A graceful shutdown releases the lease so a rolling restart hands over immediately instead of waiting out the TTL; losing the lease mid-run triggers shutdown. `PAA_REQUIRE_LEADER_LEASE=false` disables the fence. The `paa_group_members` gauge and the ERROR log remain as backstop observability.
 
 ### Blocked-transaction investigation path
 When `PredictService` returns `decision === "DECLINE"`, RDA publishes the same `TransactionEvent` to **two** topics fire-and-forget: the primary `transactions.completed` (consumed by PAA + MLA, partitioned by `sender_id` for per-user ordering) and `transactions.blocked` (consumed only by FIA, partitioned by `transaction_id` so a single high-fraud sender does not pin all FIA work to one partition). The dual publish is intentional — FIA runs at LLM-inference latencies (seconds) and must never share a queue with PAA's millisecond pipeline.
@@ -102,6 +102,8 @@ MLA monitors F1-score and PSI on the `amount` feature (thresholds: `DRIFT_F1_THR
 
 ### Resilience
 RDA wraps Redis feature retrieval and ONNX inference in `opossum` circuit breakers (see `src/shared/circuit-breaker/`). When breakers open, predictions still succeed but use defaults — design for graceful degradation, not failure.
+
+**The ONNX breaker fallback is not a DECLINE.** opossum fires the fallback on every failure *including a per-call timeout*, so `CB_ONNX_TIMEOUT` sitting below the service's own measured p95 under concurrency turned ordinary contention into customer-facing declines. The timeout now defaults to 750 ms (error threshold 25%), and the fallback returns `{ degraded: true }` rather than a bare `1.0`. `PredictService` maps that to `CB_ONNX_FALLBACK_DECISION` (default `REVIEW` — route the unscored transaction to a human, don't decline a customer on infrastructure failure) and stamps `decisionSource = BREAKER_FALLBACK`, so an audit row can distinguish "the model scored 1.0" from "inference never ran". Degraded declines are **not** published to `transactions.blocked`: there is no model signal for FIA to investigate, and during an outage every request would otherwise queue an LLM report.
 
 ### Health endpoints
 - RDA: `GET /livez`, `GET /readyz`, predict at `POST /v1/predict`, metrics at `GET /v1/metrics` (route version is `/v1`, **not** `/api/v1`).
@@ -171,8 +173,14 @@ under `src/shared/` so they can be reused by PAA or future workers.
   must never break the decision path (the service swallows DB errors).
 - **Reason codes (`src/shared/onnx/reason-codes.ts`)** — lightweight
   feature-deviation explainer for the 12 named feature positions. Cheap
-  enough to compute on every prediction. For deep narrative reasoning, use
-  the FIA endpoints (`POST /v1/reports`, `/messages`).
+  enough to compute on every prediction. Weight *magnitudes* come from
+  the deployed model's gain importances (`meta.json` → `reason_weights`,
+  emitted by MLA at registration); the *sign* stays with the hand-written
+  spec, since importances are unsigned. Each code carries a `basis` of
+  `MODEL_WEIGHTED` or `HEURISTIC` so an investigator knows which they are
+  reading. Neither is per-transaction attribution — for that, and for
+  narrative reasoning, use the FIA endpoints (`POST /v1/reports`,
+  `/messages`).
 - **Webhooks (`src/shared/webhooks/`)** — HMAC-signed POST with exponential
   backoff. `WebhookService.publish(event, payload, tenantId)` enqueues
   rows in `webhookDeliveries`; the in-process worker (started from
@@ -191,13 +199,22 @@ under `src/shared/` so they can be reused by PAA or future workers.
   kicks off a retrain. New tables: `trainingJobs`, `trainingUploads`,
   `transactionsStaging`. See `docs/ADOPTER_TRAINING.md`.
 - **Score calibration (MLA, `mla-service/src/training/calibration.py`)** —
-  XGBoost saturates near 0.0/1.0; we fit
-  `sklearn.IsotonicRegression` on a held-out 10% calibration split and
-  persist the calibrator alongside the model. `meta.json` and
-  `modelVersions.brierScore` track the calibrated Brier; uncalibrated
-  is logged for the regression comparison. Calibration is loaded on
-  every retrain; RDA still reads only the ONNX score (the calibration
-  bakes into the deployed booster's score distribution).
+  XGBoost saturates near 0.0/1.0; we fit `sklearn.IsotonicRegression` on
+  a calibration split carved from the training block **before** SMOTE and
+  context-dropout augmentation (fitting it on oversampled rows targets a
+  ~50% synthetic base rate, not the real one). The isotonic breakpoints
+  are written to `meta.json` as a `calibration` block — the paired
+  `calibrator.npz` is numpy-native and unreadable from Node, which is why
+  calibration previously affected only the reported Brier and never a
+  served score. RDA loads the breakpoints in `OnnxService` and applies
+  them after ONNX output.
+
+  **`ONNX_CALIBRATION_MODE` defaults to `observe`**: the calibrated score
+  is recorded in `decisionAuditLog.calibratedScore` while decisions still
+  use the raw score. Every threshold (0.65 default, 0.70 CASH_OUT, 0.30
+  TRANSFER) was tuned against the raw distribution, so flipping to
+  `enforce` before re-deriving them from calibrated audit data would move
+  every decision boundary at once.
 - **Configurable training mode (`mlaSettings.trainingMode`)** — operators
   pick `FRESH` (current behaviour, train from scratch) or `CONTINUED`
   (seed from current production model via XGBoost `xgb_model=`, add

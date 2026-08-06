@@ -24,6 +24,7 @@ export class DecisionAudit extends Model {
   championModelVersion!: string;
   shadowModelVersion!: string | null;
   championScore!: number;
+  calibratedScore!: number | null;
   shadowScore!: number | null;
   threshold!: number;
 

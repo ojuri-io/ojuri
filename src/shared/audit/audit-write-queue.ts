@@ -19,6 +19,7 @@ const DEFAULTS: AuditWriteQueueOptions = {
 class AuditWriteQueue {
   private buffer: QueuedAuditRecord[] = [];
   private flushing = false;
+  private consecutiveFailures = 0;
   private timer: NodeJS.Timeout | null = null;
   private readonly opts: AuditWriteQueueOptions;
 
@@ -44,8 +45,16 @@ class AuditWriteQueue {
       clearInterval(this.timer);
       this.timer = null;
     }
-    while (this.buffer.length > 0) {
+    // Bounded: flush() re-queues on failure, so an unreachable Postgres
+    // at shutdown would otherwise spin here forever.
+    const maxAttempts = Math.ceil(this.buffer.length / this.opts.batchSize) + 3;
+    for (let i = 0; i < maxAttempts && this.buffer.length > 0; i++) {
+      const before = this.buffer.length;
       await this.flush();
+      if (this.buffer.length >= before) break;
+    }
+    if (this.buffer.length > 0) {
+      log.error("stop", "Shutting down with unflushed audit rows", { pending: this.buffer.length });
     }
   }
 
@@ -61,11 +70,24 @@ class AuditWriteQueue {
     return this.buffer.length;
   }
 
+  /**
+   * Late-binding write for values that resolve after the response has
+   * been sent (shadow scores). Returns false once the row has flushed —
+   * the caller treats that as "not recorded" rather than racing the
+   * insert with an UPDATE.
+   */
+  patch(id: string, fields: Partial<QueuedAuditRecord>): boolean {
+    const rec = this.buffer.find((r) => r.id === id);
+    if (!rec) return false;
+    Object.assign(rec, fields);
+    return true;
+  }
+
   private async flush(): Promise<void> {
     if (this.flushing || this.buffer.length === 0) return;
     this.flushing = true;
+    const batch = this.buffer.splice(0, this.opts.batchSize);
     try {
-      const batch = this.buffer.splice(0, this.opts.batchSize);
       const rows = batch.map(AuditRowFactory.toInsertRow);
       const knex = DecisionAudit.knex();
       // ON CONFLICT — a racy duplicate (Redis SETNX bypassed or two
@@ -79,15 +101,35 @@ class AuditWriteQueue {
       if (dropped > 0) {
         metricsService.recordAuditWriteFailure("duplicate", dropped);
       }
+      this.consecutiveFailures = 0;
     } catch (err) {
-      log.error("flush", "Audit batch write failed; rows dropped", {
+      // A transient Postgres blip used to discard the whole batch: the
+      // rows were already spliced out and never re-tried, so decisions
+      // returned to clients vanished from the audit trail. Put them back
+      // at the head, and only give up once the buffer would overflow.
+      this.consecutiveFailures++;
+      const requeued = this.requeue(batch);
+      log.error("flush", "Audit batch write failed", {
         err: String(err),
-        droppedRows: this.opts.batchSize,
+        batchSize: batch.length,
+        requeued,
+        dropped: batch.length - requeued,
+        consecutiveFailures: this.consecutiveFailures,
       });
       metricsService.recordAuditWriteFailure("flush_error");
+      if (batch.length > requeued) {
+        metricsService.recordAuditWriteFailure("dropped", batch.length - requeued);
+      }
     } finally {
       this.flushing = false;
     }
+  }
+
+  private requeue(batch: QueuedAuditRecord[]): number {
+    const room = Math.max(0, this.opts.capacity - this.buffer.length);
+    const keep = batch.slice(0, room);
+    this.buffer.unshift(...keep);
+    return keep.length;
   }
 }
 

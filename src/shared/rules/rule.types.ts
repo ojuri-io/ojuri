@@ -14,6 +14,9 @@ export interface RuleRecord {
   expression: RuleExpression;
   isActive: boolean;
   tenantId: string | null;
+  /** Reads no `features.*` path, so it can be evaluated before the
+   *  Redis feature load. */
+  requestOnly: boolean;
 }
 
 export type RuleExpression =

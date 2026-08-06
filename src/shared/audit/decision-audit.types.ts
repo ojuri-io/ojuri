@@ -21,6 +21,7 @@ export interface DecisionAuditRecord {
   championModelVersion: string;
   shadowModelVersion?: string | null;
   championScore: number;
+  calibratedScore?: number | null;
   shadowScore?: number | null;
   threshold: number;
 

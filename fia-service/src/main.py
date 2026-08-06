@@ -23,6 +23,7 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from src.api.handler import make_handler
 from src.config import config
+from src.consumer.dlq_producer import DlqProducer
 from src.consumer.kafka_consumer import BlockedTransactionConsumer
 from src.llm.phi3_generator import Phi3ReportGenerator
 from src.persistence.report_writer import ReportWriter
@@ -42,11 +43,13 @@ class FIAService:
         self._writer = ReportWriter(self._db)
         self._generator = Phi3ReportGenerator(config)
         self._consumer = BlockedTransactionConsumer(config)
+        self._dlq = DlqProducer(config)
 
         self._processed = 0
         self._failed = 0
         self._duplicates = 0
         self._dropped_poison = 0
+        self._dlq_published = 0
         # Bounded in-memory retry counter per transaction_id. Prevents a
         # genuinely poisonous message from looping forever and blocking the
         # partition. After MAX_RETRIES failures we treat the offset as
@@ -82,7 +85,7 @@ class FIAService:
         try:
             report, latency_ms = self._generator.generate(event)
         except Exception as e:
-            return self._record_failure(txn_id, "generation", e)
+            return self._record_failure(txn_id, "generation", e, event)
 
         try:
             inserted = self._writer.write(
@@ -93,7 +96,7 @@ class FIAService:
                 generation_latency_ms=latency_ms,
             )
         except Exception as e:
-            return self._record_failure(txn_id, "persistence", e)
+            return self._record_failure(txn_id, "persistence", e, event)
 
         self._retry_counts.pop(txn_id, None)
 
@@ -114,16 +117,25 @@ class FIAService:
             )
         return True
 
-    def _record_failure(self, txn_id: str, stage: str, exc: Exception) -> bool:
+    def _record_failure(
+        self, txn_id: str, stage: str, exc: Exception, event: Optional[Dict[str, Any]] = None
+    ) -> bool:
         attempts = self._retry_counts.get(txn_id, 0) + 1
         self._retry_counts[txn_id] = attempts
         self._failed += 1
         if attempts >= self._max_retries:
             self._dropped_poison += 1
             self._retry_counts.pop(txn_id, None)
+            # Route to the DLQ before committing the offset. The
+            # transaction was declined and an investigation is owed, so
+            # the event has to survive somewhere replayable.
+            published = self._dlq.publish(event or {"transaction_id": txn_id}, stage, str(exc), attempts)
+            if published:
+                self._dlq_published += 1
             logger.error(
-                "DROPPING poison message after %d %s failures: txn=%s err=%s",
-                attempts, stage, txn_id, exc, exc_info=True,
+                "Poison message after %d %s failures: txn=%s dlq=%s err=%s",
+                attempts, stage, txn_id, "published" if published else "DROPPED", exc,
+                exc_info=True,
             )
             return True
         logger.warning(
@@ -144,6 +156,7 @@ class FIAService:
             "duplicates": self._duplicates,
             "failed": self._failed,
             "dropped_poison": self._dropped_poison,
+            "dlq_published": self._dlq_published,
             "in_flight_retries": len(self._retry_counts),
             "llm_model": self._generator.model_version(),
         }
@@ -359,10 +372,11 @@ class FIAService:
             self._consumer.consume(self.handle)
         finally:
             self._stop_http_server()
+            self._dlq.close()
             self._db.close()
             logger.info(
-                "FIA shutdown: processed=%d duplicates=%d failed=%d",
-                self._processed, self._duplicates, self._failed,
+                "FIA shutdown: processed=%d duplicates=%d failed=%d dlq=%d",
+                self._processed, self._duplicates, self._failed, self._dlq_published,
             )
 
 
