@@ -2,5 +2,6 @@
   "watch": ["src"],
   "ext": "ts,json,yaml",
   "ignore": ["src/**/*.spec.ts"],
+  "legacyWatch": true,
   "exec": "ts-node -r tsconfig-paths/register -r dotenv/config src/server.ts"
 }

@@ -1,6 +1,6 @@
 import "reflect-metadata";
 import "dotenv/config";
-import "module-alias/register";
+import "./register-aliases";
 
 import fastify, { FastifyInstance } from "fastify";
 import { IncomingMessage, Server, ServerResponse } from "http";

@@ -44,7 +44,7 @@ Five further defects found while validating them are tracked as OJR-22…26.
 | OJR-42 | MED  | Deployment    | dev compose omits MLA_SERVICE_TOKEN → registration 401     | FIXED  |
 | OJR-43 | HIGH | Deployment    | `:ro` models mounts break versioned-artefact hot-reload    | FIXED  |
 | OJR-44 | MED  | Correctness   | ACTIVE model predating boot is never applied on cold start | FIXED  |
-| OJR-45 | MED  | Deployment    | Dev container serves stale `dist/` for path-aliased imports | OPEN  |
+| OJR-45 | MED  | Deployment    | Dev container serves stale `dist/` for path-aliased imports | FIXED |
 
 ## Second round — defects introduced by the first round
 
@@ -88,7 +88,11 @@ Read these before assuming the areas are closed.
   `decisionAuditLog.calibratedScore` alongside the raw score but decides on the raw one.
   Every threshold was tuned against the raw distribution, so `enforce` moves all of them at
   once. Sequence: collect calibrated audit data → re-derive thresholds → flip.
-- **OJR-07 is partial.** Failed audit batches now re-queue instead of being dropped, and
+- **OJR-07 is partial in the default pipeline.** The flag-gated `AUDIT_PIPELINE=stream`
+  prototype closes the remaining crash window when enabled: the decision event (carrying
+  the audit payload) is acked by the broker before the response, and the audit table is
+  materialised from the topic — measurements in `docs/LOG_FIRST_AUDIT_PROTOTYPE.md`.
+  In the default queue pipeline: failed audit batches now re-queue instead of being dropped, and
   `AUDIT_SYNC_WRITE=true` gives persist-before-respond for compliance deployments (a write
   failure returns 503 rather than acknowledging an unauditable decision). A true
   transactional outbox — one write covering the audit row *and* the Kafka event — is still
@@ -461,3 +465,19 @@ changes on macOS (no legacy-watch polling).
 - Suggested direction: in the dev image, register `tsconfig-paths` only (skip
   `module-alias` when `NODE_ENV=development`), or run `tsc --watch` alongside nodemon;
   enable nodemon legacy-watch for mounted volumes.
+
+---
+
+## OJR-45 fix and verification — 2026-08-07
+
+`src/register-aliases.ts` registers `module-alias` only when running compiled output
+(`__filename` ends `.js`); under ts-node, `tsconfig-paths` resolves aliases to `src/*.ts`.
+Either way there is exactly one module universe, preserving the singleton-identity
+guarantee the alias-to-dist routing originally existed to protect. nodemon now uses
+`legacyWatch` (both RDA and PAA) so host-side edits through the Docker mount are seen on
+macOS.
+
+Verified live: rda-dev boots healthy and runs current code with `/app/dist/shared`
+deleted (aliases provably resolve from the mounted `src/`), and a host-side `touch`
+triggers a nodemon restart. Remaining quirk (documented, not fixed): a fenced PAA exit
+reads as a crash to nodemon, which waits for a file change instead of restarting.

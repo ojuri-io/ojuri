@@ -76,12 +76,14 @@ docker compose up --build                                                    # f
 
 Postgres in Docker listens on **5433** (not 5432) to avoid host conflicts.
 
-**Dev hot-reload caveat (OJR-45).** `module-alias` resolves `@config/* @shared/* @utils/*`
-against `dist/`, and the dev image freezes `dist/` at image build time — so edits to any
-alias-imported module do NOT take effect from the `./src` mount, even across container
-restarts. Until this is fixed, rebuild in place after editing shared code:
-`docker exec ojuri-rda-dev-1 npx tsc && docker compose -f docker-compose.yml -f docker-compose.dev.yml restart rda-dev`.
-nodemon's watcher also misses mounted-file changes on macOS.
+**Dev module resolution (OJR-45, fixed).** Compiled builds register `module-alias`
+(aliases → `dist/`); under ts-node, `src/register-aliases.ts` skips that registration so
+`tsconfig-paths` resolves aliases to `src/*.ts` — one module universe either way (mixing
+the two resolvers would duplicate every tsyringe singleton). Dev containers therefore run
+the mounted source directly; no in-container `npx tsc` is needed after edits. nodemon
+runs with `legacyWatch` (polling) so host-side edits through the Docker mount trigger
+restarts on macOS. One remaining quirk: a fenced PAA exit reads as a crash to nodemon,
+which waits for a file change instead of restarting.
 
 ## Architecture Notes That Aren't Obvious from One File
 
@@ -192,8 +194,15 @@ under `src/shared/` so they can be reused by PAA or future workers.
   do not silently fall back to whatever the canonical file holds.
 - **Decision audit log (`src/shared/audit/`)** — every `/v1/predict` writes a
   row to `decisionAuditLog` with model versions, scores, threshold, rule hit,
-  reason codes, feature snapshot, and reviewer fields. Audit-log failures
-  must never break the decision path (the service swallows DB errors).
+  reason codes, feature snapshot, and reviewer fields. Default pipeline is the
+  in-memory batch queue (row durable at flush; backpressure → 503 at 50k;
+  `AUDIT_SYNC_WRITE=true` for persist-before-respond). `AUDIT_PIPELINE=stream`
+  switches to the log-first prototype: the decision event carries the full
+  audit payload, is published with an awaited `acks=all` send before the
+  response, and `AuditStreamConsumer` materialises this table from the topic;
+  late values (shadow scores, early-PRE snapshots) follow as
+  `audit.enrichments` events applied as idempotent UPDATEs. Measurements and
+  adoption gaps: `docs/LOG_FIRST_AUDIT_PROTOTYPE.md`.
 - **Reason codes (`src/shared/onnx/reason-codes.ts`)** — lightweight
   feature-deviation explainer for the 12 named feature positions. Cheap
   enough to compute on every prediction. Weight *magnitudes* come from

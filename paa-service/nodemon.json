@@ -6,5 +6,6 @@
   "ignore": [
     "src/**/*.spec.ts"
   ],
+  "legacyWatch": true,
   "exec": "npm run build && npm run start"
 }
