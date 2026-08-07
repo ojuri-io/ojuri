@@ -3,7 +3,7 @@ import { singleton } from "tsyringe";
 import appConfig from "@config/app.config";
 import { createServiceLogger, TraceContext } from "@shared/utils/logger/service-logger";
 import { metricsService } from "@shared/metrics/metrics.service";
-import { AuditEventPayload } from "@shared/audit/decision-audit.types";
+import { AuditEnrichmentEvent, AuditEventPayload } from "@shared/audit/decision-audit.types";
 import { Level } from "level";
 import path from "path";
 
@@ -268,6 +268,32 @@ class KafkaProducer {
       this.maxRetries,
       CompressionTypes.None
     );
+  }
+
+  /**
+   * Fire-and-forget enrichment publish. Telemetry, not compliance
+   * record: no disk buffer, one send attempt, losses are acceptable
+   * and mirror the queue-mode patch-after-flush race.
+   */
+  publishEnrichment(enrichment: AuditEnrichmentEvent): void {
+    setImmediate(async () => {
+      try {
+        if (!this.isConnected) {
+          await this.producer.connect();
+          this.isConnected = true;
+        }
+        await this.producer.send({
+          topic: appConfig.kafka.auditEnrichTopic,
+          compression: CompressionTypes.None,
+          messages: [{ key: enrichment.audit_id, value: JSON.stringify(enrichment) }],
+        });
+      } catch (err) {
+        log.warn("publishEnrichment", "Enrichment publish failed — dropping", {
+          auditId: enrichment.audit_id,
+          error: err instanceof Error ? err.message : String(err),
+        });
+      }
+    });
   }
 
   /**

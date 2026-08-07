@@ -41,10 +41,21 @@ queue → stream → stream → queue to bracket run-order effects.
 - Audit table and downstream consumers (PAA/MLA/FIA) derive from the same stream, so they
   can no longer disagree about which decisions happened.
 
+## Enrichment events
+
+Values that resolve after the immutable decision event is published — shadow scores and
+early-PRE feature snapshots — follow as a small fire-and-forget event on
+`audit.enrichments` (`{audit_id, fields}`), which the consumer applies as an idempotent
+UPDATE. Enrichments that beat their row across topics are parked and retried for 60 s.
+
+Verified live (600 requests, shadow model active): 545/545 ML-scored rows carried the
+shadow score and 55/55 early-PRE rows received reason codes + feature snapshots, with
+zero expired retries — better than queue mode, whose patch-after-flush race measurably
+dropped ~15% of early-PRE patches. Enrichment is telemetry-grade by design: no disk
+buffer, losses logged and acceptable.
+
 ## Prototype gaps (to resolve before adopting)
 
-- Shadow scores and early-PRE feature enrichment are dropped in stream mode (the payload
-  is immutable once published). Options: a small enrichment event, or accept the loss.
 - Kafka becomes a hard availability dependency of `/v1/predict`: broker down = 503s.
   Production needs 3 brokers with `min.insync.replicas=2`, or a documented degraded mode.
 - Audit reads are eventually consistent (consumer lag); needs a lag SLO and alert.

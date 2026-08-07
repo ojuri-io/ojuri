@@ -370,7 +370,7 @@ class PredictService {
     const record = DecisionAuditFactory.createRecord(ctx, latencyMs);
 
     if (appConfig.audit.pipeline === AuditPipeline.STREAM) {
-      return this.finalizeStream(ctx, record, latencyMs);
+      return this.finalizeStream(ctx, record, late, latencyMs);
     }
 
     const t0 = performance.now();
@@ -395,12 +395,14 @@ class PredictService {
    * Log-first pipeline: the event — carrying the full audit payload — is
    * the durable write, acked by the broker before the client hears the
    * decision. The audit table is materialised from the topic by
-   * AuditStreamConsumer. Late enrichment (early-PRE feature snapshots,
-   * shadow scores) is dropped: the payload is immutable once published.
+   * AuditStreamConsumer. Values that resolve after publication (shadow
+   * scores, early-PRE feature snapshots) follow as an enrichment event
+   * the consumer applies as an UPDATE.
    */
   private async finalizeStream(
     ctx: PredictDecisionContext,
     record: DecisionAuditRecord,
+    late: Promise<Partial<DecisionAuditRecord> | null> | undefined,
     latencyMs: number,
   ): Promise<PredictResponseDto> {
     const auditId = randomUUID();
@@ -415,6 +417,14 @@ class PredictService {
       throw new DecisionPublishError(ctx.request.transaction_id);
     }
     metricsService.recordPredictStage("audit_publish", performance.now() - t0);
+
+    if (late) {
+      void late.then((fields) => {
+        if (fields && Object.keys(fields).length > 0) {
+          this.kafkaProducer.publishEnrichment({ audit_id: auditId, fields });
+        }
+      });
+    }
 
     setImmediate(() => {
       this.publishBlockedEvent(ctx, event);

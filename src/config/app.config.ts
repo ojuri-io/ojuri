@@ -49,6 +49,7 @@ const appConfig = {
     brokers: (process.env.KAFKA_BROKERS || "localhost:9092").split(","),
     topic: process.env.KAFKA_TOPIC || "transactions.completed",
     blockedTopic: process.env.KAFKA_BLOCKED_TOPIC || "transactions.blocked",
+    auditEnrichTopic: process.env.KAFKA_AUDIT_ENRICH_TOPIC || "audit.enrichments",
     consumerGroup: process.env.KAFKA_CONSUMER_GROUP || "pattern-analysis",
     clientId: process.env.KAFKA_CLIENT_ID || "ojuri-rda",
   },

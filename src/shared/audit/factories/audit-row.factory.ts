@@ -1,7 +1,7 @@
 import { Decision } from "@shared/enums/decision.enum";
 import { DecisionSource } from "@shared/enums/decision-source.enum";
 import { RuleStage } from "@shared/enums/rule-stage.enum";
-import { QueuedAuditRecord } from "../decision-audit.types";
+import { AuditEnrichmentFields, QueuedAuditRecord } from "../decision-audit.types";
 
 export interface AuditInsertRow {
   id: string;
@@ -76,6 +76,20 @@ class AuditRowFactory {
     row.latencyMs = rec.latencyMs;
 
     return row;
+  }
+
+  static toEnrichmentUpdate(fields: AuditEnrichmentFields): Record<string, unknown> {
+    const update: Record<string, unknown> = {};
+    if (fields.shadowScore !== undefined) update.shadowScore = fields.shadowScore;
+    if (fields.featuresDefault !== undefined) update.featuresDefault = fields.featuresDefault;
+    if (fields.reasonCodes !== undefined) {
+      update.reasonCodes = fields.reasonCodes == null ? null : JSON.stringify(fields.reasonCodes);
+    }
+    if (fields.featuresSnapshot !== undefined) {
+      update.featuresSnapshot =
+        fields.featuresSnapshot == null ? null : JSON.stringify(fields.featuresSnapshot);
+    }
+    return update;
   }
 }
 
