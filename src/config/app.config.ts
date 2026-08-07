@@ -2,6 +2,7 @@ import os from "os";
 import { getEnv } from "./env.config";
 import { CalibrationMode } from "@shared/onnx/onnx.types";
 import { Decision } from "@shared/enums/decision.enum";
+import { AuditPipeline } from "@shared/enums/audit-pipeline.enum";
 
 function clamp01(v: number): number {
   if (!Number.isFinite(v)) return 1;
@@ -75,6 +76,13 @@ const appConfig = {
     // the client. Compliance deployments can trade the extra round-trip
     // for at-least-once durability.
     syncWrite: process.env.AUDIT_SYNC_WRITE === "true",
+    // STREAM: the response waits for the Kafka ack (acks=all) and the
+    // audit table is materialised from the topic by AuditStreamConsumer —
+    // no in-memory queue, no interval flush. QUEUE keeps the batched path.
+    pipeline:
+      process.env.AUDIT_PIPELINE === AuditPipeline.STREAM
+        ? AuditPipeline.STREAM
+        : AuditPipeline.QUEUE,
   },
   circuitBreaker: {
     redis: {

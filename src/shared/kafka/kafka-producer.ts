@@ -3,6 +3,7 @@ import { singleton } from "tsyringe";
 import appConfig from "@config/app.config";
 import { createServiceLogger, TraceContext } from "@shared/utils/logger/service-logger";
 import { metricsService } from "@shared/metrics/metrics.service";
+import { AuditEventPayload } from "@shared/audit/decision-audit.types";
 import { Level } from "level";
 import path from "path";
 
@@ -98,6 +99,10 @@ export interface TransactionEvent {
   // ── Display names (added in 2026-05) ─────────────────────────
   customer_account_name?: string;
   beneficiary_account_name?: string;
+
+  /** Full audit payload — present when AUDIT_PIPELINE=stream, where the
+   *  audit table is materialised from this topic by AuditStreamConsumer. */
+  audit?: AuditEventPayload;
 }
 
 /**
@@ -243,6 +248,29 @@ class KafkaProducer {
   }
 
   /**
+   * Awaited publish — resolves only on broker ack, so the caller can make
+   * the response conditional on durability. Single attempt: kafkajs
+   * retries transient errors internally, and a hard failure belongs to
+   * the caller (503 → the client retries), not a background loop.
+   */
+  async publishDurable(
+    event: TransactionEvent,
+    topic: string = appConfig.kafka.topic,
+    partitionKey?: string
+  ): Promise<void> {
+    const key = partitionKey ?? event.sender_id;
+    // No compression: gzip per message would sit on the response path.
+    await this.publishWithRetry(
+      event,
+      topic,
+      key,
+      TraceContext.getTraceId(),
+      this.maxRetries,
+      CompressionTypes.None
+    );
+  }
+
+  /**
    * Publish with retry logic and exponential backoff
    */
   private async publishWithRetry(
@@ -250,7 +278,8 @@ class KafkaProducer {
     topic: string,
     partitionKey: string,
     traceId?: string,
-    attempt: number = 0
+    attempt: number = 0,
+    compression: CompressionTypes = CompressionTypes.GZIP
   ): Promise<void> {
     try {
       // The kafkajs producer disconnects silently after periods of
@@ -272,7 +301,7 @@ class KafkaProducer {
 
       await this.producer.send({
         topic,
-        compression: CompressionTypes.GZIP,
+        compression,
         messages: [
           {
             key: partitionKey,
@@ -307,7 +336,7 @@ class KafkaProducer {
           delay,
         });
         await this.sleep(delay);
-        return this.publishWithRetry(event, topic, partitionKey, traceId, attempt + 1);
+        return this.publishWithRetry(event, topic, partitionKey, traceId, attempt + 1, compression);
       }
       metricsService.recordKafkaPublishError(topic);
       throw err;

@@ -1,10 +1,13 @@
+import { randomUUID } from "crypto";
 import httpStatus from "http-status";
 import { injectable } from "tsyringe";
 import appConfig from "@config/app.config";
 import { createServiceLogger } from "@shared/utils/logger/service-logger";
 import { metricsService } from "@shared/metrics/metrics.service";
 import OnnxService from "@shared/onnx/onnx.service";
-import KafkaProducer from "@shared/kafka/kafka-producer";
+import KafkaProducer, { TransactionEvent } from "@shared/kafka/kafka-producer";
+import { AuditPipeline } from "@shared/enums/audit-pipeline.enum";
+import DecisionPublishError from "@shared/error/decision-publish.error";
 import { explain, ReasonCode } from "@shared/onnx/reason-codes";
 import RulesService from "@shared/rules/rules.service";
 import { RuleContext } from "@shared/rules/rule.types";
@@ -364,10 +367,15 @@ class PredictService {
       return null;
     });
 
+    const record = DecisionAuditFactory.createRecord(ctx, latencyMs);
+
+    if (appConfig.audit.pipeline === AuditPipeline.STREAM) {
+      return this.finalizeStream(ctx, record, latencyMs);
+    }
+
     const t0 = performance.now();
     // Sync mode writes straight through, so there is no queued row left
     // to patch — the late fields have to land before the insert.
-    const record = DecisionAuditFactory.createRecord(ctx, latencyMs);
     if (appConfig.audit.syncWrite) {
       Object.assign(record, (late && (await late)) ?? {});
     }
@@ -379,6 +387,39 @@ class PredictService {
     }
 
     this.dispatchAsyncEffects(ctx, auditId);
+
+    return PredictResponseFactory.create(ctx, auditId, latencyMs);
+  }
+
+  /**
+   * Log-first pipeline: the event — carrying the full audit payload — is
+   * the durable write, acked by the broker before the client hears the
+   * decision. The audit table is materialised from the topic by
+   * AuditStreamConsumer. Late enrichment (early-PRE feature snapshots,
+   * shadow scores) is dropped: the payload is immutable once published.
+   */
+  private async finalizeStream(
+    ctx: PredictDecisionContext,
+    record: DecisionAuditRecord,
+    latencyMs: number,
+  ): Promise<PredictResponseDto> {
+    const auditId = randomUUID();
+    const event = TransactionEventFactory.fromDecisionContext(ctx, auditId);
+    event.audit = { ...record, auditId };
+
+    const t0 = performance.now();
+    try {
+      await this.kafkaProducer.publishDurable(event);
+    } catch (err) {
+      log.error("kafka", "Durable decision publish failed", { err: String(err) });
+      throw new DecisionPublishError(ctx.request.transaction_id);
+    }
+    metricsService.recordPredictStage("audit_publish", performance.now() - t0);
+
+    setImmediate(() => {
+      this.publishBlockedEvent(ctx, event);
+      this.publishDecisionWebhook(ctx, auditId);
+    });
 
     return PredictResponseFactory.create(ctx, auditId, latencyMs);
   }
@@ -412,9 +453,17 @@ class PredictService {
     try {
       const event = TransactionEventFactory.fromDecisionContext(ctx, auditId);
       this.kafkaProducer.publishAsync(event);
-      // A breaker-fallback decline carries no model signal, so there is
-      // nothing for FIA to investigate — and during an outage every
-      // request would otherwise queue an LLM report.
+      this.publishBlockedEvent(ctx, event);
+    } catch (err) {
+      log.error("kafka", "Deferred Kafka publish failed", { err: String(err) });
+    }
+  }
+
+  // A breaker-fallback decline carries no model signal, so there is
+  // nothing for FIA to investigate — and during an outage every
+  // request would otherwise queue an LLM report.
+  private publishBlockedEvent(ctx: PredictDecisionContext, event: TransactionEvent): void {
+    try {
       const investigable =
         ctx.finalDecision === Decision.DECLINE &&
         ctx.decisionSource !== DecisionSource.BREAKER_FALLBACK;
@@ -422,7 +471,7 @@ class PredictService {
         this.kafkaProducer.publishAsync(event, appConfig.kafka.blockedTopic, event.transaction_id);
       }
     } catch (err) {
-      log.error("kafka", "Deferred Kafka publish failed", { err: String(err) });
+      log.error("kafka", "Blocked-topic publish failed", { err: String(err) });
     }
   }
 

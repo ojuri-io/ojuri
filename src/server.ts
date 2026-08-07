@@ -24,6 +24,8 @@ import RuntimeSettingsService from "@shared/settings/runtime-settings.service";
 import { startWebhookWorker, stopWebhookWorker } from "./shared/webhooks/webhook-worker";
 import { loadCatalog } from "./shared/features/feature-catalog";
 import AuditWriteQueue from "@shared/audit/audit-write-queue";
+import AuditStreamConsumer from "@shared/audit/audit-stream-consumer";
+import { AuditPipeline } from "@shared/enums/audit-pipeline.enum";
 import TrainingImportWorker from "./v1/modules/training/services/training-import.worker";
 
 const app = new App();
@@ -46,6 +48,13 @@ async function start() {
     await kafkaProducer.connect();
   } catch (err) {
     logger.warn({ err }, "Kafka producer failed to connect - will retry on publish");
+  }
+
+  if (appConfig.audit.pipeline === AuditPipeline.STREAM) {
+    const auditStream = container.resolve(AuditStreamConsumer);
+    await auditStream.start().catch((err) =>
+      logger.error({ err }, "Audit stream consumer failed to start - audit rows will not materialise")
+    );
   }
 
   // Warm runtime-settings before the model registry — the registry's
@@ -145,6 +154,11 @@ async function gracefulShutdown(signal: string): Promise<void> {
     await container.resolve(AuditWriteQueue).stop();
   } catch (err) {
     logger.warn({ err }, "Audit write queue drain raised during shutdown");
+  }
+  try {
+    await container.resolve(AuditStreamConsumer).stop();
+  } catch (err) {
+    logger.warn({ err }, "Audit stream consumer stop raised during shutdown");
   }
   try {
     container.resolve(TrainingImportWorker).stop();

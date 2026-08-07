@@ -42,6 +42,8 @@ export interface DecisionAuditRecord {
   latencyMs: number;
 }
 
+export type AuditEventPayload = DecisionAuditRecord & { auditId: string };
+
 export type DecisionAuditRecordResult =
   | { kind: "ok"; id: string }
   | { kind: "duplicate" }
