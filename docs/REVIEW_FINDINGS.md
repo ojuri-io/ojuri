@@ -40,10 +40,11 @@ Five further defects found while validating them are tracked as OJR-22…26.
 | OJR-24 | MED  | Resilience    | Audit flush drops whole batches with no retry              | FIXED  |
 | OJR-25 | MED  | Performance   | Cap-driven graph prune rescans every node per insert       | FIXED  |
 | OJR-26 | LOW  | Correctness   | Readiness probe vectors use hardcoded catalogue indices    | FIXED  |
-| OJR-41 | MED  | ML            | Label-volume watermark resets to process start on restart  | OPEN   |
-| OJR-42 | MED  | Deployment    | dev compose omits MLA_SERVICE_TOKEN → registration 401     | OPEN   |
-| OJR-43 | HIGH | Deployment    | `:ro` models mounts break versioned-artefact hot-reload    | OPEN   |
-| OJR-44 | MED  | Correctness   | ACTIVE model predating boot is never applied on cold start | OPEN   |
+| OJR-41 | MED  | ML            | Label-volume watermark resets to process start on restart  | FIXED  |
+| OJR-42 | MED  | Deployment    | dev compose omits MLA_SERVICE_TOKEN → registration 401     | FIXED  |
+| OJR-43 | HIGH | Deployment    | `:ro` models mounts break versioned-artefact hot-reload    | FIXED  |
+| OJR-44 | MED  | Correctness   | ACTIVE model predating boot is never applied on cold start | FIXED  |
+| OJR-45 | MED  | Deployment    | Dev container serves stale `dist/` for path-aliased imports | OPEN  |
 
 ## Second round — defects introduced by the first round
 
@@ -420,3 +421,43 @@ RETIRED → ACTIVE.
   the branch's 0.4 fallback until the first champion-relative re-anchor.
 - Measured: 30/200 early-PRE audit rows lost their late feature/reason-code patch to the
   batch flush race (the documented, metric-counted tradeoff — ~15% at this load shape).
+
+---
+
+## OJR-41…44 fixes and verification — 2026-08-07
+
+All four verified live on the running stack after the fix; all four test suites re-run
+green (RDA 210, PAA 27, MLA 79, FIA 12).
+
+- **OJR-41** — `_label_watermark` now initialises from the last `succeeded` row in
+  `retrainRuns` (`_last_retrain_epoch()`), not process start. Verified: 2,400 labels
+  stamped while MLA was down → `labels_pending_retrain: 2400` on the first check after
+  restart (previously 0).
+- **OJR-42** — `MLA_SERVICE_TOKEN` passthrough added to `rda-dev` in
+  `docker-compose.dev.yml`. Verified: token present in the container; a service-token
+  `GET /v1/admin/models` returns 200.
+- **OJR-43** — the canonical-copy step in `applyActiveVersion` is now best-effort: on
+  failure (EROFS on the `:ro` mounts is the normal case) it warns and serves the version
+  artefact directly; `loadModel` takes the artefact path. Verified through the standard
+  `:ro` topology: activation of `models/versions/v1.1/` logs the warn, loads from the
+  version path, passes both probes, `/readyz` UP.
+- **OJR-44** — `subscribeToRegistry` now applies a pre-existing champion after wiring
+  listeners (mirrors the initial-shadow handling); failure keeps the canonical model
+  serving. Verified: cold restart with v1.1 ACTIVE applies it at boot and re-probes.
+
+### OJR-45 — Dev container serves stale `dist/` for path-aliased imports `MED`
+
+`module-alias` resolves `@config/* @shared/* @utils/*` against `dist/` at runtime, and
+the dev image builds `dist/` at image build time into a named volume. The dev container
+runs ts-node over the mounted `src/`, but every alias-imported module actually loads the
+compiled JS frozen at build time — source edits (and even container restarts) change
+nothing until `dist/` is rebuilt. Observed live: three fix iterations ran old code until
+`npx tsc` was run inside the container. nodemon's watcher also missed mounted-file
+changes on macOS (no legacy-watch polling).
+
+- Evidence: `docker-compose.dev.yml` dist volume comment · `package.json` `_moduleAliases`
+  · observed: `dist/shared/onnx/onnx.service.js` mtime = image build time while
+  `/app/src` had newer code
+- Suggested direction: in the dev image, register `tsconfig-paths` only (skip
+  `module-alias` when `NODE_ENV=development`), or run `tsc --watch` alongside nodemon;
+  enable nodemon legacy-watch for mounted volumes.

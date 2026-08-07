@@ -378,18 +378,18 @@ class OnnxService {
   /**
    * Load ONNX model from disk
    */
-  private async loadModel(): Promise<void> {
+  private async loadModel(modelFilePath: string = this.modelPath): Promise<void> {
     const startTime = Date.now();
 
     try {
-      if (!fs.existsSync(this.modelPath)) {
+      if (!fs.existsSync(modelFilePath)) {
         onnxLogger.error(
           "loadModel",
           "Model file not found — train a model with " +
             "`cd mla-service && source venv/bin/activate && python scripts/train_initial_model.py` " +
             "then copy the resulting .onnx to models/fraud_model.onnx. " +
             "RDA will not accept traffic until /readyz reports onnx-model: UP.",
-          { modelPath: this.modelPath }
+          { modelFilePath }
         );
         this.sessions = [];
         this.isModelLoaded = false;
@@ -412,7 +412,7 @@ class OnnxService {
       const poolSize = appConfig.onnx.sessionPoolSize;
       const newSessions = await Promise.all(
         Array.from({ length: poolSize }, () =>
-          ort.InferenceSession.create(this.modelPath, sessionOptions),
+          ort.InferenceSession.create(modelFilePath, sessionOptions),
         ),
       );
 
@@ -430,13 +430,13 @@ class OnnxService {
 
       onnxLogger.success("loadModel", "ONNX model loaded successfully", {
         loadTime,
-        modelPath: this.modelPath,
+        modelFilePath,
         poolSize,
         intraOpNumThreads: appConfig.onnx.intraOpNumThreads,
       });
     } catch (err) {
       onnxLogger.error("loadModel", "Failed to load ONNX model", {
-        modelPath: this.modelPath,
+        modelFilePath,
         error: err instanceof Error ? err.message : String(err),
       });
       throw err;
@@ -490,6 +490,21 @@ class OnnxService {
           error: err instanceof Error ? err.message : String(err),
         })
       );
+
+      // Same boot-order gap for the champion: an ACTIVE row that predates
+      // this subscription never fires the listener, so a cold start kept
+      // serving whatever MODEL_PATH held. Failure keeps the canonical
+      // model serving, exactly like a failed live flip.
+      const champion = registry.getChampion();
+      if (champion) {
+        await this.applyActiveVersion(champion.sourceUri, champion.metadata).catch((err) =>
+          onnxLogger.error("applyActiveVersion", "Failed initial ACTIVE load", {
+            version: champion.version,
+            sourceUri: champion.sourceUri,
+            error: err instanceof Error ? err.message : String(err),
+          })
+        );
+      }
     } catch (err) {
       onnxLogger.warn("subscribeToRegistry", "Could not subscribe to registry", {
         error: err instanceof Error ? err.message : String(err),
@@ -544,20 +559,28 @@ class OnnxService {
       throw new Error(`Resolved sourceUri does not exist on disk: ${resolved}`);
     }
 
-    // Copy into the canonical MODEL_PATH so anyone bypassing the
-    // registry (or restarting cold) still gets the correct artefact.
-    // Atomic rename so an in-flight predict never observes a half-
-    // written file.
+    // Best-effort copy into the canonical MODEL_PATH so anyone bypassing
+    // the registry (or restarting cold) still gets the correct artefact.
+    // The compose files mount models/ read-only into RDA, so EROFS is a
+    // normal outcome — serving continues from the version artefact.
     if (resolved !== this.modelPath) {
-      const tempPath = `${this.modelPath}.tmp`;
-      await fsp.copyFile(resolved, tempPath);
-      await fsp.rename(tempPath, this.modelPath);
+      try {
+        const tempPath = `${this.modelPath}.tmp`;
+        await fsp.copyFile(resolved, tempPath);
+        await fsp.rename(tempPath, this.modelPath);
+      } catch (err) {
+        onnxLogger.warn(
+          "applyActiveVersion",
+          "Canonical copy failed — serving the version artefact directly",
+          { resolved, error: err instanceof Error ? err.message : String(err) }
+        );
+      }
     }
 
     // Load the model first: applying the incoming version's calibration
     // to the outgoing model's scores would shift decisions for any
     // request in flight during the swap.
-    await this.loadModel();
+    await this.loadModel(resolved);
     // Calibration travels with the version directory, not the canonical
     // MODEL_PATH copy — resolve it from the source artefact.
     this.loadCalibrationFor(resolved);

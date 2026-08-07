@@ -76,6 +76,13 @@ docker compose up --build                                                    # f
 
 Postgres in Docker listens on **5433** (not 5432) to avoid host conflicts.
 
+**Dev hot-reload caveat (OJR-45).** `module-alias` resolves `@config/* @shared/* @utils/*`
+against `dist/`, and the dev image freezes `dist/` at image build time — so edits to any
+alias-imported module do NOT take effect from the `./src` mount, even across container
+restarts. Until this is fixed, rebuild in place after editing shared code:
+`docker exec ojuri-rda-dev-1 npx tsc && docker compose -f docker-compose.yml -f docker-compose.dev.yml restart rda-dev`.
+nodemon's watcher also misses mounted-file changes on macOS.
+
 ## Architecture Notes That Aren't Obvious from One File
 
 ### Path aliases differ per service
@@ -108,7 +115,7 @@ When `PredictService` returns `decision === "DECLINE"`, RDA publishes the same `
 FIA-side idempotency: `investigationReports.transactionId` is UNIQUE and the writer uses `INSERT ... ON CONFLICT DO NOTHING`. The Kafka consumer commits offsets **per-partition** (never `consumer.commit()` with no args, which would advance offsets across partitions). LLM generation runs synchronously in the message handler, so the consumer is configured with `max_poll_records=1` and `max_poll_interval_ms=600000` to prevent rebalances during a slow LLM call. Poison messages are bounded by an in-memory retry counter (`MAX_RETRIES=3`); after that the offset is committed and the failure is logged loudly so a true bad message cannot wedge a partition forever.
 
 ### MLA closes the loop offline
-MLA monitors F1-score and PSI on the `amount` feature (thresholds: `DRIFT_F1_THRESHOLD=0.92`, `DRIFT_PSI_THRESHOLD=0.25`). On drift it retrains XGBoost with SMOTE, runs McNemar's test against the current model, and only deploys if the improvement is statistically significant. Output is `.onnx` + `_scaler.npz`; the scaler must be loaded alongside the model.
+MLA monitors windowed F1 and PSI (`DRIFT_PSI_THRESHOLD=0.25`; the F1 threshold is anchored to the deployed champion's validation F1 minus `DRIFT_F1_MARGIN`, falling back to `DRIFT_F1_THRESHOLD=0.4` when no champion metrics exist). Drift windows are fed from Postgres ground truth on the label poll — RDA never publishes labelled events. Retrains also fire on `LABEL_RETRAIN_THRESHOLD` (500) new verified labels; that watermark is anchored to the last `succeeded` row in `retrainRuns`, so labels that arrive while MLA is down still count after a restart. On retrain it applies SMOTE (calibration split carved pre-augmentation), runs McNemar's test against the current model, and only deploys if the improvement is statistically significant. Output is `.onnx` + `_scaler.npz` + `meta.json` (isotonic breakpoints + reason weights); the scaler must be loaded alongside the model. All triggers share `RETRAIN_COOLDOWN_SECONDS` (default 6 h).
 
 ### Resilience
 RDA wraps Redis feature retrieval and ONNX inference in `opossum` circuit breakers (see `src/shared/circuit-breaker/`). When breakers open, predictions still succeed but use defaults — design for graceful degradation, not failure.
@@ -176,7 +183,13 @@ under `src/shared/` so they can be reused by PAA or future workers.
   transaction-type threshold defaults (CASH_OUT=0.70, TRANSFER=0.30,
   PAYMENT=0.50, DEBIT=0.50, CASH_IN=0.50) are seeded via
   `02_segment_thresholds.ts` once an ACTIVE model is registered. Lookup
-  uses `request.segment ?? request.transaction_type`.
+  uses `request.segment ?? request.transaction_type`. Activating a version
+  hot-reloads it: `OnnxService` loads the version artefact directly and
+  treats the copy into the canonical `MODEL_PATH` as best-effort (the
+  compose files mount `models/` read-only, so EROFS is normal), then
+  re-runs both health probes before serving. A champion that was already
+  ACTIVE before boot is applied at startup the same way — cold restarts
+  do not silently fall back to whatever the canonical file holds.
 - **Decision audit log (`src/shared/audit/`)** — every `/v1/predict` writes a
   row to `decisionAuditLog` with model versions, scores, threshold, rule hit,
   reason codes, feature snapshot, and reviewer fields. Audit-log failures

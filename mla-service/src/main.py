@@ -655,7 +655,9 @@ class MLAService:
             logger.info("Label-volume retrain trigger disabled (LABEL_RETRAIN_THRESHOLD=0)")
             return
 
-        self._label_watermark = time.time()
+        # Anchored to the last completed retrain, not process start —
+        # labels that arrived while MLA was down must still count.
+        self._label_watermark = self._last_retrain_epoch()
 
         def _loop():
             while True:
@@ -671,6 +673,22 @@ class MLAService:
             config.LABEL_RETRAIN_THRESHOLD,
             config.LABEL_CHECK_INTERVAL_SECONDS,
         )
+
+    def _last_retrain_epoch(self) -> float:
+        from sqlalchemy import text
+
+        try:
+            with self.db_engine.connect() as conn:
+                completed = conn.execute(
+                    text(
+                        'SELECT extract(epoch from max("completedAt")) '
+                        'FROM "retrainRuns" WHERE status = \'succeeded\''
+                    )
+                ).scalar()
+            return float(completed or 0.0)
+        except Exception as exc:
+            logger.warning("Could not read last retrain time — counting all labels: %s", exc)
+            return 0.0
 
     def _feed_drift_from_labels(self) -> int:
         """
