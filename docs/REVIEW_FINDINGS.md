@@ -88,16 +88,29 @@ Read these before assuming the areas are closed.
   `decisionAuditLog.calibratedScore` alongside the raw score but decides on the raw one.
   Every threshold was tuned against the raw distribution, so `enforce` moves all of them at
   once. Sequence: collect calibrated audit data → re-derive thresholds → flip.
-- **OJR-07 is partial in the default pipeline.** The flag-gated `AUDIT_PIPELINE=stream`
-  prototype closes the remaining crash window when enabled: the decision event (carrying
-  the audit payload) is acked by the broker before the response, and the audit table is
-  materialised from the topic — measurements in `docs/LOG_FIRST_AUDIT_PROTOTYPE.md`.
-  In the default queue pipeline: failed audit batches now re-queue instead of being dropped, and
-  `AUDIT_SYNC_WRITE=true` gives persist-before-respond for compliance deployments (a write
-  failure returns 503 rather than acknowledging an unauditable decision). A true
-  transactional outbox — one write covering the audit row *and* the Kafka event — is still
-  outstanding, so the default path retains a small crash window between the response and
-  the `setImmediate` publish.
+- **OJR-07 is partial in the default pipeline, closed under `AUDIT_PIPELINE=stream`.**
+  Stream mode makes the decision event (carrying the audit payload) the durable write —
+  broker-acked before the response — and materialises the audit table from the topic;
+  late values follow as `audit.enrichments` UPDATEs. Measurements:
+  `docs/LOG_FIRST_AUDIT_PROTOTYPE.md`. The default queue pipeline narrows but keeps the
+  window: batches re-queue on failure, backpressure 503s at 50k, `AUDIT_SYNC_WRITE=true`
+  covers the audit row — but the Kafka publish stays post-response, so a crash in that
+  gap still loses the event.
+
+  **OJR-07 closes when stream becomes the default.** That flip changes the availability
+  contract (Kafka becomes a hard dependency of `/v1/predict`), so it is reserved for a
+  major release, gated on this graduation checklist:
+  1. Multi-broker deploy guidance (3 brokers, `min.insync.replicas=2`) and an explicit
+     broker-down policy statement (503s, by design).
+  2. Consumer-lag metric with an SLO and alert — lag is audit staleness.
+  3. CI suites + an integration pass with `AUDIT_PIPELINE=stream`, plus a soak run.
+  4. Consumer-topology decision for multi-replica RDA (group-split works today; a
+     dedicated worker mode is cleaner).
+  5. Retire the LevelDB buffer for the primary-topic path once stream owns it (it still
+     backs the blocked-topic and webhook async paths).
+  6. Rollout/rollback runbook — the flip is clean both directions (queue writes rows
+     directly; stream materialises from the topic; no backfill), stated explicitly so
+     operators trust it.
 - **OJR-13 raises the ceiling rather than removing it.** Retention is now time-based over
   the 30-day window; `MAX_TRANSACTIONS_PER_USER` (default 50 000) remains as a memory
   backstop. It is no longer silent — `paa_velocity_truncations_total` fires when it binds.
