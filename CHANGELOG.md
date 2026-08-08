@@ -51,8 +51,8 @@ at 16-way concurrency vs the 295 ms pre-fix baseline.
 - **Interactive architecture explainer** —
   `docs/how-ojuri-works.html`: every service, pipeline stage, Kafka
   topic, and table, with animated traces for six transaction paths
-  (declined, accepted, PAA update, MLA retrain, FIA investigation,
-  stream audit).
+  (declined, accepted, review, PAA update, MLA retrain, FIA
+  investigation).
 
 ### Changed
 
