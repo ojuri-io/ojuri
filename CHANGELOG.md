@@ -7,6 +7,113 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.4.0] - 2026-08-08
+
+This release remediates a full line-by-line architecture review — 45
+findings across three rounds (OJR-01–45, per-finding evidence in
+`docs/REVIEW_FINDINGS.md`) — and ships a flag-gated log-first audit
+pipeline. No API surface changes, but several decision-path behaviours
+differ from 1.3.0 (see Changed) and every fix was re-verified against a
+live compose stack: 2,000-request load test all HTTP 200, p99 84.5 ms
+at 16-way concurrency vs the 295 ms pre-fix baseline.
+
+### Added
+
+- **Log-first audit pipeline (`AUDIT_PIPELINE=stream`, default
+  `queue`)** — the decision event carries the full audit payload and is
+  published with an awaited `acks=all` send before the response;
+  `AuditStreamConsumer` materialises `decisionAuditLog` from the topic,
+  and late values (shadow scores, early-PRE feature snapshots) follow
+  as `audit.enrichments` events applied as idempotent UPDATEs. Audit
+  durability moves from "row survives unless the process dies before
+  flush" to "row durable in Kafka before the caller sees the decision".
+  Measured: p50/p95/RPS parity with the queue, +10–19 ms p99
+  end-to-end; server-side decision path p50 1 ms / p99 5 ms; enrichment
+  delivery 100% (queue mode's patch race dropped ~15% of early-PRE
+  snapshots). Closes OJR-07 when enabled; the checklist for making it
+  the default (a major-release change — Kafka becomes a hard dependency
+  of `/v1/predict`) is in `docs/REVIEW_FINDINGS.md`. Full measurements:
+  `docs/LOG_FIRST_AUDIT_PROTOTYPE.md`.
+- **Score calibration reaches serving** — RDA loads the isotonic
+  breakpoints from `meta.json` and applies them after ONNX output.
+  `ONNX_CALIBRATION_MODE` defaults to `observe`: the calibrated score
+  is recorded as `decisionAuditLog.calibratedScore` while decisions
+  still use the raw score, because every shipped threshold was tuned
+  against the raw distribution. Flip to `enforce` only after
+  re-deriving thresholds from calibrated audit data.
+- **PAA leader lease** — PAA takes a Redis lease
+  (`ojuri:paa:leader`) before consuming; a second instance waits for
+  handover then exits instead of joining the consumer group and
+  splitting the graph. Renewal fails closed on elapsed TTL, and a
+  fenced-out instance discards its buffers rather than flushing a
+  partial-graph snapshot over the new leader's writes.
+  `PAA_REQUIRE_LEADER_LEASE=false` disables the fence.
+- **Interactive architecture explainer** —
+  `docs/how-ojuri-works.html`: every service, pipeline stage, Kafka
+  topic, and table, with animated traces for six transaction paths
+  (declined, accepted, PAA update, MLA retrain, FIA investigation,
+  stream audit).
+
+### Changed
+
+- **The ONNX breaker fallback is REVIEW, not DECLINE.** opossum fires
+  the fallback on per-call timeouts too, so a timeout below the
+  measured p95 under concurrency turned ordinary contention into
+  customer-facing declines. `CB_ONNX_TIMEOUT` now defaults to 750 ms,
+  the fallback returns `{ degraded: true }`, and `PredictService` maps
+  it to `CB_ONNX_FALLBACK_DECISION` (default REVIEW) with
+  `decisionSource = BREAKER_FALLBACK`. Degraded declines are no longer
+  published to `transactions.blocked` — there is no model signal for
+  FIA to investigate.
+- **Drift F1 threshold anchors to the deployed champion** — the
+  window alarm fires at (champion validation F1 −
+  `DRIFT_F1_MARGIN`) instead of the static `DRIFT_F1_THRESHOLD`, which
+  stays as the fallback when no champion metrics exist.
+- **Model hot-reload serves the version artefact directly** — the copy
+  into the canonical `MODEL_PATH` is best-effort (the compose files
+  mount `models/` read-only; EROFS is expected), and a champion that
+  was ACTIVE before boot is applied at startup, so cold restarts no
+  longer silently fall back to whatever the canonical file holds.
+- **Dev containers run the mounted source directly** —
+  `module-alias` registers only in compiled builds
+  (`src/register-aliases.ts`); under ts-node, `tsconfig-paths` resolves
+  aliases to `src/*.ts`, keeping one module universe (two resolvers
+  duplicated every tsyringe singleton). nodemon uses `legacyWatch` so
+  host-side edits through the Docker mount trigger restarts on macOS.
+  No in-container `npx tsc` after edits any more.
+
+### Fixed
+
+45 findings; the tracker has per-finding detail. Highlights by service:
+
+- **MLA** — the isotonic calibrator previously affected only the
+  reported Brier score and never a served score; the calibration split
+  is carved before SMOTE (fitting on oversampled rows targeted a ~50%
+  synthetic base rate); drift windows are fed from Postgres ground
+  truth on the label poll (they previously never received a sample, so
+  F1/PSI drift could not fire); the label-volume watermark anchors to
+  the last succeeded `retrainRuns` row, so labels arriving while MLA is
+  down still count after a restart.
+- **PAA** — graph cap is a true LRU; velocity windows are retained by
+  time, not count; replayed events dedupe instead of double-counting;
+  graph metadata snapshots for both parties on every event.
+- **RDA** — audit ids are tenant-scoped; the audit requeue path bounds
+  poison entries; the LevelDB replay buffer preserves topic and
+  partition key per entry (`{ v: 2, ... }` envelope).
+- **FIA** — poison messages are bounded by a retry counter and
+  committed past instead of wedging a partition; offsets commit
+  per-partition only.
+- **Dev/compose** — `db-migrate` and dev services carry the env they
+  need (`MLA_SERVICE_TOKEN`, `AUDIT_PIPELINE` passthrough).
+
+### Notes
+
+- Round 2 of the review (OJR-27–40) consisted of defects introduced by
+  round 1's fixes, found by three independent re-reviews — the tracker
+  keeps the full chain visible.
+- Reference performance in CLAUDE.md was re-measured post-fix; the
+  honest contended baseline is now p99 84.5 ms (was 295 ms).
+
 ## [1.3.0] - 2026-07-07
 
 This release acts on an independent efficacy validation of the shipped
