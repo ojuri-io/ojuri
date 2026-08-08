@@ -1,7 +1,6 @@
 # Code review findings — 2026-08-06
 
-Tracker for the defects and gaps identified during the line-by-line architecture review
-(companion to the "06 · Findings" tab in [`docs/how-ojuri-works.html`](how-ojuri-works.html)).
+Tracker for the defects and gaps identified during the line-by-line architecture review.
 Every finding was verified directly against the source at the referenced `file:line`.
 Fix directions are suggestions from the review, not commitments.
 

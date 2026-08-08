@@ -48,11 +48,6 @@ at 16-way concurrency vs the 295 ms pre-fix baseline.
   fenced-out instance discards its buffers rather than flushing a
   partial-graph snapshot over the new leader's writes.
   `PAA_REQUIRE_LEADER_LEASE=false` disables the fence.
-- **Interactive architecture explainer** —
-  `docs/how-ojuri-works.html`: every service, pipeline stage, Kafka
-  topic, and table, with animated traces for six transaction paths
-  (declined, accepted, review, PAA update, MLA retrain, FIA
-  investigation).
 
 ### Changed
 
