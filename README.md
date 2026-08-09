@@ -304,6 +304,14 @@ You'll be asked to change it immediately. If you've already lost it — it's
 only printed once — run `npm run reset:admin` for a new one. More detail:
 [`docs/FRONTEND.md`](docs/FRONTEND.md).
 
+That's the Vite dev server, which is right for trying things out and for
+development. **To deploy the dashboard**, use the published image instead
+— `ghcr.io/ojuri-io/sentinel:v1`. It's the built SPA served by nginx on
+port 80, with no proxy of its own, so put it behind your own ingress and
+route `/v1/*` to RDA and `/fia/*` to FIA. It isn't wired into
+`docker-compose.yml` — NGINX already holds port 80 there, and where
+Sentinel sits in your network is a routing decision.
+
 ### Load some demo data
 
 A new install has an empty dashboard until transactions start flowing.

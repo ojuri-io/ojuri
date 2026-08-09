@@ -26,12 +26,41 @@ npm test             # Vitest run
 
 | Path prefix | Target env var   | Default                  | Service |
 |-------------|------------------|--------------------------|---------|
-| `/v1/*`     | `VITE_RDA_URL`   | `http://localhost:3000`  | RDA     |
-| `/fia/*`    | `VITE_FIA_URL`   | `http://localhost:9094`  | FIA (prefix stripped) |
+| `/v1/*`     | `VITE_RDA_URL`   | `http://127.0.0.1:3000`  | RDA     |
+| `/fia/*`    | `VITE_FIA_URL`   | `http://127.0.0.1:9094`  | FIA (prefix stripped) |
+
+Those defaults apply when the variable is unset. `frontend/.env.example`
+ships with the Docker-stack values (`http://localhost`) active instead,
+so copying it unchanged works for the compose quickstart; switch to the
+commented `127.0.0.1` block for host-side development.
 
 The proxy lets the SPA call same-origin URLs in dev so CORS isn't a
-concern. In production builds, set those env vars at build time or
-serve the SPA behind your existing reverse proxy.
+concern.
+
+### Deploying it
+
+`npm run dev` is a development server — don't ship it. For a real
+deployment use the published image:
+
+```bash
+docker run -p 8080:80 ghcr.io/ojuri-io/sentinel:v1
+```
+
+It is the built SPA served by nginx on port 80, with HTML5-history
+fallback so client-side routes survive a hard refresh. It carries **no
+API proxy of its own** — the dev-server proxy in the table above does not
+exist in this image. Front it with your own ingress and route `/v1/*` to
+RDA and `/fia/*` to FIA, or mount your own config over
+`/etc/nginx/conf.d/default.conf`.
+
+Watch for one failure mode when wiring that up: because the history
+fallback answers every unmatched path with `index.html`, an unrouted
+`/v1/predict` returns **HTTP 200 with HTML**, not a 404. If the dashboard
+loads but every panel is empty, check that your ingress is routing the
+API prefixes before assuming the backend is down.
+
+The image is not part of `docker-compose.yml`, where NGINX already binds
+port 80. Building it yourself is `docker build -t sentinel frontend/`.
 
 ## Pages
 
