@@ -27,7 +27,7 @@ which admin routes they can hit.
 Tokens look like:
 
 ```
-fdk_<12-hex-prefix>_<32-byte-base64url-secret>
+fdk_<12-hex-char prefix>_<24-byte secret, base64url → 32 chars>
 ```
 
 - `fdk_` — fixed namespace marker so accidental leaks are searchable.

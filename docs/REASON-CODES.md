@@ -46,7 +46,7 @@ response.
 | `STD_AMOUNT_30D`   | Variance of sender's recent transaction amounts                       |
 | `PAGERANK`         | Network-centrality score from the transaction graph                   |
 | `CLUSTERING_COEF`  | How tightly the sender clusters with known peers                      |
-| `TIME_SINCE_LAST`  | Seconds since the sender's previous transaction                       |
+| `TIME_SINCE_LAST`  | Seconds since the sender last sent **to this receiver** (a pair feature, not sender-level) |
 | `WEEKEND`          | Transaction occurred on a weekend                                     |
 | `HOUR_OF_DAY`      | Hour of day deviates from sender's norm                               |
 | `AMOUNT_HIGH`      | Transaction amount relative to typical range                          |
@@ -59,10 +59,33 @@ z            = (value - baseline) / scale
 contribution = weight * tanh(z)
 ```
 
-`baseline`, `scale`, and `weight` are static, domain-tuned constants
-defined in `src/shared/onnx/reason-codes.ts`. The math is intentionally
-cheap — every microsecond on the predict path matters, and this isn't
-the place for full SHAP.
+`baseline` and `scale` are static, domain-tuned constants defined in
+`src/shared/onnx/reason-codes.ts`. The math is intentionally cheap —
+every microsecond on the predict path matters, and this isn't the place
+for full SHAP.
+
+### `weight`, and the `basis` field
+
+`weight` is not always static. Where the deployed model publishes gain
+importances, its *magnitude* is taken from the model's `meta.json`
+(`reason_weights`, emitted by MLA at registration). The *sign* always
+stays with the hand-written spec, because gain importances are unsigned
+— they tell you a feature mattered, not which way it pushed.
+
+Every reason code therefore carries a `basis` telling you which it is:
+
+| `basis`          | Meaning                                                         |
+|------------------|-----------------------------------------------------------------|
+| `MODEL_WEIGHTED` | Magnitude came from the deployed model's gain importances.      |
+| `HEURISTIC`      | Magnitude is the hand-tuned constant — no model weight available.|
+
+This matters when reading a decision. A `HEURISTIC` code reflects what
+*we* thought the feature was worth; a `MODEL_WEIGHTED` one reflects what
+*your* trained model actually leaned on. Expect `HEURISTIC` everywhere
+until you register a model whose `meta.json` carries `reason_weights`.
+
+Neither is per-transaction attribution. For that, and for narrative
+reasoning, use the FIA endpoints.
 
 `tanh(z)` saturates contribution magnitude at `weight`, so no single
 feature can drown out the rest. The total fraud probability is **not**

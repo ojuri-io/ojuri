@@ -103,11 +103,17 @@ Format: `<resource>:<action>`.
 | API keys     | `api_keys:read`, `api_keys:issue`, `api_keys:revoke`                   |
 | Webhooks     | `webhooks:read`, `webhooks:create`, `webhooks:delete`                  |
 | Rules        | `rules:read`, `rules:create`, `rules:update`, `rules:delete`           |
-| Models       | `models:read`, `models:register`, `models:set_status`, `models:set_threshold` |
+| Models       | `models:read`, `models:register`, `models:set_status`, `models:set_threshold`, `models:delete` |
 | Audit log    | `audit:read`                                                          |
 | Review queue | `review_queue:read`, `review_queue:override`                          |
 | Reports      | `reports:read`, `reports:request`, `reports:message`                  |
 | Metrics      | `metrics:read`                                                        |
+| Labels       | `labels:write`                                                        |
+| Training     | `training:read`, `training:write`                                     |
+| Saved reports| `saved_reports:read`, `saved_reports:write`, `saved_reports:export`   |
+| Settings     | `settings:read`, `settings:write`                                     |
+| MLA          | `mla:configure`                                                       |
+| Tenancy      | `tenants:admin_any`                                                   |
 
 The wildcard `*` is reserved for the `SUPER_ADMIN` role. It can't be
 assigned to a custom role — the server rejects the request with `409`.
