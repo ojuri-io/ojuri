@@ -95,7 +95,7 @@ Clone, start the stack, send a prediction. Two install options — pick one:
 **Run published images** (adopters):
 
 ````bash
-git clone --depth 1 --branch v1.3.0 https://github.com/ojuri-io/ojuri.git
+git clone --depth 1 --branch v1.4.0 https://github.com/ojuri-io/ojuri.git
 cd ojuri
 cp .env.example .env                        # provides AUTH_JWT_SECRET, DB creds, CORS
 docker compose -f docker-compose.yml -f docker-compose.ghcr.yml pull
@@ -203,7 +203,7 @@ The two paths run the same stack and the same `docker-compose.yml`; they
 differ only in whether the RDA/PAA/Sentinel images are pulled from GHCR or
 built locally.
 
-**Published images.** The shallow clone fetches only the `v1.3.0` tag
+**Published images.** The shallow clone fetches only the `v1.4.0` tag
 (~5 MB) for the compose files, `.env.example`, and config. The `pull` step
 downloads the five signed images from
 `ghcr.io/ojuri-io/{rda,paa,mla,fia,sentinel}` — public, no login needed. A
@@ -215,7 +215,7 @@ minors automatically per [`VERSIONING.md`](VERSIONING.md)). Pin strictly
 for regulated deployments:
 
 ````bash
-export OJURI_VERSION=v1.3.0   # before any docker compose command
+export OJURI_VERSION=v1.4.0   # before any docker compose command
 ````
 
 > **Docker Compose 2.24+** is required for the GHCR overlay (uses the
@@ -533,7 +533,7 @@ the same notification channel.
 
 ## Status
 
-Stable as of v1.3.0: API-key auth, JWT user auth and RBAC, hot-reloaded rules
+Stable as of v1.4.0: API-key auth, JWT user auth and RBAC, hot-reloaded rules
 engine, model registry with per-segment thresholds, decision audit log with
 inline reason codes, HMAC-signed webhooks, idempotency keys, FIA on-demand
 reports and conversational follow-ups, the Sentinel dashboard — and the label
