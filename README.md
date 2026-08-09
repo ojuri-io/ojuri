@@ -5,140 +5,93 @@
 
 > Open source fraud detection that bears witness to every transaction.
 
-Ojuri is a multi-agent fraud detection platform for fintech, payments, and
-e-commerce. It scores transactions in real time, learns from emerging patterns,
-explains every decision in plain language, and stays under your roof — no SaaS,
-no data egress, no per-call fees. MIT licensed; self-hostable from a single
-`docker compose up`.
+Ojuri decides whether a payment is fraud, in the moment it happens. Send
+it a transaction, get back a decision — accept, review, or decline —
+along with the reasons behind it.
 
-The name is Yoruba (*ojúrí*) for *the seeing eye* — what a witness brings to a
-transaction. That's also the system's job: observe what happens, attest to what's
-true, and give analysts the evidence they need to decide.
+It runs entirely on your own servers. Your transaction data never leaves
+your infrastructure, there is no SaaS account, and there are no per-call
+fees. You start it with one `docker compose up`.
+
+**How well does it work?** We ship a 128,000-transaction simulation you
+can run yourself. An untrained install flags 34% of the fraud in it. After
+one round of learning from labelled data, that rises to 98.8%, while
+wrongly flagging 1.1% of legitimate payments. "Flags" means declined
+outright or sent to a human for review. Those figures need two settings
+changed from their defaults —
+[`docs/FRAUD_SIMULATION.md`](docs/FRAUD_SIMULATION.md) has the exact
+configuration and the commands to reproduce it.
+
+The name is Yoruba (*ojúrí*) for *the seeing eye* — what a witness brings
+to a transaction. That's also the system's job: observe what happens,
+attest to what's true, and give analysts the evidence they need to decide.
+
+## How it fits together
+
+Four services split the work. **RDA** answers your API call in
+milliseconds — it is the only part your payment flow waits on. The other
+three work in the background off a Kafka queue: **PAA** builds the
+behavioural picture (who pays whom, how often), **MLA** watches for the
+model going stale and retrains it, and **FIA** writes an investigation
+report for anything that got declined.
+
+If PAA, MLA, or FIA goes down, payments keep being scored. Only RDA is on
+the critical path.
+
+You can run as many copies of RDA as you need. **PAA is the exception —
+run exactly one.** It holds the payment network in memory, so a second
+copy would see only half the picture and quietly stop spotting fraud rings
+that span both. See [`paa-service/`](paa-service/) for the detail.
+
+```mermaid
+flowchart LR
+    Client[Client / PSP]
+    UI[Sentinel dashboard]
+    NGINX[NGINX]
+    RDA[RDA · Fastify<br/>rules · ONNX · audit<br/>answers in milliseconds]
+    PAA[PAA · worker<br/>graph + velocity]
+    MLA[MLA · Python<br/>drift + retrain]
+    FIA[FIA · Python<br/>LLM investigations]
+    Kafka[(Kafka)]
+    Redis[(Redis · features)]
+    PG[(Postgres · fraud_db)]
+
+    Client -->|POST /v1/predict| NGINX --> RDA
+    UI --> RDA
+    UI --> FIA
+    RDA <--> Redis
+    RDA --> PG
+    RDA --> Kafka
+    Kafka --> PAA --> Redis
+    Kafka --> MLA
+    Kafka -->|declined only| FIA
+    MLA -->|new model version| RDA
+```
 
 ---
 
-## Why Ojuri
+## Try it in 5 minutes
 
-**Self-hosted, single binary blast radius.** Every service ships as a container.
-Transactions never leave your infrastructure, which keeps strict data-residency
-regimes (GDPR, NDPR, CBN) tractable without a separate compliance project.
+All you need is **Docker 20.10 or newer, with Compose 2.24 or newer**
+(`docker compose version` will tell you). On older Compose, use the
+build-from-source steps further down instead.
 
-**Four cooperating agents, decoupled by Kafka.** RDA decides in milliseconds.
-PAA does graph and velocity analysis off the hot path. MLA monitors drift and
-retrains. FIA generates LLM-written investigation reports for blocked
-transactions. Failure of any agent except RDA never affects authorization.
-
-**LLM investigations on a separate path.** Every `DECLINE` is republished to a
-second Kafka topic that only FIA consumes. A self-hosted Phi-3-mini produces a
-structured report — verdict, recommended action, key indicators, narrative —
-written to Postgres and surfaced in the Sentinel dashboard. The investigation
-runs at LLM latency (seconds), never on the authorization path.
-
-**Inline reason codes on every prediction.** The `/v1/predict` response carries
-the top contributing features (`AMOUNT_HIGH`, `VELOCITY_24H`, `PAGERANK`, …) so
-clients can act on the decision without a follow-up call. The FIA report is for
-analyst-grade depth, not basic explainability.
-
-**MLOps surface, not shell scripts.** Model registry with CANDIDATE → SHADOW →
-ACTIVE lifecycle, per-segment thresholds, drift detection (F1 + PSI), automated
-SMOTE-balanced XGBoost retraining, McNemar significance check before promotion,
-and a replay CLI that runs candidates against the live audit log.
-
-**Real-time latency budget.** ONNX inference on the deployed XGBoost model
-measures p99 ≈ 49 µs (batch=1); end-to-end `POST /v1/predict` measures
-p99 ≈ 6 ms uncontended on a single developer workstation. Under
-concurrent load the path is currently event-loop-bound; see
-[`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md#performance-characteristics)
-for the loaded stress profile and benchmarking guidance (the shipped
-NGINX rate limit and idempotency duplicate short-circuit both produce
-misleading numbers in naïve tests — read the caveats before measuring).
-Circuit breakers around Redis and ONNX keep the path degrading instead
-of failing — predictions still succeed against default features when
-Redis is down.
-
-**Operator dashboard included.** Sentinel (Vite + React) ships under
-`frontend/`: live decisions, review queue with overrides, rule editor, model
-registry, audit log, FIA investigations, user/role admin. Reviewer overrides
-write back to `groundTruthFraud` so the model doesn't learn from its own past
-decisions.
-
----
-
-## Prerequisites
-
-- **Node 20+** (see `.nvmrc`) and **npm 10+** for RDA, PAA, and the frontend.
-- **Python 3.11** only if you intend to run MLA (training) or FIA (LLM
-  investigation reports) directly on the host. The default `docker compose up`
-  skips both. Other 3.x versions are not supported — MLA pins ONNX toolchain
-  versions that don't build cleanly elsewhere. Install via
-  `brew install python@3.11` (macOS), `apt install python3.11` (Debian/Ubuntu),
-  or `pyenv install 3.11`. The exact binary name (`python3.11` vs `python3` vs
-  pyenv-shimmed `python`) depends on how you installed it — use whichever
-  resolves to `Python 3.11.x` for `--version`.
-- **Docker 20.10+** with Compose v2.
-- **Host ports** kept free: `80 3000 3001 5173 5433 6380 9090 9091 9093 9094 29092`.
-  Postgres in Docker listens on `5433` (not `5432`) to avoid host conflicts.
-- **Disk and RAM if running FIA**: ~10 GB free disk for the Phi-3 weights and
-  ≥16 GB free RAM for the loaded model. On Apple Silicon, the first
-  investigation triggers a one-time 6–10 minute MPS kernel compilation — this
-  is normal, not a hang.
-
-## Quick start
-
-> **On Windows?** Follow [`docs/WINDOWS-SETUP.md`](docs/WINDOWS-SETUP.md)
-> instead — it covers the Windows installer flow, `py -3.11` invocation,
-> the MSVC redistributable XGBoost needs, and the cmd/PowerShell
-> activation syntax. The commands below assume a POSIX shell.
-
-Clone, start the stack, send a prediction. Two install options — pick one:
-
-**Run published images** (adopters):
-
-````bash
+```bash
 git clone --depth 1 --branch v1.4.0 https://github.com/ojuri-io/ojuri.git
 cd ojuri
-cp .env.example .env                        # provides AUTH_JWT_SECRET, DB creds, CORS
-docker compose -f docker-compose.yml -f docker-compose.ghcr.yml pull
+cp .env.example .env                        # required — sets your JWT secret and DB password
 docker compose -f docker-compose.yml -f docker-compose.ghcr.yml up -d
-docker compose logs db-migrate              # one-time admin password printed here
-````
+docker compose logs db-migrate              # your admin password is printed here, once
+```
 
-**Build from source** (contributors):
+That starts Postgres, Redis, Kafka with Zookeeper, three copies of RDA
+behind NGINX (change the count with `RDA_REPLICAS`), the PAA worker, and
+Prometheus with Grafana. A one-off `db-migrate` container sets up the
+database first, then exits. MLA and FIA are not started — they're opt-in.
 
-````bash
-git clone https://github.com/ojuri-io/ojuri.git
-cd ojuri
-cp .env.example .env                        # provides AUTH_JWT_SECRET, DB creds, CORS
-docker compose up -d --build                # builds RDA + PAA on first run (a few minutes)
-docker compose logs db-migrate              # one-time admin password printed here
-````
+Now score a transaction:
 
-Either way brings up Postgres, Redis, Kafka, the RDA replicas behind
-NGINX (`RDA_REPLICAS` in `.env`, default 3), the PAA singleton worker, a
-one-shot `db-migrate` container, and
-Prometheus/Grafana. MLA and FIA are opt-in — see
-[Install options](#install-options) and
-[Training a model](#training-a-model-mla). The `.env` copy is required:
-RDA refuses login without `AUTH_JWT_SECRET`.
-
-### Send a test prediction
-
-The example uses the six required fields plus a few common context fields;
-the API accepts ~40 optional context fields (device, geography, identity,
-agent, recipient, …) that improve prediction quality when supplied — see
-[`docs/PREDICT-API.md`](docs/PREDICT-API.md) for the full field reference.
-
-> `transaction_id` is the single identifier Ojuri tracks. It's
-> caller-controlled — any 10–255 char string is accepted, so plug in
-> whatever your upstream system already issues (UUID, ULID, PSP txn
-> ref, order id, your own format). The same string is what the audit
-> row carries, what `transactions.completed` /
-> `transactions.blocked` are partitioned by (for blocked events), and
-> what Sentinel searches against. Make it unique per transaction
-> within your tenant (the `transactions` table enforces uniqueness),
-> and pass it as `Idempotency-Key` if you want replay-safe POSTs.
-
-````bash
+```bash
 curl -X POST http://localhost/v1/predict \
   -H "Content-Type: application/json" \
   -d '{
@@ -152,12 +105,11 @@ curl -X POST http://localhost/v1/predict \
     "device_is_trusted": true,
     "account_age_days": 900
   }'
-````
+```
 
-The response shape (from `PredictResponseDto`) — values are illustrative,
-reason codes vary with the live feature snapshot:
+You get back a decision and the reasons for it:
 
-````json
+```json
 {
   "transaction_id": "550e8400-…",
   "fraud": false,
@@ -165,9 +117,8 @@ reason codes vary with the live feature snapshot:
   "decision": "ACCEPT",
   "decision_source": "ML",
   "reason_codes": [
-    { "code": "VELOCITY_1H",     "description": "Transactions in the last hour above baseline", "contribution":  0.28, "value": 9 },
-    { "code": "PAGERANK",        "description": "Network-centrality score from the transaction graph", "contribution": -0.20, "value": 0.35 },
-    { "code": "CLUSTERING_COEF", "description": "How tightly the sender clusters with known peers", "contribution": 0.11, "value": 0 }
+    { "code": "VELOCITY_1H", "description": "Transactions in the last hour above baseline", "contribution": 0.28, "value": 9 },
+    { "code": "PAGERANK",    "description": "Network-centrality score from the transaction graph", "contribution": -0.20, "value": 0.35 }
   ],
   "model_version": "default",
   "threshold": 0.65,
@@ -175,390 +126,356 @@ reason codes vary with the live feature snapshot:
   "latency_ms": 9,
   "timestamp": 1717718400123
 }
-````
+```
 
-> **What you'll see on a fresh install.** Two things surprise first-time
-> users, both expected:
-> - `"model_version": "default"` — the demo ONNX model scores every
->   prediction, but no version is registered in the model registry yet,
->   so the label falls back to `default`. It becomes `v1.x` once you
->   register a trained model (see [Training a model](#training-a-model-mla)).
-> - The **demo rules** seed *inactive* by default — their amount
->   thresholds (`DENY` ≥ ₦100k, `REVIEW` on ₦500–10k `PAYMENT`s) are
->   demo-dataset props that would otherwise flag large slices of real
->   traffic and shadow the FATF pack. Set `SEED_DEMO_RULES_ACTIVE=true`
->   before first boot (or toggle them in Sentinel → Rules) when walking
->   through the demo dataset. A flagged response with
->   `"decision_source": "PRE_RULE"` is a rule firing, not the model.
+Only six fields are required. There are about 40 more you can send —
+device, location, identity, agent, recipient — and the more you send, the
+better the prediction. They're all listed in
+[`docs/PREDICT-API.md`](docs/PREDICT-API.md).
 
-That's clone to a scored transaction. Next: bring up the
-[dashboard](#running-the-dashboard), [seed demo data](#demo--test-data),
-or [train your own model](#training-a-model-mla).
+**What next?** [Open the dashboard](#open-the-dashboard) ·
+[Fill it with demo data](#load-some-demo-data) ·
+[Train it on your own data](#train-it-on-your-own-data)
 
----
+<details>
+<summary><b>Two things that surprise people on a fresh install</b> — both are normal</summary>
 
-## Install options
+**The response says `"model_version": "default"`.** A demo model is doing
+the scoring, and it works — but you haven't registered a model in the
+registry yet, so there's no version number to report. It changes to
+`v1.x` once you train and register your own.
 
-The two paths run the same stack and the same `docker-compose.yml`; they
-differ only in whether the RDA/PAA/Sentinel images are pulled from GHCR or
-built locally.
+**A request with no context fields might come back `DECLINE`.** With no
+device, location or history to go on, and an empty feature cache, the demo
+model treats the blank profile as risky. Send the context fields shown
+above, or send more traffic so PAA can learn what normal looks like.
 
-**Published images.** The shallow clone fetches only the `v1.4.0` tag
-(~5 MB) for the compose files, `.env.example`, and config. The `pull` step
-downloads the five signed images from
-`ghcr.io/ojuri-io/{rda,paa,mla,fia,sentinel}` — public, no login needed. A
-one-shot `db-migrate` container applies migrations and seeds before RDA
-accepts traffic, and re-runs as a no-op on subsequent `up`.
+Other symptoms are explained in
+[`docs/TROUBLESHOOTING.md`](docs/TROUBLESHOOTING.md).
+</details>
 
-`OJURI_VERSION` defaults to `v1` (floating major — receives patches and
-minors automatically per [`VERSIONING.md`](VERSIONING.md)). Pin strictly
-for regulated deployments:
+<details>
+<summary><b>Building from source, running on Windows, or checking system requirements</b></summary>
 
-````bash
-export OJURI_VERSION=v1.4.0   # before any docker compose command
-````
+**Build from source** — do this if you're contributing, or if your Docker
+Compose is older than 2.24:
 
-> **Docker Compose 2.24+** is required for the GHCR overlay (uses the
-> `!reset` directive). Check with `docker compose version`. Older Compose
-> versions need the build-from-source path.
+```bash
+git clone https://github.com/ojuri-io/ojuri.git
+cd ojuri && cp .env.example .env
+docker compose up -d --build       # first build takes a few minutes
+```
 
-**Build from source.** `docker compose up -d --build` builds RDA + PAA on
-first run (a few minutes), then starts the same services.
+**On Windows**, follow [`docs/WINDOWS-SETUP.md`](docs/WINDOWS-SETUP.md)
+instead. It covers the installer, the `py -3.11` command, the Microsoft
+C++ redistributable that XGBoost needs, and the cmd/PowerShell syntax.
 
-**What comes up, either way:** Postgres, Redis, Kafka, the RDA replicas
-(`RDA_REPLICAS` in `.env`, default 3) behind NGINX, the PAA singleton worker (`paa_group_members` must stay at 1
-— see [`paa-service/README.md`](paa-service/README.md) for the rationale),
-the `db-migrate` one-shot (Knex migrations + seeds, exits cleanly), and the
-Prometheus/Grafana stack. FIA is behind a profile because it carries
-~7.6 GB of Phi-3 weights — opt in with `docker compose --profile fia up -d`
-when you have the disk and RAM.
+**Ports** — these need to be free on your machine: `80 3000 3001 5173
+5433 6380 9090 9091 9093 9094 29092`. Postgres uses `5433` rather than
+the usual `5432` so it won't clash with one you already have.
 
-> Copying `.env.example` to `.env` is required before `docker compose up` —
-> RDA refuses `/v1/auth/login` without `AUTH_JWT_SECRET`, and the
-> Knex-backed admin endpoints need the `DB_*` block. Rotate
-> `AUTH_JWT_SECRET` before any non-dev deploy.
+**Node 20+** is only needed if you want to run the dashboard or do
+host-side development.
 
-> Make sure the Docker daemon is running first — start Docker Desktop
-> (macOS/Windows) or `sudo systemctl start docker` (Linux) and confirm with
-> `docker info`. Compose fails with `Cannot connect to the Docker daemon`
-> if it isn't up.
+**Python 3.11 exactly** is only needed to run MLA or FIA outside Docker.
+Other 3.x versions won't work — MLA depends on specific ONNX library
+versions that don't build elsewhere.
+
+**FIA needs room**: about 10 GB of disk for the language model weights and
+at least 16 GB of free RAM. That's why it's opt-in rather than on by
+default — start it with `docker compose --profile fia up -d`.
+</details>
 
 ---
 
-## Running the dashboard
+## What you get
 
-Sentinel (the operator dashboard) runs separately from the backend. If you
-brought the backend up with `docker compose up -d`, point Vite at NGINX
-before starting it — otherwise the dev server targets a host-side RDA on
-`:3000` and login returns a 502 from the proxy:
+**Your data stays yours.** Every service is a container you run. Nothing
+is sent to us or anyone else. That makes data-residency rules like GDPR,
+NDPR and CBN much simpler to satisfy. MIT licensed, no per-call fees.
 
-````bash
+**Every decision comes with reasons.** The response tells you which
+signals drove it — the amount, how fast the account is moving, how the
+sender sits in the payment network. You don't need a second API call to
+find out why. → [Reason codes](docs/REASON-CODES.md)
+
+**Declined payments get investigated automatically.** Anything Ojuri
+blocks is handed to FIA, which runs a language model on your own hardware
+and writes up a case: what it thinks happened, what to do about it, and
+which signals it relied on. This happens after the fact, so it never slows
+a payment down. → [FIA API](docs/FIA-API.md)
+
+**The model looks after itself.** Ojuri tracks whether its predictions are
+drifting away from reality, retrains when they are, and checks the new
+model is genuinely better before promoting it. You can also run a
+candidate model against real past decisions to see how it would have
+behaved. → [Model registry](docs/MODEL-REGISTRY.md)
+
+**It degrades instead of breaking.** If Redis is unreachable, predictions
+still go out using default values. If the model times out, the transaction
+goes to a human for review — a customer never gets declined because of an
+infrastructure problem.
+
+**A dashboard comes with it.** Sentinel gives your fraud team live
+decisions, a review queue, a rule editor, the model registry, the audit
+log, FIA's investigations, and user admin. When a reviewer overturns a
+decision, that correction feeds back into training — so the model learns
+from your analysts, not from its own past guesses.
+
+---
+
+## Where to go next
+
+**Just evaluating?** [Load the demo data](#load-some-demo-data) so the
+dashboard has something to show, then run the
+[fraud simulation](docs/FRAUD_SIMULATION.md) to see how well it detects
+fraud on your own hardware.
+
+**Rolling it out?** Read [Connecting your system](#connecting-your-system)
+for the API and authentication, then [Running it](#running-it) for
+upgrades and the dashboard, then
+[Train it on your own data](#train-it-on-your-own-data).
+
+**Contributing?** [`CONTRIBUTING.md`](CONTRIBUTING.md) has the development
+setup. [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) explains what each
+service is responsible for.
+
+---
+
+## Connecting your system
+
+Your application calls `POST /v1/predict` and acts on the `decision` it
+gets back — `ACCEPT`, `REVIEW`, or `DECLINE`. Everything below is
+optional.
+
+- **The full API** — every field you can send, what comes back, and every
+  error case: [`docs/PREDICT-API.md`](docs/PREDICT-API.md). You choose the
+  `transaction_id`, so use whatever reference your system already has.
+- **Locking down the API** — set `RDA_REQUIRE_API_KEY=true`, then issue
+  keys from `POST /v1/admin/api-keys`: [`docs/AUTH.md`](docs/AUTH.md).
+  People logging into the dashboard use accounts and roles instead:
+  [`docs/AUTHZ.md`](docs/AUTHZ.md).
+- **Safe retries** — if a request times out and you send it again, an
+  `Idempotency-Key` header stops it being scored twice:
+  [`docs/IDEMPOTENCY.md`](docs/IDEMPOTENCY.md).
+- **Being notified** — Ojuri can push decisions to your endpoint, signed
+  and retried: [`docs/WEBHOOKS.md`](docs/WEBHOOKS.md).
+- **Adding your own rules** — write rules that run before the model (and
+  can skip it) or after it (and can overrule it). They update within 30
+  seconds, no restart: [`docs/RULES.md`](docs/RULES.md).
+- **Adding your own signals** — the model reads 64 features out of the
+  box; you can define more without writing code:
+  [`docs/FEATURES.md`](docs/FEATURES.md).
+
+---
+
+## Running it
+
+### Open the dashboard
+
+The dashboard runs separately from the backend. If your backend is in
+Docker, tell the dashboard to talk to NGINX first — otherwise it looks for
+a local RDA on port 3000 and login fails with a 502:
+
+```bash
 cd frontend
 npm install
-cp .env.example .env       # then edit: uncomment the "Docker stack" block
+cp .env.example .env       # then uncomment the "Docker stack" block
 npm run dev                # http://localhost:5173
-````
+```
 
-For host-side dev (`npm run start:dev` from the repo root for RDA), the
-default targets in `.env.example` already point at `127.0.0.1:3000`, so
-`cp .env.example .env` is optional.
+Log in with the admin password from `docker compose logs db-migrate`.
+You'll be asked to change it immediately. If you've already lost it — it's
+only printed once — run `npm run reset:admin` for a new one. More detail:
+[`docs/FRONTEND.md`](docs/FRONTEND.md).
 
-Log in with the **seeded admin password from `docker compose logs
-db-migrate`** (build-from-source on the host: `npm run db:migrate`). The
-seeded user has `mustChangePassword=true`; the first login forces a
-rotation. To require `X-Api-Key` on `/v1/predict`, set
-`RDA_REQUIRE_API_KEY=true` and issue a key from `POST /v1/admin/api-keys`.
+### Load some demo data
 
-Lost the seeded password? It's only printed once. `npm run reset:admin`
-mints a fresh random one (or pass `-- --password 'my-chosen-secret'` to set
-your own); the new password again has `mustChangePassword=true`.
+A new install has an empty dashboard until transactions start flowing.
+This seeder sends about 500 realistic ones, including a ring of accounts
+cycling money between themselves, a mule network, VPN sessions, and
+payments deliberately split to stay under reporting limits:
+
+```bash
+docker compose --profile demo run --rm demo-seed          # inside the stack
+RDA_URL=http://localhost node scripts/demo-traffic.mjs    # or from your machine
+```
+
+Set `RDA_URL` to wherever RDA is reachable — `http://localhost` for the
+Docker stack, since NGINX is on port 80. The script defaults to
+`http://localhost:3000`, which only works if you're running RDA directly
+on your machine.
+
+The demo comes with its own rule pack, which is **switched off by
+default** — its thresholds are tuned for the demo data and would flag far
+too much real traffic. Turn it on to see the intended mix of decisions:
+set `SEED_DEMO_RULES_ACTIVE=true` before your first `docker compose up`,
+or toggle the four `demo:` rules in Sentinel → Rules.
+
+### Upgrading and version pinning
+
+All five services are released together under one version number, and the
+images live at `ghcr.io/ojuri-io/{rda,paa,mla,fia,sentinel}`. By default
+you track `v1`, which picks up new features and fixes but never a breaking
+change. To upgrade:
+
+```bash
+git pull --tags
+docker compose -f docker-compose.yml -f docker-compose.ghcr.yml pull
+docker compose -f docker-compose.yml -f docker-compose.ghcr.yml up -d
+```
+
+If you're in a regulated environment and need to know exactly what you're
+running, set `OJURI_VERSION` to a specific release before any compose
+command. You then upgrade deliberately, by changing that value:
+
+```bash
+export OJURI_VERSION=v1.4.2
+```
+
+Check [`CHANGELOG.md`](CHANGELOG.md) before upgrading — it flags new
+settings worth reviewing. Major version jumps need
+[`UPGRADING.md`](UPGRADING.md). The full policy is in
+[`VERSIONING.md`](VERSIONING.md). To hear about new releases, use **Watch
+→ Custom → Releases** on the repo; security advisories go out the same
+way.
+
+### When something looks wrong
+
+[`docs/TROUBLESHOOTING.md`](docs/TROUBLESHOOTING.md) explains the symptoms
+people hit most: a 502 when logging into the dashboard, a rule firing when
+you expected the model, MLA saying it can't find a model, and the two
+ways benchmarks quietly produce numbers that are too good to be true.
 
 ---
 
-## Demo & test data
+## Train it on your own data
 
-A fresh stack has an empty dashboard until predictions flow. The demo
-seeder posts ~500 realistic transactions — 50 recurring senders plus
-embedded fraud patterns (a money ring, a mule fan-out, VPN sessions,
-structuring) — so every Sentinel page has data to show:
+Ojuri ships with a small pre-trained model so `/v1/predict` gives you real
+answers from the first minute. It was trained on public data, not yours —
+replace it once you have your own transaction history.
 
-````bash
-docker compose --profile demo run --rm demo-seed   # against the running stack
-node scripts/demo-traffic.mjs                      # or from the host (RDA_URL=… to override)
-````
+MLA does the training. You can run it inside Docker with `--profile mla`,
+or in a local Python environment, which is the better choice if you want
+to use a GPU:
 
-The demo dataset is paired with the demo rule pack, which seeds
-*inactive* by default. For the intended ACCEPT/REVIEW/DECLINE mix,
-activate it first: `SEED_DEMO_RULES_ACTIVE=true` in `.env` before the
-first `docker compose up`, or flip the four `demo:` rules on in
-Sentinel → Rules.
-
-To measure detection quality — not just populate the UI — run the
-persona-driven benchmark in
-[`docs/FRAUD_SIMULATION.md`](docs/FRAUD_SIMULATION.md): ~128k transactions
-with six fraud typologies, scored per typology before and after a
-label-driven retrain. It's how the numbers in [Status](#status) were
-produced, and it runs against your own deployment. Match its reference
-configuration before comparing numbers: demo rule pack disabled and
-`review_margin=0.08` (`PUT /v1/admin/settings/runtime/review_margin`, or
-Sentinel → Settings) — the review band is what turns model uncertainty
-into analyst labels, and it ships at 0.
-
----
-
-## Training a model (MLA)
-
-A 120 KB demo ONNX model (`models/fraud_model.onnx`, a PaySim-trained
-XGBoost) ships in the repo so `/v1/predict` returns real ML decisions out
-of the box; the performance numbers here were measured against it. Replace
-it once MLA has trained on your data.
-
-MLA runs either inside Compose under the `mla` profile or on a host venv.
-The host-venv path is the historical default and is recommended when you
-want GPU access for training. To run MLA in Compose, add `--profile mla` to
-any `up` command and set `MLA_HEALTH_URL=http://mla:9095` in `.env` so the
-RDA replicas probe the in-Compose service instead of `host.docker.internal`.
-
-Host-venv first-time setup:
-
-````bash
+```bash
 cd mla-service
-python --version                # must report Python 3.11.x — see Prerequisites
-python -m venv venv
-source venv/bin/activate
+python --version                # must be 3.11.x
+python -m venv venv && source venv/bin/activate
 pip install -r requirements.txt
-python -m src.main
-````
+python scripts/train_initial_model.py   # trains a first model
+python -m src.main                      # then watch for drift and retrain
+```
 
-If `python` on your PATH isn't 3.11, substitute the binary your installer
-provides (`python3.11` / `python3` on Debian/Ubuntu, or the pyenv shim once
-`pyenv local 3.11` is set here). Windows: see
-[`docs/WINDOWS-SETUP.md`](docs/WINDOWS-SETUP.md). On subsequent runs, just
-`source venv/bin/activate && python -m src.main`. Sentinel's "System health"
-page shows MLA offline until you start it — expected unless you wire MLA
-into your deployment.
+Once trained, activate the new model from the dashboard, or copy the
+`.onnx` file to `models/fraud_model.onnx` and RDA will pick it up.
 
-On a fresh checkout MLA logs a one-time `⚠️  No production model found in
-registry` and idles waiting for drift signals. This is **not** a conflict
-with the shipped demo model — `models/fraud_model.onnx` is what RDA loads
-so predictions work, whereas MLA's registry scans `models/versions/<v>/`
-for lineage-tracked versions, and that directory ships empty. To seed
-`models/versions/v1.0/` immediately (so MLA has a baseline for its first
-A/B comparison):
+To train on your real data — loading it, training, registering the result,
+and switching to it — follow [`docs/TRAINING.md`](docs/TRAINING.md).
+If you're importing transaction history from a CSV, start with
+[`docs/ADOPTER_TRAINING.md`](docs/ADOPTER_TRAINING.md).
 
-````bash
-python scripts/train_initial_model.py     # writes models/versions/v1.0/{model.onnx,model.json,scaler.npz,meta.json}
-````
-
-Without real `fraudLabel` data in Postgres, the script falls back to
-synthetic data and logs a warning — fine for a dev walkthrough, not for
-production results. Then activate via the admin UI or copy the `.onnx` to
-`models/fraud_model.onnx` for RDA to pick up (replacements are gitignored).
-See [`docs/TRAINING.md`](docs/TRAINING.md) for training on your own data.
-
-Every model load (boot or hot-reload) runs a two-check calibration probe: a
-deterministic re-run and a clearly-legit vs clearly-fraud discrimination
-test. If either fails — file missing, constant output, wrong feature
-dimension — `/readyz` reports `{"name":"onnx-model","status":"DOWN"}` and
-the circuit breaker fail-closes every predict to `1.0` (DECLINE) until a
-working model loads. There is no degraded-mode heuristic that would
-silently serve random predictions.
-
----
-
-## Troubleshooting
-
-- **`Cannot connect to the Docker daemon`** — start Docker Desktop or
-  `sudo systemctl start docker`; confirm with `docker info`.
-- **Login returns 502 (dashboard)** — the frontend `.env` isn't pointing at
-  NGINX. Uncomment the "Docker stack" block in `frontend/.env`; see
-  [Running the dashboard](#running-the-dashboard).
-- **`crypto.getRandomValues is not a function` on `npm run dev`** — Node is
-  older than 18. The repo pins 20 in `.nvmrc`; run `nvm use` in the repo
-  root.
-- **Dashboard opens on a different port** — another Vite project holds 5173,
-  so Vite serves on the next free port. Use the URL it prints, not a
-  bookmark.
-- **First prediction returns `DECLINE` for a bare request** — with no
-  context fields and a cold feature cache, the demo model scores the default
-  vector as risky. Add context fields (as in the Quick start example) or
-  send more traffic so PAA warms the cache.
-- **`PRE_RULE` on a request you expected the model to score** — a seeded
-  rule fired first: one of the FATF pack, or a demo rule if you enabled
-  them (`SEED_DEMO_RULES_ACTIVE=true`); see the fresh-install note in
-  Quick start.
-- **Lost the admin password** — `npm run reset:admin`.
+Every time a model loads, Ojuri tests it: it scores the same input twice
+to check the answers match, then checks it can still tell an obviously
+legitimate payment from an obviously fraudulent one. If either test fails,
+`/readyz` reports the model as DOWN, so your load balancer or orchestrator
+can take that instance out of rotation. And if inference can't run at all,
+the transaction goes to a human for review rather than being scored on a
+guess.
 
 ---
 
 ## Architecture
 
-RDA is the only producer. Clients hit `POST /v1/predict` through NGINX; RDA
-runs hot-reloaded rules (PRE), reads features from Redis (PAA-maintained), runs
-ONNX inference with per-segment thresholds, applies POST rules, writes an
-audit row, and publishes the event to Kafka. PAA consumes
-`transactions.completed` (keyed by `sender_id`) and updates the graph and
-velocity windows that feed RDA's next prediction. MLA consumes the same topic
-for drift monitoring. On `DECLINE`, RDA additionally publishes to
-`transactions.blocked` (keyed by `transaction_id`) for FIA to investigate at
-LLM latency without affecting PAA's hot path.
+RDA handles the request. It runs your pre-model rules, looks up the
+sender's behavioural features in Redis, scores the transaction with the
+model, applies your post-model rules, writes an audit record, and puts the
+event on Kafka.
 
-````mermaid
-flowchart TB
-    Client[Client / PSP]
-    UI[Sentinel Dashboard<br/>React + Vite]
-    NGINX[NGINX]
-    RDA[RDA · Fastify<br/>rules · ONNX · audit · webhooks]
-    PAA[PAA · KafkaJS worker<br/>graph + velocity]
-    MLA[MLA · Python<br/>drift + retrain]
-    FIA[FIA · Python<br/>Phi-3 LLM]
-    Kafka[(Kafka)]
-    PG[(Postgres · fraud_db)]
-    Redis[(Redis · features)]
-    Models[(models/versions/ FS)]
+From there, PAA picks it up and updates its picture of who pays whom and
+how often, writing that back to Redis so the next prediction is better
+informed. MLA reads the same stream to watch for the model going stale.
+Declined transactions also go onto a second queue that only FIA reads —
+that keeps slow language-model work well away from the fast path.
 
-    Client -->|POST /v1/predict| NGINX --> RDA
-    UI -->|/v1/admin/*| RDA
-    UI -->|/v1/reports*| FIA
-    RDA -->|transactions.completed<br/>key = sender_id| Kafka
-    RDA -->|transactions.blocked · DECLINE only<br/>key = transaction_id| Kafka
-    RDA <--> Redis
-    RDA --> PG
-    Kafka --> PAA --> Redis
-    PAA --> PG
-    Kafka --> MLA
-    MLA --> PG
-    MLA -->|writes new version| Models
-    Models -->|hot-swap on ACTIVE| RDA
-    Kafka --> FIA --> PG
-    RDA -.HMAC webhooks.-> Subscribers[(subscriber endpoints)]
-````
-
-Full system notes, per-service responsibilities, and data-flow diagrams live in
+For per-service detail, data-flow diagrams, and deployment topology, see
 [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md).
+
+### How fast is it?
+
+Scoring itself is very fast — 49 microseconds at the 99th percentile. A
+full `POST /v1/predict` is 6 ms at the 99th percentile when nothing else
+is running, measured against a single instance directly rather than
+through NGINX. Under load, with 16 clients at once, that rises to about
+295 ms, because Node's event loop becomes the bottleneck.
+
+**Treat these as rough orientation, not promises.** They were measured on
+one Apple Silicon laptop. Measure on your own hardware — and read the
+benchmarking notes in
+[`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md#8-performance-characteristics)
+first, because two of our own defaults (the NGINX rate limit and the
+duplicate-request shortcut) will hand you impressively fast numbers that
+mean nothing.
 
 ---
 
 ## Documentation
 
-- [Architecture](docs/ARCHITECTURE.md) — services, data flow, deployment topology
-- [Documentation index](docs/README.md) — full per-feature reference
-- [Authentication (API keys)](docs/AUTH.md) and [Authorization (users/roles/JWT)](docs/AUTHZ.md)
-- [Rules engine](docs/RULES.md) — JSON-Logic DSL, PRE/POST stages, hot reload
-- [Model registry](docs/MODEL-REGISTRY.md) — lifecycle, segment thresholds
-- [Feature catalogue](docs/FEATURES.md) — base + adopter overlay, schema versioning
-- [Training](docs/TRAINING.md) — load data, train, register, activate
-- [Fraud simulation benchmark](docs/FRAUD_SIMULATION.md) — persona-driven detection benchmark; reference before/after-retrain scorecard
-- [Audit log](docs/AUDIT.md) and [Reason codes](docs/REASON-CODES.md)
-- [Webhooks](docs/WEBHOOKS.md) — HMAC signing, retry, delivery ledger
-- [Idempotency](docs/IDEMPOTENCY.md) — `Idempotency-Key` semantics on `/v1/predict`
-- [FIA HTTP API](docs/FIA-API.md) — on-demand reports and follow-up messages
-- [Sentinel frontend](docs/FRONTEND.md) — layout, auth, offline demo mode
-- [Roadmap](ROADMAP.md) — what's planned next, what's out of scope
-- [Changelog](CHANGELOG.md) — per-release history
-- [Versioning policy](VERSIONING.md) — SemVer, lockstep across all five services, pinning recommendation
-- [Upgrading](UPGRADING.md) — major-version upgrade paths (none yet — v1 is the initial release)
-- [Security policy](SECURITY.md) — supported versions, disclosure channel
-- Service-level READMEs: [`paa-service/`](paa-service/), [`mla-service/`](mla-service/README.md), [`fia-service/`](fia-service/README.md), [`frontend/`](frontend/README.md)
+**Connecting your system** — [Predict API](docs/PREDICT-API.md) ·
+[API keys](docs/AUTH.md) · [Users and roles](docs/AUTHZ.md) ·
+[Safe retries](docs/IDEMPOTENCY.md) · [Webhooks](docs/WEBHOOKS.md) ·
+[Rules](docs/RULES.md) · [Features](docs/FEATURES.md) ·
+[FIA API](docs/FIA-API.md)
 
----
+**Running it** — [Architecture](docs/ARCHITECTURE.md) ·
+[Troubleshooting](docs/TROUBLESHOOTING.md) ·
+[Dashboard](docs/FRONTEND.md) · [Audit log](docs/AUDIT.md) ·
+[Reason codes](docs/REASON-CODES.md) ·
+[Model registry](docs/MODEL-REGISTRY.md) ·
+[Windows setup](docs/WINDOWS-SETUP.md)
 
-## Releases
+**Training models** — [Training](docs/TRAINING.md) ·
+[Importing your data](docs/ADOPTER_TRAINING.md) ·
+[Fraud simulation](docs/FRAUD_SIMULATION.md)
 
-Ojuri ships as a single tagged release that applies to all five
-services — RDA, PAA, MLA, FIA, and Sentinel — in lockstep. Each
-release publishes Docker images to GHCR under
-`ghcr.io/ojuri-io/<service>` with both an exact-version tag
-(`:v1.4.2`) and a floating major tag (`:v1`). See
-[`VERSIONING.md`](VERSIONING.md) for the full policy.
+**About the project** — [Roadmap](ROADMAP.md) ·
+[Changelog](CHANGELOG.md) · [Versioning](VERSIONING.md) ·
+[Upgrading](UPGRADING.md) · [Security](SECURITY.md) ·
+[Contributing](CONTRIBUTING.md)
 
-### Pin to `:v1` in production
-
-Adopters running from the published images should pin to the
-floating major tag in their compose file or Helm values:
-
-````yaml
-# Pin to :v1 to receive bug-fix and feature releases automatically.
-# Breaking changes ship as :v2 and never land here without you
-# explicitly bumping. See VERSIONING.md.
-services:
-  rda:
-    image: ghcr.io/ojuri-io/rda:v1
-  paa:
-    image: ghcr.io/ojuri-io/paa:v1
-  mla:
-    image: ghcr.io/ojuri-io/mla:v1
-  fia:
-    image: ghcr.io/ojuri-io/fia:v1
-  sentinel:
-    image: ghcr.io/ojuri-io/sentinel:v1
-````
-
-If you need stricter pinning (regulated environments, certified
-builds), use the exact version (`:v1.4.2`) or the image digest.
-You then take on the responsibility of upgrading manually for
-each release.
-
-### Upgrading
-
-**Docker adopters** (using the published images via the GHCR overlay):
-
-````bash
-git pull --tags                                     # refresh tags + compose files
-docker compose -f docker-compose.yml -f docker-compose.ghcr.yml pull
-docker compose -f docker-compose.yml -f docker-compose.ghcr.yml up -d
-````
-
-**Source adopters** (building from a `git clone`):
-
-````bash
-git pull
-docker compose up -d --build
-````
-
-Read the [`CHANGELOG.md`](CHANGELOG.md) entry for any minor or
-major bump before deploying — even though minor releases are
-designed to be safe, the changelog often calls out new env
-variables you may want to set explicitly. Major bumps require
-reading [`UPGRADING.md`](UPGRADING.md).
-
-### Get notified of releases
-
-Click **Watch → Custom → Releases** on the
-[GitHub repository](https://github.com/ojuri-io/ojuri) to receive
-an email whenever a new tag is published. Security advisories use
-the same notification channel.
+Everything, indexed: [`docs/README.md`](docs/README.md). Each service also
+has its own README: [`paa-service/`](paa-service/) ·
+[`mla-service/`](mla-service/README.md) ·
+[`fia-service/`](fia-service/README.md) ·
+[`frontend/`](frontend/README.md)
 
 ---
 
 ## Status
 
-Stable as of v1.4.0: API-key auth, JWT user auth and RBAC, hot-reloaded rules
-engine, model registry with per-segment thresholds, decision audit log with
-inline reason codes, HMAC-signed webhooks, idempotency keys, FIA on-demand
-reports and conversational follow-ups, the Sentinel dashboard — and the label
-feedback loop: chargebacks/disputes in via `POST /v1/admin/labels`,
-label-volume retrains with temporal splits and a binding deployment gate,
-live shadow scoring with champion-vs-shadow ground-truth metrics, and a
-REVIEW band that turns model uncertainty into analyst labels.
+**Stable as of v1.4.0.** API keys, user accounts and roles, live-editable
+rules, the model registry with per-segment thresholds, a full audit log
+with reasons on every decision, signed webhooks, safe retries, FIA's
+on-demand reports and follow-up questions, and the Sentinel dashboard.
 
-Detection is validated end-to-end by a reproducible 128k-transaction persona
-simulation — 34% of fraud caught cold, 98.8% after one label-driven retrain
-at 1.1% FPR. Those numbers were measured with the demo rule pack disabled
-and `review_margin=0.08` (a default fresh install seeds the review margin
-at 0, so the ML never returns REVIEW until you set one). See
-[`docs/FRAUD_SIMULATION.md`](docs/FRAUD_SIMULATION.md) for the full run
-configuration and to run it against your own deployment.
+The learning loop is closed: you send chargebacks and confirmed fraud back
+in through `POST /v1/admin/labels`, Ojuri retrains once enough have
+arrived, tests the new model against a later time period than it trained
+on, and only ships it if it genuinely wins. A new model can also run
+silently alongside the live one so you can compare them on real traffic
+before switching.
 
-Scoped follow-ups (see [`ROADMAP.md`](ROADMAP.md)): Helm chart and Terraform
-module, TypeScript and Python client SDKs, canary traffic split by API-key
-cohort, PII tokenisation hooks, mTLS for service-to-service callers,
-OAuth 2.0 client-credentials grant, pre-built connectors (Stripe / Adyen /
-Plaid), hosted sandbox.
+One caveat on the 98.8% figure above: it was measured with the demo rules
+switched off and the review band set to 0.08. A fresh install sets that
+band to 0, which means nothing is ever sent for review. Match the
+configuration in [`docs/FRAUD_SIMULATION.md`](docs/FRAUD_SIMULATION.md)
+before comparing your own numbers.
 
-Performance numbers in this README are orientation values measured on a single
-Apple Silicon developer workstation, not SLA targets — re-measure on your own
-hardware before relying on them.
+**Planned next** (see [`ROADMAP.md`](ROADMAP.md)): a Helm chart and
+Terraform module, TypeScript and Python client libraries, canary rollouts
+by API-key group, PII tokenisation, mTLS between services, OAuth 2.0,
+ready-made Stripe/Adyen/Plaid connectors, and a hosted sandbox.
 
 ---
 
