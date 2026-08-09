@@ -26,7 +26,7 @@ and registration with RDA for hot-reload.
 |---|---|
 | Python | 3.11 (matches the `python:3.11-slim` Dockerfile) |
 | Host RAM | ~2 GB free for `TRAINING_DATA_SIZE=50000` (default). Production sizes of 500k+ need ~16 GB. |
-| Disk | Each trained version is ~1–10 MB on disk (`model.onnx` + `model.pkl` + `scaler.npz` + `meta.json`). Plan ~100 MB per 10 versions. |
+| Disk | Each trained version is ~1–10 MB on disk (`model.onnx` + `model.json` + `scaler.npz` + `calibrator.npz` + `meta.json`). Plan ~100 MB per 10 versions. |
 | Postgres | Reachable `fraud_db` with the `transactions` table (RDA migrations have been run). Default port in dev is `5433`. |
 | Kafka | Required for **production** mode (`python -m src.main`). Not required for `--train` cold-start. |
 | RDA | Optional for cold-start. Required for automatic registration + ACTIVATE; otherwise operator activates via the admin UI. |
@@ -58,7 +58,8 @@ pip install -r requirements.txt
 | `RDA_API_URL` | unset | e.g. `http://rda:3000`. If set with `MLA_SERVICE_TOKEN`, MLA auto-registers and activates new versions. |
 | `MLA_SERVICE_TOKEN` | unset | Bearer token with `models:write` permission. |
 | `TRAINING_DATA_SIZE` | `50000` | Max rows pulled from `transactions` per training run. |
-| `DRIFT_F1_THRESHOLD` | `0.92` | Below this, MLA retrains. |
+| `DRIFT_F1_THRESHOLD` | `0.4` | Absolute floor, used only when the champion has no recorded validation F1. Normally the trigger is the champion's F1 minus `DRIFT_F1_MARGIN`. |
+| `DRIFT_F1_MARGIN` | `0.05` | How far below the deployed champion's validation F1 the windowed F1 must fall to count as drift. |
 | `DRIFT_PSI_THRESHOLD` | `0.25` | Above this on `amount`, MLA retrains. |
 | `DRIFT_WINDOW_SIZE` | `1000` | Sliding window for drift signal. |
 | `SMOTE_RATIO` | `1.0` | Minority-class oversampling ratio (1.0 = balanced). |
@@ -152,7 +153,7 @@ models/
 └── versions/
     └── v1.0/
         ├── model.onnx             ← the artefact RDA loads via sourceUri
-        ├── model.pkl              ← XGBoost pickle, needed for next A/B test
+        ├── model.json             ← XGBoost native format, needed for the next A/B test
         ├── scaler.npz             ← co-located so RDA-side ONNX inputs match
         └── meta.json              ← training metrics + feature_schema_version + SHA-256
 ```
@@ -275,7 +276,7 @@ After a `train_with_datasets.py` run, register the result manually:
 # Copy into the versions layout RDA expects
 mkdir -p ../models/versions/v1.0
 cp ../models/fraud_model_v1.0.onnx ../models/versions/v1.0/model.onnx
-cp ../models/fraud_model_v1.0.pkl  ../models/versions/v1.0/model.pkl
+cp ../models/fraud_model_v1.0.json ../models/versions/v1.0/model.json
 
 # Compute the SHA and POST it
 SHA=$(sha256sum ../models/versions/v1.0/model.onnx | cut -d' ' -f1)
@@ -314,7 +315,8 @@ This is the long-running production form. MLA:
 
 | Threshold | Default | Tighter (more retrains) | Looser (fewer retrains) |
 |---|---|---|---|
-| `DRIFT_F1_THRESHOLD` | `0.92` | `0.95` | `0.85` |
+| `DRIFT_F1_MARGIN` | `0.05` | `0.02` | `0.10` |
+| `DRIFT_F1_THRESHOLD` (fallback only) | `0.4` | `0.6` | `0.3` |
 | `DRIFT_PSI_THRESHOLD` | `0.25` | `0.15` | `0.40` |
 | `DRIFT_WINDOW_SIZE` | `1000` | `500` (faster reaction, noisier) | `5000` (slower reaction, smoother) |
 
@@ -386,7 +388,7 @@ curl -X PUT http://localhost/mla/v1/admin/drift-config \
   -H "Content-Type: application/json" \
   -H "Authorization: Bearer $JWT" \
   -d '{
-    "driftF1Threshold": 0.92,
+    "driftF1Threshold": 0.4,
     "driftPsiThreshold": 0.25,
     "driftWindowSize": 1000,
     "autoRetrainEnabled": true,
@@ -616,14 +618,14 @@ Logged at MLA boot when the registry has an ONNX but no co-located pickle:
    First retraining will deploy without comparison
 ```
 
-Means somebody activated a model whose `models/versions/<v>/model.pkl` is missing. The next retrain will skip the A/B gate and deploy unconditionally. To recover the A/B gate without retraining, drop a matching `model.pkl` next to the ONNX (or accept that you'll have one unconditional deploy and the gate returns afterward).
+Means somebody activated a model whose `models/versions/<v>/model.json` is missing. Without the booster there is nothing to compare against, so the next retrain skips the A/B gate and deploys unconditionally. To restore the gate without retraining, drop the matching `model.json` next to the ONNX — or accept one unconditional deploy, after which the gate returns.
 
 ### Drift never trips
 
 Two common causes:
 
 1. **Window full of NULL labels.** The drift detector only counts events with `fraudLabel IS NOT NULL`. If your labelling pipeline is broken, the window fills slowly or never. `/stats` shows `drift_checks` ticking but the F1 calculation is over too few labelled events to be meaningful.
-2. **Thresholds are too loose.** Default `0.92` F1 and `0.25` PSI are conservative. If you're running a small synthetic workload, you may genuinely never breach them. Drop the thresholds for testing.
+2. **Thresholds are too loose.** Drift is measured against the champion's own validation F1 minus `DRIFT_F1_MARGIN` (0.05), with PSI at 0.25. On a small synthetic workload you may genuinely never breach either. Widen the margin or drop the PSI threshold for testing.
 
 ### `python -m src.main` exits immediately
 

@@ -194,8 +194,8 @@ your own features through here without touching the catalogue.
   "decision": "ACCEPT",
   "decision_source": "ML",
   "reason_codes": [
-    { "code": "AMOUNT_HIGH",  "description": "...", "contribution":  0.27, "value": 1500.0 },
-    { "code": "VELOCITY_24H", "description": "...", "contribution": -0.05, "value": 4.0 }
+    { "code": "AMOUNT_HIGH",  "description": "...", "contribution":  0.27, "value": 1500.0, "basis": "MODEL_WEIGHTED" },
+    { "code": "VELOCITY_24H", "description": "...", "contribution": -0.05, "value": 4.0,    "basis": "HEURISTIC" }
   ],
   "model_version": "default",
   "threshold": 0.65,
@@ -210,13 +210,13 @@ your own features through here without touching the catalogue.
 |---|---|---|
 | `fraud`             | boolean                                       | `decision === "DECLINE"`. |
 | `fraud_probability` | 0 ≤ x ≤ 1                                     | Champion-model probability, rounded to 4 dp. |
-| `decision`          | `ACCEPT` \| `DECLINE` \| `REVIEW`             | Final, post-rule. |
+| `decision`          | `ACCEPT` \| `DECLINE` \| `REVIEW`             | Final, post-rule. **Handle `REVIEW`** — it is not rule-only. It arises three ways: a rule whose action is `REVIEW`; an ML score falling in the review band (between `reviewThreshold` and `threshold`); or the ONNX breaker fallback, when inference never ran. A fresh install seeds the review margin at 0, so the band is inert until an operator sets one — but do not treat that as a guarantee. |
 | `decision_source`   | `ML` \| `PRE_RULE` \| `POST_RULE` \| `BREAKER_FALLBACK` | Which layer made the call. `BREAKER_FALLBACK` means inference never ran — the score is a fail-safe constant, not a model output. |
-| `reason_codes`      | array                                         | Top contributing features. See [`docs/REASON-CODES.md`](REASON-CODES.md). |
+| `reason_codes`      | array                                         | Top contributing features. Each carries a `basis` of `MODEL_WEIGHTED` (magnitude derived from the deployed model's gain importances) or `HEURISTIC` (hand-specified), so an investigator knows which they are reading. See [`docs/REASON-CODES.md`](REASON-CODES.md). |
 | `model_version`     | string                                        | The champion that scored this request. |
-| `threshold`         | number                                        | Threshold used for this segment + model. |
+| `threshold`         | number                                        | Threshold used for this segment + model. The `0.65` above is the global default; once a model is ACTIVE the seeded per-type thresholds apply (CASH_OUT 0.70, TRANSFER 0.30, PAYMENT/DEBIT/CASH_IN 0.50), so most live responses carry one of those instead. |
 | `rule`              | object \| undefined                           | Present for `PRE_RULE` / `POST_RULE` only. |
-| `audit_id`          | uuid \| undefined                             | Foreign key into `decisionAuditLog`. Absent only when the audit write failed (which is swallowed by design — see [`docs/AUDIT.md`](AUDIT.md)). |
+| `audit_id`          | uuid \| undefined                             | Foreign key into `decisionAuditLog`. Absent only when that individual audit write failed, which is swallowed by design. A *sustained* audit outage is not swallowed — the queue fills and the endpoint returns 503. See [`docs/AUDIT.md`](AUDIT.md). |
 | `latency_ms`        | number                                        | End-to-end service time, not including network. |
 | `timestamp`         | number                                        | Server-side reply time, Unix ms. |
 

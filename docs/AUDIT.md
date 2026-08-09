@@ -153,7 +153,28 @@ separate cold archive.
 
 ## Failure isolation
 
-`DecisionAuditService.record()` swallows DB errors — a Postgres
-outage must not block live predictions. The row is lost in that
-case; if regulators require zero-loss auditing, add a journaling
-producer (Kafka or local disk) in front of the DB write.
+There are two layers here, and they behave differently.
+
+**A single failed write is swallowed.** `DecisionAuditService.record()`
+catches the error, logs it, increments an audit-write-failure metric and
+returns `{ kind: "failed" }`. That row is lost. One bad write must not
+take down live predictions.
+
+**A sustained outage is not.** The hot path doesn't call `record()`
+directly — it calls `enqueue()`, which buffers to a background queue. If
+Postgres stays down the queue fills, and at `AUDIT_QUEUE_CAPACITY`
+(default 50,000) `enqueue()` raises `AuditQueueBackpressureError`, which
+the route maps to **HTTP 503**. That is deliberate: losing one row to a
+blip is acceptable, silently losing the whole audit trail while happily
+returning decisions is not.
+
+So the honest summary is *best-effort per row, fail-loud in aggregate*.
+
+If you need zero-loss auditing, set `AUDIT_PIPELINE=stream`. The decision
+event then carries the full audit payload and is published to Kafka with
+an awaited `acks=all` send **before** the response, and a consumer
+materialises this table from the topic — so durability no longer depends
+on Postgres being reachable at decision time. See
+[`LOG_FIRST_AUDIT_PROTOTYPE.md`](LOG_FIRST_AUDIT_PROTOTYPE.md) for
+measurements and the remaining gaps. `AUDIT_SYNC_WRITE=true` is the
+simpler middle ground: persist before responding, at a latency cost.

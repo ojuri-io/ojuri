@@ -40,7 +40,7 @@ you either:
   the CSV lacks `currency` — type `NGN` and every row gets `NGN`.
 
 A toggle for **Drop fully empty rows** is on by default. The full
-transform spec is sent on `POST /v1/admin/training/upload/:id/complete`
+transform spec is sent on `POST /v1/admin/training/upload/:uploadId/complete`
 as `{ "transformSpec": { headerMap, columnDefaults, dropEmptyRows } }`
 and persists on the `trainingJobs.transformSpec` column so you can see
 exactly what transforms were applied to a historical import.
@@ -180,7 +180,7 @@ So in practice, a CSV with only `txn_id, sender_id, receiver_id, amt, txn_type, 
 
 Booleans accept `true/false`, `1/0`, `yes/no` (case-insensitive).
 
-To get an empty CSV with the canonical headers, click **Download template** on the Sentinel Training imports page or curl `GET /v1/admin/training/template.csv`.
+To get an empty CSV with the canonical headers, click **Download template** on the Sentinel Training imports page. The file is generated in the browser — there is no server endpoint for it, so it can't be curled.
 
 ## 3. Direct Postgres COPY (technical adopters)
 
@@ -226,7 +226,7 @@ new labels accumulate, checked every `LABEL_CHECK_INTERVAL_SECONDS`
 (default 900). Set the threshold to 0 to disable and rely on drift /
 manual retrains only. Reviewer overrides in Sentinel keep flowing
 through the same ground-truth columns via
-`POST /v1/admin/audit/:auditId/override`.
+`POST /v1/decisions/:auditId/override`.
 
 For high-volume label streams, publish to a Kafka topic `labels.received`
 that MLA consumes — design TBD; needs the topic + consumer wired.
