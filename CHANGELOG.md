@@ -7,39 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-### Changed
-
-- **Configurable RDA replica count (`RDA_REPLICAS`, default 3)** — the
-  three hand-copied `rda-1/2/3` compose services collapse into a single
-  `rda` service scaled via `deploy.replicas`. NGINX balances across the
-  replica IPs Docker DNS returns (restart nginx after changing the
-  count so it re-resolves), and Prometheus discovers replicas via DNS
-  service discovery instead of static targets. The GHCR overlay and CI
-  reference the `rda` service name; per-replica names (`rda-1:3000`
-  upstreams, static scrape targets) are gone.
-
-### Fixed
-
-- **Permission changes now apply mid-session** — the JWT authenticates
-  identity only; `requireAuth` resolves permissions, `isActive`, and
-  `mustChangePassword` from Postgres per request through a 30 s
-  in-process grants cache (`AuthService.verifyTokenLive`). Role edits,
-  role (un)assignment, user deactivation/deletion, and forced password
-  rotation take effect on live sessions within the cache TTL —
-  instantly on the replica that handled the admin call — instead of on
-  the user's next login (previously up to the 8 h token TTL). The
-  token's permission claim is still minted for compatibility but is
-  never consulted for authorization.
-
-## [1.4.0] - 2026-08-08
+## [1.4.0] - 2026-08-09
 
 This release remediates a full line-by-line architecture review — 45
 findings across three rounds (OJR-01–45, per-finding evidence in
 `docs/REVIEW_FINDINGS.md`) — and ships a flag-gated log-first audit
-pipeline. No API surface changes, but several decision-path behaviours
-differ from 1.3.0 (see Changed) and every fix was re-verified against a
-live compose stack: 2,000-request load test all HTTP 200, p99 84.5 ms
-at 16-way concurrency vs the 295 ms pre-fix baseline.
+pipeline. It also makes permission changes apply to live sessions and
+the RDA replica count configurable. No API surface changes, but several
+decision-path behaviours differ from 1.3.0 (see Changed) and every fix
+was re-verified against a live compose stack: 2,000-request load test
+all HTTP 200, p99 84.5 ms at 16-way concurrency vs the 295 ms pre-fix
+baseline.
 
 ### Added
 
@@ -57,7 +35,9 @@ at 16-way concurrency vs the 295 ms pre-fix baseline.
   snapshots). Closes OJR-07 when enabled; the checklist for making it
   the default (a major-release change — Kafka becomes a hard dependency
   of `/v1/predict`) is in `docs/REVIEW_FINDINGS.md`. Full measurements:
-  `docs/LOG_FIRST_AUDIT_PROTOTYPE.md`.
+  `docs/LOG_FIRST_AUDIT_PROTOTYPE.md`. The prod compose stack threads
+  `AUDIT_PIPELINE` through to the RDA replicas, so the `.env` opt-in
+  works on `docker compose up` (previously dev-overlay only).
 - **Score calibration reaches serving** — RDA loads the isotonic
   breakpoints from `meta.json` and applies them after ONNX output.
   `ONNX_CALIBRATION_MODE` defaults to `observe`: the calibrated score
@@ -100,6 +80,15 @@ at 16-way concurrency vs the 295 ms pre-fix baseline.
   duplicated every tsyringe singleton). nodemon uses `legacyWatch` so
   host-side edits through the Docker mount trigger restarts on macOS.
   No in-container `npx tsc` after edits any more.
+- **Configurable RDA replica count (`RDA_REPLICAS`, default 3)** — the
+  three hand-copied `rda-1/2/3` compose services collapse into a single
+  `rda` service scaled via `deploy.replicas`. NGINX balances across the
+  replica IPs Docker DNS returns (restart nginx after changing the
+  count so it re-resolves), and Prometheus discovers replicas via DNS
+  service discovery instead of static targets. The GHCR overlay and CI
+  reference the `rda` service name; per-replica names (`rda-1:3000`
+  upstreams, static scrape targets) are gone — update any scripts that
+  addressed replicas by name.
 
 ### Fixed
 
@@ -124,6 +113,21 @@ at 16-way concurrency vs the 295 ms pre-fix baseline.
   per-partition only.
 - **Dev/compose** — `db-migrate` and dev services carry the env they
   need (`MLA_SERVICE_TOKEN`, `AUDIT_PIPELINE` passthrough).
+- **Permission changes now apply mid-session** — the JWT authenticates
+  identity only; `requireAuth` resolves permissions, `isActive`, and
+  `mustChangePassword` from Postgres per request through a 30 s
+  in-process grants cache (`AuthService.verifyTokenLive`). Role edits,
+  role (un)assignment, user deactivation/deletion, and forced password
+  rotation take effect on live sessions within the cache TTL —
+  instantly on the replica that handled the admin call — instead of on
+  the user's next login (previously up to the 8 h token TTL). The
+  token's permission claim is still minted for compatibility but is
+  never consulted for authorization.
+- **`/readyz` through NGINX no longer 404s** — `location /ready`
+  prefix-matched `/readyz` and the `proxy_pass` URI rewrite sent
+  `/readyzz` upstream. The `/health` and `/ready` aliases are exact
+  matches now, so the app's own `/livez` and `/readyz` pass through
+  the catch-all unchanged.
 
 ### Notes
 
