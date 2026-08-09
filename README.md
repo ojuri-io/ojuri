@@ -195,6 +195,13 @@ versions that don't build elsewhere.
 **FIA needs room**: about 10 GB of disk for the language model weights and
 at least 16 GB of free RAM. That's why it's opt-in rather than on by
 default — start it with `docker compose --profile fia up -d`.
+
+The weights are **not** in the image; FIA downloads ~7.6 GB from
+HuggingFace the first time it starts, then caches it in a volume. If your
+network restricts outbound traffic, you can pre-stage a local checkpoint
+and set `FIA_LLM_MODEL_PATH`, or skip the model entirely with
+`FIA_DISABLE_LLM=true` and get deterministic rule-based reports instead.
+Both are covered in [`docs/FIA-API.md`](docs/FIA-API.md).
 </details>
 
 ---
