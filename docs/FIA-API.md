@@ -26,6 +26,57 @@ without spare RAM, set `FIA_FALLBACK_ON_LLM_FAILURE=true` (the
 default) — FIA will boot in degraded mode and serve deterministic
 rule-based reports instead of failing.
 
+## Providing the model weights
+
+**The `fia` image does not contain the model.** It ships the Python
+runtime — torch, transformers, the FIA code — at roughly 1.2 GB. The
+~7.6 GB of Phi-3-mini weights are fetched separately at first start.
+
+That matters if your deployment restricts outbound traffic. Ojuri keeps
+*transaction* data on your infrastructure, but a default FIA start
+reaches out to `huggingface.co` once to obtain the model. Three ways to
+handle it:
+
+**1. Let it download (default).** `HF_HOME=/app/.hf-cache` is baked
+into the image, and Compose mounts the named `fia-hf-cache` volume
+there, so the download survives container recreates. Budget ~10 GB of
+disk and the bandwidth for a one-time 7.6 GB pull.
+
+**2. Pre-stage the weights — no egress at runtime.** Put a local
+checkpoint under `fia-service/models/` (already mounted to
+`/app/models`) and point FIA at it:
+
+```bash
+# in .env
+FIA_LLM_MODEL_PATH=/app/models/phi-3-mini-4k-instruct
+```
+
+`LLM_MODEL_PATH` takes precedence over `LLM_MODEL_NAME`, so nothing is
+resolved from the Hub. This is also the hook for a fine-tuned
+checkpoint of your own.
+
+**3. Skip the LLM entirely.** `FIA_DISABLE_LLM=true` short-circuits the
+import and load before transformers is touched — no download, no ~15 GB
+resident model. Every report comes from the deterministic rule-based
+generator, and the pipeline still produces parseable rows. Intended for
+demos, CI, and hosts capped under 16 GB.
+
+Note this is *not* the same switch as `FIA_FALLBACK_ON_LLM_FAILURE`,
+which only engages **after** a load has been attempted and failed. If
+your goal is "never load the model", use `FIA_DISABLE_LLM`; the
+fallback flag won't save you from the memory spike.
+
+> **Variable naming.** In `.env` you set `FIA_LLM_MODEL_PATH` and
+> `FIA_LLM_MODEL_NAME`; Compose maps those to `LLM_MODEL_PATH` and
+> `LLM_MODEL_NAME` inside the container. `FIA_DISABLE_LLM` and
+> `FIA_FALLBACK_ON_LLM_FAILURE` keep the same name on both sides.
+> Running FIA outside Compose means using the unprefixed
+> `LLM_*` names.
+
+For safety, `trust_remote_code` is only honoured for an allowlist of
+known Phi-3 repositories — pointing `LLM_MODEL_NAME` at an arbitrary
+Hub repo will not silently execute its `modeling_*.py`.
+
 ## Endpoints
 
 | Method | Path                                  | Purpose                                  | Auth                  |
