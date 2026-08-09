@@ -113,20 +113,29 @@ You get back a decision and the reasons for it:
 {
   "transaction_id": "550e8400-…",
   "fraud": false,
-  "fraud_probability": 0.0773,
+  "fraud_probability": 0.0271,
   "decision": "ACCEPT",
   "decision_source": "ML",
   "reason_codes": [
-    { "code": "VELOCITY_1H", "description": "Transactions in the last hour above baseline", "contribution": 0.28, "value": 9 },
-    { "code": "PAGERANK",    "description": "Network-centrality score from the transaction graph", "contribution": -0.20, "value": 0.35 }
+    { "code": "PAGERANK",        "description": "Network-centrality score from the transaction graph", "contribution": -0.20, "value": 0.3509, "basis": "HEURISTIC" },
+    { "code": "CLUSTERING_COEF", "description": "How tightly the sender clusters with known peers",    "contribution": 0.1142, "value": 0, "basis": "HEURISTIC" }
   ],
   "model_version": "default",
-  "threshold": 0.65,
-  "audit_id": "38fb28d2-…",
-  "latency_ms": 9,
-  "timestamp": 1717718400123
+  "threshold": 0.3,
+  "audit_id": "d9686470-…",
+  "latency_ms": 38,
+  "timestamp": 1786293849415
 }
 ```
+
+Your numbers will differ — the probability and the reason codes depend on
+what the system has seen so far. The `threshold` is `0.3` because this is
+a `TRANSFER`; each transaction type has its own bar.
+
+**Running it a second time returns `409`.** Each `transaction_id` can only
+be scored once, so change it before you try again. That's deliberate: it
+means a retry after a network timeout can't double-charge your fraud
+stats.
 
 Only six fields are required. There are about 40 more you can send —
 device, location, identity, agent, recipient — and the more you send, the
@@ -140,10 +149,11 @@ better the prediction. They're all listed in
 <details>
 <summary><b>Two things that surprise people on a fresh install</b> — both are normal</summary>
 
-**The response says `"model_version": "default"`.** A demo model is doing
-the scoring, and it works — but you haven't registered a model in the
-registry yet, so there's no version number to report. It changes to
-`v1.x` once you train and register your own.
+**The response says `"model_version": "default"`.** That's the real name
+of a real registered model — the demo one, which the database seed
+registers as ACTIVE for you. It's called "default" on purpose, so the
+response always tells you plainly that you're still on the shipped model.
+It changes to `v1.x` once you train and activate your own.
 
 **A request with no context fields might come back `DECLINE`.** With no
 device, location or history to go on, and an empty feature cache, the demo
@@ -280,9 +290,13 @@ a local RDA on port 3000 and login fails with a 502:
 ```bash
 cd frontend
 npm install
-cp .env.example .env       # then uncomment the "Docker stack" block
+cp .env.example .env       # already set up for the Docker stack
 npm run dev                # http://localhost:5173
 ```
+
+If instead you're running RDA directly on your machine with `npm run
+start:dev`, open `frontend/.env` and switch to the second block — the
+`127.0.0.1` one.
 
 Log in with the admin password from `docker compose logs db-migrate`.
 You'll be asked to change it immediately. If you've already lost it — it's
@@ -301,10 +315,10 @@ docker compose --profile demo run --rm demo-seed          # inside the stack
 RDA_URL=http://localhost node scripts/demo-traffic.mjs    # or from your machine
 ```
 
-Set `RDA_URL` to wherever RDA is reachable — `http://localhost` for the
-Docker stack, since NGINX is on port 80. The script defaults to
-`http://localhost:3000`, which only works if you're running RDA directly
-on your machine.
+Set `RDA_URL` to wherever RDA is reachable. For the Docker stack that's
+`http://localhost`, because NGINX answers on port 80 — the stack does not
+publish port 3000 to your machine. Use `http://localhost:3000` only if
+you're running RDA directly with `npm run start:dev`.
 
 The demo comes with its own rule pack, which is **switched off by
 default** — its thresholds are tuned for the demo data and would flag far
@@ -361,12 +375,18 @@ to use a GPU:
 
 ```bash
 cd mla-service
-python --version                # must be 3.11.x
-python -m venv venv && source venv/bin/activate
+python3.11 -m venv venv         # whichever command gives you 3.11 — see below
+source venv/bin/activate
+python --version                # should now say 3.11.x
 pip install -r requirements.txt
 python scripts/train_initial_model.py   # trains a first model
 python -m src.main                      # then watch for drift and retrain
 ```
+
+It has to be 3.11 — MLA depends on ONNX libraries that don't build on
+other versions. Depending on how you installed it, the command might be
+`python3.11`, `python3`, or a pyenv shim; use whichever one reports
+`3.11.x`. Once the venv is active, plain `python` is the right command.
 
 Once trained, activate the new model from the dashboard, or copy the
 `.onnx` file to `models/fraud_model.onnx` and RDA will pick it up.
