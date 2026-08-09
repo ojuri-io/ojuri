@@ -6,11 +6,14 @@ import UserRepo from "./repositories/user.repo";
 import { createServiceLogger } from "@shared/utils/logger/service-logger";
 import { ALL_PERMISSIONS } from "./permissions";
 import { evaluatePassword } from "./password-policy";
+import { GrantsCacheEntry, LiveGrants } from "./auth.types";
 
 const log = createServiceLogger("AuthService");
 
 const DEFAULT_TTL_SECONDS = 60 * 60 * 8;
 const BCRYPT_ROUNDS = 12;
+const GRANTS_CACHE_TTL_MS = 30_000;
+const GRANTS_CACHE_CAP = 10_000;
 
 // Constant-time login: compare against this hash on the unknown-user
 // branch so response latency doesn't leak whether the username exists.
@@ -57,6 +60,8 @@ export class WeakPasswordError extends Error {
 
 @singleton()
 class AuthService {
+  private grantsCache = new Map<string, GrantsCacheEntry>();
+
   constructor(private readonly users: UserRepo) {}
 
   async login(input: { tenantId?: string; username: string; password: string }): Promise<LoginResult> {
@@ -83,6 +88,7 @@ class AuthService {
 
     const permissions = mergePermissions(detail.roles);
     const mustChangePassword = !!user.mustChangePassword;
+    this.invalidateGrants(detail.id);
 
     const { token, expiresIn } = this.mintToken({
       userId: detail.id,
@@ -155,6 +161,7 @@ class AuthService {
 
     const passwordHash = await bcrypt.hash(input.newPassword, BCRYPT_ROUNDS);
     await this.users.updateById(input.userId, { passwordHash, mustChangePassword: false });
+    this.invalidateGrants(input.userId);
     log.info("changePassword", "Password rotated", { userId: input.userId });
 
     const detail = await this.users.findByIdWithRoles(input.userId);
@@ -234,6 +241,56 @@ class AuthService {
     } catch {
       return null;
     }
+  }
+
+  /**
+   * Verify a JWT and overlay the subject's grants (permissions,
+   * mustChangePassword) with the current database state. The token's
+   * permission claim is only a login-time snapshot — treating it as
+   * authoritative meant role changes and user deactivation did not
+   * apply until the next login (up to the 8 h token TTL).
+   *
+   * Returns null for a missing or deactivated user, so revocation
+   * takes effect within the cache TTL instead of at token expiry.
+   */
+  async verifyTokenLive(token: string): Promise<AuthSubject | null> {
+    const claims = this.verifyToken(token);
+    if (!claims) return null;
+    const grants = await this.loadLiveGrants(claims.userId);
+    if (!grants) return null;
+    return { ...claims, ...grants };
+  }
+
+  /** Drop cached grants for one user, or for everyone when a role's permission set changes. */
+  invalidateGrants(userId?: string): void {
+    if (userId) this.grantsCache.delete(userId);
+    else this.grantsCache.clear();
+  }
+
+  private async loadLiveGrants(userId: string): Promise<LiveGrants | null> {
+    const now = Date.now();
+    const cached = this.grantsCache.get(userId);
+    if (cached && cached.expiresAt > now) return cached.grants;
+    if (cached) this.grantsCache.delete(userId);
+
+    const detail = await this.users.findByIdWithRoles(userId);
+    const grants: LiveGrants | null =
+      detail && detail.isActive
+        ? {
+            permissions: mergePermissions(detail.roles),
+            mustChangePassword: detail.mustChangePassword,
+          }
+        : null;
+
+    // Negative results are safe to cache: userIds only come from
+    // signature-verified JWTs, so the cache cannot be sprayed full
+    // of attacker-chosen keys the way raw API tokens could.
+    if (this.grantsCache.size >= GRANTS_CACHE_CAP) {
+      const oldest = this.grantsCache.keys().next().value;
+      if (oldest) this.grantsCache.delete(oldest);
+    }
+    this.grantsCache.set(userId, { grants, expiresAt: now + GRANTS_CACHE_TTL_MS });
+    return grants;
   }
 
   static hasPermission(subject: AuthSubject, required: string[]): boolean {

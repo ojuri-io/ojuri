@@ -6,6 +6,7 @@ import DecisionAuditRepo, { AuditListFilters } from "./repositories/decision-aud
 import { DecisionAudit } from "./model/decision-audit.model";
 import AuditWriteQueue from "./audit-write-queue";
 import { GroundTruthSource } from "@shared/enums/ground-truth-source.enum";
+import AuditPersistenceError from "@shared/error/audit-persistence.error";
 import { DecisionAuditRecord, DecisionAuditRecordResult } from "./decision-audit.types";
 
 export type { DecisionAuditRecord, DecisionAuditRecordResult };
@@ -34,6 +35,37 @@ class DecisionAuditService {
     const id = randomUUID();
     this.queue.enqueue({ ...rec, id });
     return id;
+  }
+
+  /**
+   * Late-binding enrichment for values resolved after the response was
+   * sent — shadow scores, and the feature snapshot for decisions that
+   * short-circuited before the feature load. If the row has already
+   * flushed the patch is dropped rather than issuing an UPDATE that
+   * would race the insert.
+   */
+  patchLate(auditId: string, fields: Partial<DecisionAuditRecord>): void {
+    if (!this.queue.patch(auditId, fields)) {
+      metricsService.recordShadowScoreDropped();
+    }
+  }
+
+  /**
+   * Persist-before-respond. Used when AUDIT_SYNC_WRITE is on: a decision
+   * that cannot be audited must not be returned as if it had been, so
+   * a write failure propagates instead of being swallowed.
+   */
+  async recordDurable(rec: DecisionAuditRecord): Promise<string> {
+    const result = await this.record(rec);
+    if (result.kind === "ok") return result.id;
+    if (result.kind === "duplicate") {
+      const existingId = await this.repo.findIdByTenantAndTransaction(
+        rec.tenantId ?? null,
+        rec.transactionId
+      );
+      if (existingId) return existingId;
+    }
+    throw new AuditPersistenceError(rec.transactionId);
   }
 
   async record(rec: DecisionAuditRecord): Promise<DecisionAuditRecordResult> {
@@ -109,18 +141,9 @@ class DecisionAuditService {
       reason: input.reason ?? null,
     });
 
-    // Propagate the verified verdict to `transactions.groundTruthFraud`
-    // so MLA's next retrain uses this row as a real label instead of
-    // the system's own prior decision. This is the feedback loop:
-    // human review → ground truth → next model.
-    //
-    // Mapping: DECLINE override = "reviewer confirmed fraud" = true.
-    //          ACCEPT  override = "reviewer cleared it"      = false.
-    //
-    // Best-effort — a missing matching transactions row (e.g. PAA
-    // hadn't flushed yet) just means we'll wait for the next
-    // override on a later prediction; we don't fail the override
-    // on a label-write hiccup.
+    // Feeds MLA's next retrain a human-verified label instead of the
+    // system's own prior decision. Best-effort: a missing transactions
+    // row just means the label arrives with a later override.
     if (row) {
       try {
         await this.repo.writeGroundTruth({

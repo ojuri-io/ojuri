@@ -216,12 +216,27 @@ class RedisUpdateService {
     };
   }
 
-  stop(): void {
+  // These writes land in the feature keys RDA reads on the decision
+  // path, so an instance that lost the leader lease must drop its
+  // buffer rather than flush a partial-graph snapshot over whatever the
+  // new leader has already written.
+  stop({ discard = false } = {}): void {
     if (this.flushInterval) {
       clearInterval(this.flushInterval);
       this.flushInterval = null;
     }
-    this.flushUpdates();
+
+    if (!discard) {
+      this.flushUpdates();
+      return;
+    }
+
+    const dropped =
+      this.pendingUpdates.size + this.pendingPairUpdates.size + this.pendingReceiverCounts.size;
+    this.pendingUpdates.clear();
+    this.pendingPairUpdates.clear();
+    this.pendingReceiverCounts.clear();
+    log.warn("stop", "Discarded buffered Redis writes after losing the leader lease", { dropped });
   }
 }
 

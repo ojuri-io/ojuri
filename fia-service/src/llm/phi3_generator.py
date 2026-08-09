@@ -335,6 +335,24 @@ class Phi3ReportGenerator:
                     f"resolved the decision. Recommended action: {action}. Verify "
                     f"the rule still matches current policy."
                 )
+            elif source == "BREAKER_FALLBACK":
+                # Inference never ran; the 1.0 is a fail-safe constant,
+                # not a model output. Reporting it as a score would put
+                # a fabricated number in an investigator-facing document.
+                verdict, action, conf = "UNCERTAIN", "MANUAL_REVIEW", 0.50
+                indicators = [
+                    "Model inference unavailable — scored by circuit-breaker fallback",
+                    f"Amount: NGN {amount:,.2f}",
+                    f"Type: {txn_type}",
+                ]
+                narrative = (
+                    f"Automated fallback report (LLM unavailable). This "
+                    f"{txn_type.lower()} of NGN {amount:,.2f} was declined without a "
+                    f"model score: the ONNX circuit breaker was open, so no inference "
+                    f"ran. There is no fraud signal to assess here — the decline "
+                    f"reflects infrastructure state, not transaction risk. Manual "
+                    f"review required."
+                )
             elif prob >= 0.85:
                 verdict, action, conf = "FRAUD_CONFIRMED", "BLOCK", min(prob, 0.95)
                 indicators = [

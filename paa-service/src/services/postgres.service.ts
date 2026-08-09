@@ -380,12 +380,25 @@ class PostgresService {
     }
   }
 
-  async stop(): Promise<void> {
+  // See RedisUpdateService.stop — a fenced-out instance discards its
+  // buffer instead of writing a partial-graph snapshot.
+  async stop({ discard = false } = {}): Promise<void> {
     if (this.flushInterval) {
       clearInterval(this.flushInterval);
       this.flushInterval = null;
     }
-    await Promise.all([this.flushTransactions(), this.flushGraphMetadata(), this.flushEdges()]);
+
+    if (!discard) {
+      await Promise.all([this.flushTransactions(), this.flushGraphMetadata(), this.flushEdges()]);
+      return;
+    }
+
+    const dropped =
+      this.transactionBuffer.length + this.graphMetadataBuffer.size + this.edgeBuffer.size;
+    this.transactionBuffer.length = 0;
+    this.graphMetadataBuffer.clear();
+    this.edgeBuffer.clear();
+    log.warn("stop", "Discarded buffered Postgres writes after losing the leader lease", { dropped });
   }
 }
 

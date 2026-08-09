@@ -12,6 +12,8 @@ import { velocityService } from "@services/velocity.service";
 import { redisUpdateService } from "@services/redis-update.service";
 import { postgresService } from "@services/postgres.service";
 import { redisClient } from "@services/redis-client";
+import { processedEvents } from "@services/processed-events.service";
+import { leaderLease } from "@services/leader-lease.service";
 import { closeDatabase } from "@services/database";
 import { TransactionEvent, CombinedFeatures } from "@services/types";
 import appConfig from "@config/app.config";
@@ -143,7 +145,11 @@ async function loadHistoricalData(): Promise<void> {
 
     const { transactions } = await postgresService.loadGraphData(tailSince);
 
+    // The committed Kafka offset is routinely older than the newest
+    // persisted edge, so this replay overlaps events Kafka will deliver
+    // again. Mark them here or the overlap is applied twice.
     for (const transaction of transactions) {
+      processedEvents.markIfNew(transaction.transaction_id);
       graphService.addTransaction(transaction);
       velocityService.recordTransaction(transaction);
     }
@@ -260,12 +266,9 @@ function startLagMonitoring(): void {
   }, 30000);
 }
 
-// PAA holds the graph + velocity windows in process memory. A second
-// member in the consumer group splits the partition assignment, so
-// each replica's PageRank/Louvain runs on a partial graph and rings
-// crossing partitions become invisible. We don't refuse to start
-// (rolling restarts briefly overlap by design) — we surface the
-// breach loudly so ops sees it.
+// Backstop observability for the leader lease: the lease fences new
+// instances, but a group member that predates it (or a deployment with
+// PAA_REQUIRE_LEADER_LEASE=false) still needs to be visible.
 function startSingletonGuard(): void {
   const tick = async () => {
     if (isShuttingDown) return;
@@ -290,25 +293,30 @@ function startSingletonGuard(): void {
 }
 
 /**
- * Graceful shutdown
+ * `fenced` means we lost the leader lease: another instance is already
+ * writing, so our buffers hold a partial-graph snapshot that must be
+ * dropped rather than flushed over the new leader's writes.
  */
-async function shutdown(metricsServer: http.Server): Promise<void> {
+async function shutdown(metricsServer: http.Server, { fenced = false } = {}): Promise<void> {
   if (isShuttingDown) return;
   isShuttingDown = true;
 
-  log.entry("shutdown", "Shutting down PAA worker");
+  log.entry("shutdown", "Shutting down PAA worker", { fenced });
 
   try {
     await kafkaConsumer.disconnect();
-    redisUpdateService.stop();
-    await postgresService.stop();
+    // Before dropping the Redis connection, so the successor can take
+    // over immediately instead of waiting out the TTL.
+    await leaderLease.release();
+    redisUpdateService.stop({ discard: fenced });
+    await postgresService.stop({ discard: fenced });
     await redisClient.disconnect();
     await closeDatabase();
 
     metricsServer.close();
 
     log.success("shutdown", "PAA worker shutdown complete");
-    process.exit(0);
+    process.exit(fenced ? 1 : 0);
   } catch (err) {
     log.error("shutdown", "Error during shutdown", {
       error: err instanceof Error ? err.message : String(err),
@@ -345,6 +353,23 @@ async function main(): Promise<void> {
       log.error("main", "Redis not ready — early feature writes will fail until it connects", {
         error: err instanceof Error ? err.message : String(err),
       });
+    }
+
+    // Fence before consuming. A second replica would split the partition
+    // assignment and compute graph metrics over half the graph, writing
+    // degraded features to Redis for RDA's decision path.
+    if (appConfig.paa.requireLeaderLease) {
+      const acquired = await leaderLease.acquireWithRetry(appConfig.paa.leaderAcquireTimeoutMs);
+      if (!acquired) {
+        log.error("main", "Exiting: another PAA instance is the leader. PAA is a singleton.");
+        process.exit(1);
+      }
+      leaderLease.startRenewal(() => {
+        log.error("main", "Leader lease lost — discarding buffered writes and shutting down");
+        shutdown(metricsServer, { fenced: true });
+      });
+    } else {
+      log.warn("main", "PAA_REQUIRE_LEADER_LEASE=false — singleton fencing is disabled");
     }
 
     // Connect to Kafka

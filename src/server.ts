@@ -24,6 +24,8 @@ import RuntimeSettingsService from "@shared/settings/runtime-settings.service";
 import { startWebhookWorker, stopWebhookWorker } from "./shared/webhooks/webhook-worker";
 import { loadCatalog } from "./shared/features/feature-catalog";
 import AuditWriteQueue from "@shared/audit/audit-write-queue";
+import AuditStreamConsumer from "@shared/audit/audit-stream-consumer";
+import { AuditPipeline } from "@shared/enums/audit-pipeline.enum";
 import TrainingImportWorker from "./v1/modules/training/services/training-import.worker";
 
 const app = new App();
@@ -46,6 +48,13 @@ async function start() {
     await kafkaProducer.connect();
   } catch (err) {
     logger.warn({ err }, "Kafka producer failed to connect - will retry on publish");
+  }
+
+  if (appConfig.audit.pipeline === AuditPipeline.STREAM) {
+    const auditStream = container.resolve(AuditStreamConsumer);
+    await auditStream.start().catch((err) =>
+      logger.error({ err }, "Audit stream consumer failed to start - audit rows will not materialise")
+    );
   }
 
   // Warm runtime-settings before the model registry — the registry's
@@ -147,6 +156,11 @@ async function gracefulShutdown(signal: string): Promise<void> {
     logger.warn({ err }, "Audit write queue drain raised during shutdown");
   }
   try {
+    await container.resolve(AuditStreamConsumer).stop();
+  } catch (err) {
+    logger.warn({ err }, "Audit stream consumer stop raised during shutdown");
+  }
+  try {
     container.resolve(TrainingImportWorker).stop();
   } catch (err) {
     logger.warn({ err }, "Training import worker stop raised during shutdown");
@@ -162,6 +176,11 @@ process
   try { container.resolve(TrainingImportWorker).stop(); } catch { /* container may be torn down */ }
     app.close();
     process.exit(1);
+  })
+  // Node terminates on an unhandled rejection by default. A background
+  // promise losing its handler must not take the decision path down.
+  .on("unhandledRejection", (reason) => {
+    logger.error({ err: reason }, "Unhandled promise rejection");
   })
   .on("SIGINT", () => gracefulShutdown("SIGINT"))
   .on("SIGTERM", () => gracefulShutdown("SIGTERM"));

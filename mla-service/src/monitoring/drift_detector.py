@@ -70,6 +70,28 @@ class DriftDetector:
         logger.info(f"  Window size: {window_size}")
         logger.info(f"  F1 threshold: {f1_threshold}")
         logger.info(f"  PSI threshold: {psi_threshold}")
+
+    def calibrate_f1_threshold(self, champion_f1: Optional[float], margin: float, floor: float) -> float:
+        """
+        Anchor the drift threshold to the deployed model's own validation
+        F1. A fixed absolute threshold either never fires or fires on
+        every check depending on how hard the problem is; "meaningfully
+        worse than what we deployed" is the question drift is actually
+        asking.
+        """
+        if champion_f1 is None or not (0.0 < champion_f1 <= 1.0):
+            logger.info(
+                "No champion F1 available — keeping configured drift threshold %.4f",
+                self.f1_threshold,
+            )
+            return self.f1_threshold
+
+        self.f1_threshold = max(floor, champion_f1 - margin)
+        logger.info(
+            "Drift F1 threshold set to %.4f (champion %.4f − margin %.4f, floor %.4f)",
+            self.f1_threshold, champion_f1, margin, floor,
+        )
+        return self.f1_threshold
     
     def update(
         self,

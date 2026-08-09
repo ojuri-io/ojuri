@@ -72,7 +72,8 @@ def train_initial_model(num_samples: int = None, skip_registry: bool = False):
     logger.info("")
     logger.info("[2/5] Preprocessing data...")
     preprocessor = DataPreprocessor()
-    X_train, X_val, X_test, y_train, y_val, y_test = preprocessor.preprocess(X, y)
+    splits = preprocessor.preprocess(X, y)
+    X_train, X_val, X_test, y_train, y_val, y_test = splits.as_legacy_tuple()
     
     logger.info(f"  Training set: {len(X_train)} samples (fraud rate: {y_train.mean() * 100:.1f}%)")
     logger.info(f"  Validation set: {len(X_val)} samples")
@@ -82,7 +83,7 @@ def train_initial_model(num_samples: int = None, skip_registry: bool = False):
     logger.info("")
     logger.info("[3/5] Training XGBoost model...")
     trainer = ModelTrainer(config)
-    model, calibrator, metrics = trainer.train(X_train, y_train, X_val, y_val)
+    model, calibrator, metrics = trainer.train(splits)
     
     logger.info(f"  Training complete!")
     logger.info(f"  F1-Score: {metrics['f1_score']:.4f}")

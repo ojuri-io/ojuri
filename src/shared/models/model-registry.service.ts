@@ -36,6 +36,7 @@ class ModelRegistryService {
   private champion: ModelVersion | null = null;
   private shadow: ModelVersion | null = null;
   private thresholdsBySegment: Map<string, Map<string, number>> = new Map();
+  private warnedDetachedSegments: Set<string> = new Set();
   private timer: NodeJS.Timeout | null = null;
   private loaded = false;
   // Listeners notified when the ACTIVE model row changes (different
@@ -136,6 +137,7 @@ class ModelRegistryService {
       inner.set(t.modelVersion, Number(t.threshold));
     }
     this.thresholdsBySegment = segMap;
+    this.warnedDetachedSegments.clear();
     this.loaded = true;
 
     log.debug("reload", "Registry refreshed", {
@@ -158,6 +160,13 @@ class ModelRegistryService {
     const segmentThresholds = segment ? this.thresholdsBySegment.get(segment) : undefined;
     const segmentSpecific = segmentThresholds?.get(championVersion);
 
+    // Rows exist for this segment but not for the running champion: the
+    // override is configured yet inert. Silent before — the segment just
+    // reverted to the model default.
+    if (segment && segmentThresholds && segmentSpecific === undefined) {
+      this.warnDetachedSegment(segment, championVersion);
+    }
+
     // Threshold resolution order:
     //   1. Per-segment override (segmentThresholds table)
     //   2. The active model's defaultThreshold
@@ -177,6 +186,17 @@ class ModelRegistryService {
       reviewMargin > 0 ? Math.max(0.01, Number(threshold) - reviewMargin) : null;
 
     return { championVersion, shadowVersion, threshold, reviewThreshold };
+  }
+
+  // Once per (segment, version) — this sits on the prediction hot path.
+  private warnDetachedSegment(segment: string, championVersion: string): void {
+    const key = `${segment}|${championVersion}`;
+    if (this.warnedDetachedSegments.has(key)) return;
+    this.warnedDetachedSegments.add(key);
+    log.warn("resolve", "Segment threshold detached from champion — falling back to model default", {
+      segment,
+      championVersion,
+    });
   }
 
   async register(input: {
@@ -203,7 +223,31 @@ class ModelRegistryService {
   }
 
   async setStatus(version: string, status: ModelStatus): Promise<ModelVersion | null> {
+    // `segmentThresholds` is keyed (segment, modelVersion), so activating
+    // a new champion silently drops every per-segment override back to
+    // the model default until rows are re-seeded. Carry them forward
+    // before the swap so the transition is threshold-neutral.
+    const outgoing = status === "ACTIVE" ? this.champion : null;
     const row = await this.versionRepo.transitionStatus(version, status);
+    if (row && outgoing && outgoing.version !== version) {
+      const copied = await this.thresholdRepo
+        .carryForward(outgoing.version, version)
+        .catch((err) => {
+          log.error("setStatus", "Segment-threshold carry-forward failed", {
+            from: outgoing.version,
+            to: version,
+            err: String(err),
+          });
+          return 0;
+        });
+      if (copied > 0) {
+        log.info("setStatus", "Carried segment thresholds forward", {
+          from: outgoing.version,
+          to: version,
+          copied,
+        });
+      }
+    }
     await this.reload();
     return row || null;
   }

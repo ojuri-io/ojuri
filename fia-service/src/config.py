@@ -18,6 +18,7 @@ class Config:
     KAFKA_BROKERS: List[str] = os.getenv("KAFKA_BROKERS", "localhost:9092").split(",")
     KAFKA_BLOCKED_TOPIC: str = os.getenv("KAFKA_BLOCKED_TOPIC", "transactions.blocked")
     KAFKA_CONSUMER_GROUP: str = os.getenv("KAFKA_CONSUMER_GROUP", "fraud-investigation")
+    KAFKA_DLQ_TOPIC: str = os.getenv("KAFKA_DLQ_TOPIC", "transactions.blocked.dlq")
     KAFKA_AUTO_OFFSET_RESET: str = os.getenv("KAFKA_AUTO_OFFSET_RESET", "earliest")
 
     # ───────── PostgreSQL ─────────

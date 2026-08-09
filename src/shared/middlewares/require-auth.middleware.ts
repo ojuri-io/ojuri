@@ -17,6 +17,11 @@ import { ErrorResponse } from "@shared/utils/response.util";
  *
  * The wildcard `*` is granted only to the seeded SUPER_ADMIN role and
  * satisfies every required code. See `src/shared/authz/permissions.ts`.
+ *
+ * The JWT authenticates identity only. Permissions and `isActive` are
+ * resolved from Postgres per request (30 s cache in AuthService), so
+ * role edits and user deactivation apply mid-session rather than on
+ * next login.
  */
 export function requireAuth(...requiredPermissions: string[]) {
   const authService = container.resolve(AuthService);
@@ -30,7 +35,8 @@ export function requireAuth(...requiredPermissions: string[]) {
     // Try the static service-token path first (cheap SHA-256 + timingSafeEqual);
     // fall through to JWT verification. MLA uses this path to register and
     // activate model versions without holding a refreshable JWT.
-    const subject = authService.verifyServiceToken(token) ?? authService.verifyToken(token);
+    const subject =
+      authService.verifyServiceToken(token) ?? (await authService.verifyTokenLive(token));
     if (!subject) {
       return res
         .code(httpStatus.UNAUTHORIZED)

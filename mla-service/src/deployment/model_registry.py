@@ -64,6 +64,43 @@ def _assert_safe_version(version: str) -> None:
         )
 
 
+# Must stay in step with SPECS in src/shared/onnx/reason-codes.ts. RDA
+# keeps the sign (domain knowledge); only magnitudes come from here.
+REASON_CODE_FEATURES = (
+    "velocity_1h",
+    "velocity_24h",
+    "velocity_7d",
+    "amount_mean_30d",
+    "amount_std_30d",
+    "graph_pagerank",
+    "graph_clustering_coef",
+    "pair_time_since_last_send",
+    "is_weekend",
+    "hour_of_day",
+    "amount",
+    "transaction_type_code",
+)
+
+
+def _reason_code_weights(model, catalog) -> Optional[Dict[str, float]]:
+    try:
+        importances = model.feature_importances_
+    except Exception as e:
+        logger.warning("Could not read feature importances for reason weights: %s", e)
+        return None
+
+    weights: Dict[str, float] = {}
+    for name in REASON_CODE_FEATURES:
+        spec = catalog.by_name.get(name)
+        if spec is None or spec.index >= len(importances):
+            continue
+        value = float(importances[spec.index])
+        if value > 0:
+            weights[name] = value
+
+    return weights or None
+
+
 class ModelRegistry:
     """
     Filesystem model registry. Writes to
@@ -189,6 +226,20 @@ class ModelRegistry:
             "feature_input_dimension": catalog.input_dimension,
             "uploaded_at": datetime.utcnow().isoformat() + "Z",
         }
+
+        # Isotonic breakpoints in JSON so RDA can actually apply the
+        # mapping — the .npz above is numpy-native and was never readable
+        # from the serving side, so calibration only ever affected the
+        # reported Brier score and never a served score.
+        if calibrator is not None and getattr(calibrator, "fitted", False):
+            meta_payload["calibration"] = calibrator.as_breakpoints()
+
+        # Gain importances for the reason-code features, so the
+        # investigator-facing explanation is weighted by what the model
+        # learned instead of hand-set constants.
+        reason_weights = _reason_code_weights(model, catalog)
+        if reason_weights:
+            meta_payload["reason_weights"] = reason_weights
         with open(meta_dst, "w") as f:
             json.dump(meta_payload, f, indent=2, default=str)
         logger.info("  ✅ Meta:    %s (schema %s)", meta_dst, catalog.schema_version)

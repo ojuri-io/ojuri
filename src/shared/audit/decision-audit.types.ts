@@ -21,6 +21,7 @@ export interface DecisionAuditRecord {
   championModelVersion: string;
   shadowModelVersion?: string | null;
   championScore: number;
+  calibratedScore?: number | null;
   shadowScore?: number | null;
   threshold: number;
 
@@ -39,6 +40,20 @@ export interface DecisionAuditRecord {
   featuresDefault?: boolean;
 
   latencyMs: number;
+}
+
+export type AuditEventPayload = DecisionAuditRecord & { auditId: string };
+
+export type AuditEnrichmentFields = Partial<
+  Pick<DecisionAuditRecord, "shadowScore" | "featuresSnapshot" | "featuresDefault" | "reasonCodes">
+>;
+
+/** Values that resolve after the immutable decision event has been
+ *  published (shadow scores, early-PRE feature snapshots). Applied by
+ *  AuditStreamConsumer as an idempotent UPDATE on the audit row. */
+export interface AuditEnrichmentEvent {
+  audit_id: string;
+  fields: AuditEnrichmentFields;
 }
 
 export type DecisionAuditRecordResult =

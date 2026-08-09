@@ -1,5 +1,13 @@
 import os from "os";
 import { getEnv } from "./env.config";
+import { CalibrationMode } from "@shared/onnx/onnx.types";
+import { Decision } from "@shared/enums/decision.enum";
+import { AuditPipeline } from "@shared/enums/audit-pipeline.enum";
+
+function clamp01(v: number): number {
+  if (!Number.isFinite(v)) return 1;
+  return Math.min(1, Math.max(0, v));
+}
 
 function resolveOnnxPoolSize(): number {
   const raw = Number(process.env.ONNX_SESSION_POOL_SIZE);
@@ -41,6 +49,7 @@ const appConfig = {
     brokers: (process.env.KAFKA_BROKERS || "localhost:9092").split(","),
     topic: process.env.KAFKA_TOPIC || "transactions.completed",
     blockedTopic: process.env.KAFKA_BLOCKED_TOPIC || "transactions.blocked",
+    auditEnrichTopic: process.env.KAFKA_AUDIT_ENRICH_TOPIC || "audit.enrichments",
     consumerGroup: process.env.KAFKA_CONSUMER_GROUP || "pattern-analysis",
     clientId: process.env.KAFKA_CLIENT_ID || "ojuri-rda",
   },
@@ -49,9 +58,32 @@ const appConfig = {
     modelPollInterval: Number(process.env.MODEL_POLL_INTERVAL) || 300000,
     sessionPoolSize: ONNX_POOL_SIZE,
     intraOpNumThreads: resolveOnnxIntraOpThreads(ONNX_POOL_SIZE),
+    // OBSERVE records the calibrated score alongside the raw one without
+    // moving any decision boundary. Thresholds were tuned against the raw
+    // distribution, so ENFORCE must not be flipped until they are
+    // re-derived from calibrated audit data.
+    calibrationMode:
+      process.env.ONNX_CALIBRATION_MODE === CalibrationMode.ENFORCE
+        ? CalibrationMode.ENFORCE
+        : CalibrationMode.OBSERVE,
+    shadowSampleRate: clamp01(Number(process.env.SHADOW_SAMPLE_RATE ?? 1)),
   },
   fraud: {
     threshold: Number(process.env.FRAUD_THRESHOLD) || 0.65,
+  },
+  audit: {
+    // Batched enqueue returns before the row reaches Postgres, so a crash
+    // in that window loses the record of a decision already returned to
+    // the client. Compliance deployments can trade the extra round-trip
+    // for at-least-once durability.
+    syncWrite: process.env.AUDIT_SYNC_WRITE === "true",
+    // STREAM: the response waits for the Kafka ack (acks=all) and the
+    // audit table is materialised from the topic by AuditStreamConsumer —
+    // no in-memory queue, no interval flush. QUEUE keeps the batched path.
+    pipeline:
+      process.env.AUDIT_PIPELINE === AuditPipeline.STREAM
+        ? AuditPipeline.STREAM
+        : AuditPipeline.QUEUE,
   },
   circuitBreaker: {
     redis: {
@@ -60,9 +92,18 @@ const appConfig = {
       resetTimeout: Number(process.env.CB_REDIS_RESET_TIMEOUT) || 30000,
     },
     onnx: {
-      timeout: Number(process.env.CB_ONNX_TIMEOUT) || 100,
-      errorThresholdPercentage: Number(process.env.CB_ONNX_ERROR_THRESHOLD) || 10,
+      // 100 ms sat below this service's own measured p95 under
+      // concurrency, so ordinary contention was being scored as breaker
+      // failure and fail-closed into customer-facing declines.
+      timeout: Number(process.env.CB_ONNX_TIMEOUT) || 750,
+      errorThresholdPercentage: Number(process.env.CB_ONNX_ERROR_THRESHOLD) || 25,
       resetTimeout: Number(process.env.CB_ONNX_RESET_TIMEOUT) || 60000,
+      // Degrading to REVIEW routes an unscored transaction to a human
+      // instead of declining a customer on infrastructure failure.
+      fallbackDecision:
+        process.env.CB_ONNX_FALLBACK_DECISION === Decision.DECLINE
+          ? Decision.DECLINE
+          : Decision.REVIEW,
     },
   },
   paa: {

@@ -15,6 +15,10 @@ class MetricsService {
   // Consumer metrics
   private consumerLag!: Gauge<string>;
   private consumerGroupMembers!: Gauge<string>;
+  private forcedGraphEvictions!: Counter<string>;
+  private duplicateEventsSkipped!: Counter<string>;
+  private velocityTruncations!: Counter<string>;
+  private velocityUserEvictions!: Counter<string>;
 
   // Redis metrics
   private redisUpdateSuccess!: Counter<string>;
@@ -78,6 +82,30 @@ class MetricsService {
       registers: [this.registry],
     });
 
+    this.forcedGraphEvictions = new Counter({
+      name: "paa_graph_forced_evictions_total",
+      help: "Graph nodes evicted by the size cap despite being recent. Sustained non-zero means MAX_GRAPH_NODES is below the working set and features are being computed on a truncated graph.",
+      registers: [this.registry],
+    });
+
+    this.duplicateEventsSkipped = new Counter({
+      name: "paa_duplicate_events_skipped_total",
+      help: "Replayed transaction events skipped by the dedupe window. In-memory graph/velocity state is not idempotent, so double-counting these would inflate every derived feature.",
+      registers: [this.registry],
+    });
+
+    this.velocityTruncations = new Counter({
+      name: "paa_velocity_truncations_total",
+      help: "Velocity records dropped by the per-user memory backstop rather than by the 30-day window. Non-zero means the highest-velocity senders' windows are incomplete.",
+      registers: [this.registry],
+    });
+
+    this.velocityUserEvictions = new Counter({
+      name: "paa_velocity_user_evictions_total",
+      help: "Users dropped from velocity tracking by the global cap. Non-zero means the tracked-user set exceeds MAX_VELOCITY_USERS and those senders score against empty windows.",
+      registers: [this.registry],
+    });
+
     this.redisUpdateSuccess = new Counter({
       name: "paa_redis_updates_success_total",
       help: "Successful Redis updates",
@@ -122,6 +150,22 @@ class MetricsService {
 
   recordPagerankComputeTime(durationMs: number) {
     this.pagerankComputeTime.observe(durationMs);
+  }
+
+  recordForcedGraphEviction(count = 1) {
+    this.forcedGraphEvictions.inc(count);
+  }
+
+  recordDuplicateEventSkipped(count = 1) {
+    this.duplicateEventsSkipped.inc(count);
+  }
+
+  recordVelocityTruncation(count = 1) {
+    this.velocityTruncations.inc(count);
+  }
+
+  recordVelocityUserEviction(count = 1) {
+    this.velocityUserEvictions.inc(count);
   }
 
   updateConsumerLag(partition: number, lag: number) {

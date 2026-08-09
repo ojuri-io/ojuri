@@ -4,16 +4,19 @@ XGBoost model training with cross-validation.
 
 import numpy as np
 from xgboost import XGBClassifier
-from sklearn.model_selection import cross_val_score, train_test_split
+from sklearn.model_selection import cross_val_score, StratifiedKFold
 from sklearn.metrics import (
     f1_score, precision_score, recall_score,
     roc_auc_score, confusion_matrix, classification_report
 )
+from imblearn.over_sampling import SMOTE
+from imblearn.pipeline import Pipeline as ImbPipeline
 from typing import Tuple, Dict, Any, Optional
 import logging
 import time
 
 from src.training.calibration import Calibrator, brier_score
+from src.training.splits import PreprocessedSplits
 
 logger = logging.getLogger(__name__)
 
@@ -55,16 +58,14 @@ class ModelTrainer:
             'n_jobs': -1,  # Use all CPU cores
             'tree_method': 'hist',  # Memory-efficient histogram method
         }
-        
+        self.early_stopping_rounds = getattr(config, "XGBOOST_EARLY_STOPPING_ROUNDS", 0)
+
         logger.info("ModelTrainer initialized")
         logger.info(f"  Parameters: {self.params}")
     
     def train(
         self,
-        X_train: np.ndarray,
-        y_train: np.ndarray,
-        X_val: np.ndarray,
-        y_val: np.ndarray,
+        splits: PreprocessedSplits,
         mode: str = "FRESH",
         prior_model: Optional[XGBClassifier] = None,
         continued_trees: int = 50,
@@ -72,8 +73,11 @@ class ModelTrainer:
         logger.info("=" * 70)
         logger.info("STARTING MODEL TRAINING")
         logger.info("=" * 70)
-        X_train_inner, X_cal, y_train_inner, y_cal = self._split_for_calibration(X_train, y_train)
-        logger.info(f"Training samples: {len(X_train_inner):,} (fit) + {len(X_cal):,} (calibration)")
+        X_train, y_train = splits.X_train, splits.y_train
+        X_val, y_val = splits.X_val, splits.y_val
+        X_cal, y_cal = splits.X_cal, splits.y_cal
+        logger.info(f"Training samples: {len(X_train):,} (augmented)")
+        logger.info(f"Calibration samples: {len(X_cal):,} (raw, held out pre-augmentation)")
         logger.info(f"Validation samples: {len(X_val):,}")
         logger.info(f"Features: {X_train.shape[1]}")
 
@@ -83,11 +87,11 @@ class ModelTrainer:
         use_continued = effective_mode == "CONTINUED" and prior_model is not None
 
         if use_continued:
-            params = {**self.params, "n_estimators": continued_trees}
+            params = {**self._fresh_params(), "n_estimators": continued_trees}
             model = XGBClassifier(**params)
             logger.info(f"Mode=CONTINUED — seeding from prior model, adding {continued_trees} trees")
             model.fit(
-                X_train_inner, y_train_inner,
+                X_train, y_train,
                 eval_set=[(X_val, y_val)],
                 xgb_model=prior_model.get_booster(),
                 verbose=False,
@@ -95,10 +99,13 @@ class ModelTrainer:
         else:
             if effective_mode == "CONTINUED" and prior_model is None:
                 logger.warning("Mode=CONTINUED requested but no prior model available — falling back to FRESH")
-            model = XGBClassifier(**self.params)
-            logger.info("Mode=FRESH — training from scratch with early stopping")
+            model = XGBClassifier(**self._fresh_params())
+            logger.info(
+                "Mode=FRESH — training from scratch (early_stopping_rounds=%s)",
+                self.early_stopping_rounds,
+            )
             model.fit(
-                X_train_inner, y_train_inner,
+                X_train, y_train,
                 eval_set=[(X_val, y_val)],
                 verbose=False,
             )
@@ -121,18 +128,8 @@ class ModelTrainer:
         # Log results
         self._log_training_results(metrics)
         
-        # Cross-validation (optional, for more robust estimate)
-        if self.config.CV_FOLDS > 1 and len(X_train) >= 1000:
-            logger.info(f"Running {self.config.CV_FOLDS}-fold cross-validation...")
-            cv_scores = cross_val_score(
-                model, X_train, y_train,
-                cv=self.config.CV_FOLDS,
-                scoring='f1',
-                n_jobs=-1
-            )
-            metrics['cv_f1_mean'] = float(cv_scores.mean())
-            metrics['cv_f1_std'] = float(cv_scores.std())
-            logger.info(f"CV F1-score: {cv_scores.mean():.4f} (+/- {cv_scores.std()*2:.4f})")
+        cv = self._cross_validate(splits)
+        metrics.update(cv)
         
         logger.info("=" * 70)
         logger.info("✅ TRAINING COMPLETE")
@@ -140,24 +137,55 @@ class ModelTrainer:
 
         return model, calibrator, metrics
 
-    def _split_for_calibration(
-        self,
-        X_train: np.ndarray,
-        y_train: np.ndarray,
-        calibration_fraction: float = 0.10,
-    ) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
-        if len(X_train) < 500:
-            empty_X = np.empty((0, X_train.shape[1]), dtype=X_train.dtype)
-            empty_y = np.empty((0,), dtype=y_train.dtype)
-            return X_train, empty_X, y_train, empty_y
-        stratify = y_train if len(np.unique(y_train)) > 1 else None
-        return train_test_split(
-            X_train,
-            y_train,
-            test_size=calibration_fraction,
-            random_state=42,
-            stratify=stratify,
-        )
+    def _fresh_params(self) -> Dict[str, Any]:
+        """An eval_set is passed on every path, so without this the
+        validation set is collected and silently ignored."""
+        if self.early_stopping_rounds <= 0:
+            return self.params
+        return {**self.params, "early_stopping_rounds": self.early_stopping_rounds}
+
+    def _cross_validate(self, splits: PreprocessedSplits) -> Dict[str, Any]:
+        """
+        CV on pre-augmentation rows with resampling inside each fold.
+        Scoring the post-SMOTE matrix let synthetic points interpolated
+        from a training row land in the validation fold, inflating the
+        `cv_f1_mean` persisted to meta.json and shown in the UI.
+        """
+        X, y = splits.X_fit_raw, splits.y_fit_raw
+        if self.config.CV_FOLDS <= 1 or len(X) < 1000:
+            return {}
+        if len(np.unique(y)) < 2:
+            logger.warning("Skipping cross-validation — single-class training data")
+            return {}
+
+        minority = int(min(np.bincount(y.astype(int))))
+        folds = int(min(self.config.CV_FOLDS, minority))
+        if folds < 2:
+            logger.warning("Skipping cross-validation — too few minority samples (%d)", minority)
+            return {}
+
+        logger.info(f"Running {folds}-fold cross-validation (SMOTE inside each fold)...")
+        pipeline = ImbPipeline([
+            ("smote", SMOTE(sampling_strategy=self.config.SMOTE_RATIO, random_state=42)),
+            ("model", XGBClassifier(**self.params)),
+        ])
+        try:
+            cv_scores = cross_val_score(
+                pipeline, X, y,
+                cv=StratifiedKFold(n_splits=folds, shuffle=False),
+                scoring="f1",
+                n_jobs=-1,
+            )
+        except Exception as e:
+            logger.warning("Cross-validation failed: %s", e)
+            return {}
+
+        logger.info(f"CV F1-score: {cv_scores.mean():.4f} (+/- {cv_scores.std()*2:.4f})")
+        return {
+            "cv_f1_mean": float(cv_scores.mean()),
+            "cv_f1_std": float(cv_scores.std()),
+            "cv_folds": folds,
+        }
 
     def _calibrate(
         self,

@@ -11,6 +11,7 @@ from typing import Tuple, Optional
 import logging
 
 from src.config import config
+from src.training.splits import PreprocessedSplits
 
 logger = logging.getLogger(__name__)
 
@@ -64,7 +65,8 @@ class DataPreprocessor:
         test_size: float = 0.2,
         val_size: float = 0.25,  # 0.25 of remaining = 0.2 of total
         temporal: bool = True,
-    ) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+        calibration_size: float = 0.10,
+    ) -> "PreprocessedSplits":
         """
         Full preprocessing pipeline.
         
@@ -130,27 +132,74 @@ class DataPreprocessor:
         logger.info(f"  Train: {len(X_train)} samples")
         logger.info(f"  Val: {len(X_val)} samples")
         logger.info(f"  Test: {len(X_test)} samples")
-        
+
+        # Step 2.4: Carve the calibration slice off the *raw* train block,
+        # before augmentation. Taken from the tail so it is the portion
+        # closest in time to val/test — calibration should see the
+        # distribution the model will serve against.
+        X_fit, y_fit, X_cal, y_cal = self._carve_calibration(
+            X_train, y_train, calibration_size
+        )
+        logger.info(f"  Calibration holdout: {len(X_cal)} samples (pre-augmentation)")
+
         # Step 2.5: Context-field dropout augmentation (training only).
-        # Val/test keep their real payloads so the deployment gate still
-        # measures full-context performance.
-        X_train, y_train = self._augment_context_dropout(X_train, y_train, context_idx)
+        # Val/test/calibration keep their real payloads so the deployment
+        # gate still measures full-context performance.
+        X_train, y_train = self._augment_context_dropout(X_fit, y_fit, context_idx)
 
         # Step 3: SMOTE oversampling (only on training data)
         logger.info("Step 3: SMOTE oversampling...")
         X_train, y_train = self._apply_smote(X_train, y_train)
-        
+
         # Step 4: Feature scaling
         logger.info("Step 4: Feature scaling...")
         X_train = self._fit_transform(X_train)
         X_val = self._transform(X_val)
         X_test = self._transform(X_test)
-        
+        X_cal = self._transform(X_cal) if len(X_cal) else X_cal
+        X_fit_scaled = self._transform(X_fit) if len(X_fit) else X_fit
+
         logger.info("✅ Preprocessing complete")
         logger.info(f"  Final train shape: {X_train.shape}")
         logger.info(f"  Final train class distribution: {dict(zip(*np.unique(y_train, return_counts=True)))}")
-        
-        return X_train, X_val, X_test, y_train, y_val, y_test
+
+        return PreprocessedSplits(
+            X_train=X_train,
+            y_train=y_train,
+            X_val=X_val,
+            y_val=y_val,
+            X_test=X_test,
+            y_test=y_test,
+            X_cal=X_cal,
+            y_cal=y_cal,
+            X_fit_raw=X_fit_scaled,
+            y_fit_raw=y_fit,
+        )
+
+    def _carve_calibration(self, X, y, fraction: float):
+        """Tail slice of the training block, untouched by augmentation."""
+        empty_X = np.empty((0, X.shape[1]), dtype=X.dtype)
+        empty_y = np.empty((0,), dtype=y.dtype)
+        if fraction <= 0 or len(X) < 500:
+            return X, y, empty_X, empty_y
+
+        n_cal = int(len(X) * fraction)
+        if n_cal < 1:
+            return X, y, empty_X, empty_y
+
+        cut = len(X) - n_cal
+        X_fit, y_fit = X[:cut], y[:cut]
+        X_cal, y_cal = X[cut:], y[cut:]
+
+        # Isotonic regression needs both classes to fit anything useful,
+        # and the fit block must stay trainable.
+        if len(np.unique(y_cal)) < 2 or len(np.unique(y_fit)) < 2:
+            logger.warning(
+                "Calibration holdout is single-class — skipping calibration for this run"
+            )
+            return X, y, empty_X, empty_y
+
+        return X_fit, y_fit, X_cal, y_cal
     
     def _temporal_split(self, X, y, test_size, val_size):
         n = len(X)

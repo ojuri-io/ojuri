@@ -7,6 +7,28 @@ import { requireAuth } from "../../src/shared/middlewares/require-auth.middlewar
 
 const SECRET = "test-secret-test-secret-test-secret-test";
 
+// Grants are resolved live from the user row, not from the token's
+// permission claim — these drive what the stubbed repo returns.
+let dbPermissions: string[];
+let dbIsActive: boolean;
+
+function fakeUserRepo() {
+  return {
+    findByIdWithRoles: async (id: string) => ({
+      id,
+      username: "alice",
+      fullName: null,
+      email: null,
+      tenantId: "default",
+      isActive: dbIsActive,
+      mustChangePassword: false,
+      lastLoginAt: null,
+      createdAt: new Date(),
+      roles: [{ id: "r1", name: "TEST_ROLE", permissions: dbPermissions }],
+    }),
+  };
+}
+
 function sign(subject: { userId: string; tenantId: string; username: string; permissions: string[] }) {
   return jwt.sign(subject, SECRET, { expiresIn: 300 });
 }
@@ -24,10 +46,9 @@ function buildApp() {
 
 beforeEach(() => {
   process.env.AUTH_JWT_SECRET = SECRET;
-  // The middleware resolves AuthService from the tsyringe container; we
-  // register a fresh real instance (its DB-touching paths aren't called
-  // here — only `verifyToken`, which is pure JWT).
-  container.register(AuthService, { useValue: new AuthService({} as never) });
+  dbPermissions = [];
+  dbIsActive = true;
+  container.register(AuthService, { useValue: new AuthService(fakeUserRepo() as never) });
 });
 
 describe("requireAuth()", () => {
@@ -59,11 +80,12 @@ describe("requireAuth()", () => {
 
   it("passes when any required permission is held", async () => {
     const app = buildApp();
+    dbPermissions = ["rules:read"];
     const token = sign({
       userId: "u1",
       tenantId: "default",
       username: "alice",
-      permissions: ["rules:read"],
+      permissions: [],
     });
     const res = await app.inject({
       method: "GET",
@@ -76,11 +98,12 @@ describe("requireAuth()", () => {
 
   it("returns 403 when none of the required permissions are held", async () => {
     const app = buildApp();
+    dbPermissions = ["metrics:read"];
     const token = sign({
       userId: "u1",
       tenantId: "default",
       username: "alice",
-      permissions: ["metrics:read"],
+      permissions: ["rules:read"],
     });
     const res = await app.inject({
       method: "GET",
@@ -92,11 +115,12 @@ describe("requireAuth()", () => {
 
   it("wildcard permission satisfies any required code", async () => {
     const app = buildApp();
+    dbPermissions = ["*"];
     const token = sign({
       userId: "u1",
       tenantId: "default",
       username: "root",
-      permissions: ["*"],
+      permissions: [],
     });
     const res = await app.inject({
       method: "GET",
@@ -104,5 +128,23 @@ describe("requireAuth()", () => {
       headers: { authorization: `Bearer ${token}` },
     });
     expect(res.statusCode).toBe(200);
+  });
+
+  it("rejects a deactivated user's still-valid token with 401", async () => {
+    const app = buildApp();
+    dbPermissions = ["rules:read"];
+    dbIsActive = false;
+    const token = sign({
+      userId: "u1",
+      tenantId: "default",
+      username: "alice",
+      permissions: ["rules:read"],
+    });
+    const res = await app.inject({
+      method: "GET",
+      url: "/rules",
+      headers: { authorization: `Bearer ${token}` },
+    });
+    expect(res.statusCode).toBe(401);
   });
 });

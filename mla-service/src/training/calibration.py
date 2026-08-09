@@ -38,6 +38,17 @@ class Calibrator:
             raise RuntimeError("Calibrator.transform called before fit()")
         return self._iso.transform(np.asarray(uncalibrated_scores).ravel())
 
+    def as_breakpoints(self) -> dict:
+        """JSON-serialisable form for meta.json. RDA applies the mapping
+        at inference from these; the paired .npz stays numpy-native and
+        is not readable from Node."""
+        if self._iso is None:
+            raise RuntimeError("Calibrator.as_breakpoints called before fit()")
+        return {
+            "x_thresholds": [float(v) for v in self._iso.X_thresholds_],
+            "y_thresholds": [float(v) for v in self._iso.y_thresholds_],
+        }
+
     def save(self, path: Path) -> None:
         if self._iso is None:
             raise RuntimeError("Calibrator.save called before fit()")

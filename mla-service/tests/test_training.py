@@ -12,6 +12,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 from src.training.preprocessor import DataPreprocessor
 from src.training.trainer import ModelTrainer
 from src.training.validator import ModelValidator
+from src.training.splits import PreprocessedSplits
 
 
 class TestDataPreprocessor:
@@ -136,7 +137,7 @@ class TestModelTrainer:
         X_val = np.random.rand(50, 20).astype(np.float32)
         y_val = np.random.randint(0, 2, 50).astype(np.int32)
         
-        model, _calibrator, metrics = trainer.train(X_train, y_train, X_val, y_val)
+        model, _calibrator, metrics = trainer.train(PreprocessedSplits.from_arrays(X_train, y_train, X_val, y_val))
         
         # Check model is trained
         assert model is not None
@@ -159,11 +160,11 @@ class TestModelTrainer:
         X_val = np.random.rand(50, 20).astype(np.float32)
         y_val = np.random.randint(0, 2, 50).astype(np.int32)
 
-        prior_model, _, _ = trainer.train(X_train, y_train, X_val, y_val)
+        prior_model, _, _ = trainer.train(PreprocessedSplits.from_arrays(X_train, y_train, X_val, y_val))
         prior_trees = prior_model.get_booster().num_boosted_rounds()
 
         new_model, _, metrics = trainer.train(
-            X_train, y_train, X_val, y_val,
+            PreprocessedSplits.from_arrays(X_train, y_train, X_val, y_val),
             mode="CONTINUED",
             prior_model=prior_model,
             continued_trees=5,
@@ -183,7 +184,7 @@ class TestModelTrainer:
         y_val = np.random.randint(0, 2, 50).astype(np.int32)
 
         _, _, metrics = trainer.train(
-            X_train, y_train, X_val, y_val,
+            PreprocessedSplits.from_arrays(X_train, y_train, X_val, y_val),
             mode="CONTINUED",
             prior_model=None,
         )
@@ -199,7 +200,7 @@ class TestModelTrainer:
         X_val = np.random.rand(50, 10).astype(np.float32)
         y_val = np.random.randint(0, 2, 50).astype(np.int32)
         
-        model, _, _ = trainer.train(X_train, y_train, X_val, y_val)
+        model, _, _ = trainer.train(PreprocessedSplits.from_arrays(X_train, y_train, X_val, y_val))
         
         importance = trainer.get_feature_importance(model, top_n=5)
         

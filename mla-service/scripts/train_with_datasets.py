@@ -204,7 +204,8 @@ def train_with_real_datasets(
     logger.info("Applying SMOTE (Chawla et al., 2002) for class balance")
     
     preprocessor = DataPreprocessor()
-    X_train, X_val, X_test, y_train, y_val, y_test = preprocessor.preprocess(X, y)
+    splits = preprocessor.preprocess(X, y)
+    X_train, X_val, X_test, y_train, y_val, y_test = splits.as_legacy_tuple()
     
     logger.info("")
     logger.info("Dataset splits:")
@@ -222,7 +223,7 @@ def train_with_real_datasets(
     logger.info("-" * 50)
     
     trainer = ModelTrainer(config)
-    model, _calibrator, metrics = trainer.train(X_train, y_train, X_val, y_val)
+    model, _calibrator, metrics = trainer.train(splits)
     
     logger.info("")
     logger.info("Training complete!")

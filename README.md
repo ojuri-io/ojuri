@@ -113,8 +113,9 @@ docker compose up -d --build                # builds RDA + PAA on first run (a f
 docker compose logs db-migrate              # one-time admin password printed here
 ````
 
-Either way brings up Postgres, Redis, Kafka, three RDA replicas behind
-NGINX, the PAA singleton worker, a one-shot `db-migrate` container, and
+Either way brings up Postgres, Redis, Kafka, the RDA replicas behind
+NGINX (`RDA_REPLICAS` in `.env`, default 3), the PAA singleton worker, a
+one-shot `db-migrate` container, and
 Prometheus/Grafana. MLA and FIA are opt-in — see
 [Install options](#install-options) and
 [Training a model](#training-a-model-mla). The `.env` copy is required:
@@ -224,8 +225,8 @@ export OJURI_VERSION=v1.3.0   # before any docker compose command
 **Build from source.** `docker compose up -d --build` builds RDA + PAA on
 first run (a few minutes), then starts the same services.
 
-**What comes up, either way:** Postgres, Redis, Kafka, three RDA replicas
-behind NGINX, the PAA singleton worker (`paa_group_members` must stay at 1
+**What comes up, either way:** Postgres, Redis, Kafka, the RDA replicas
+(`RDA_REPLICAS` in `.env`, default 3) behind NGINX, the PAA singleton worker (`paa_group_members` must stay at 1
 — see [`paa-service/README.md`](paa-service/README.md) for the rationale),
 the `db-migrate` one-shot (Knex migrations + seeds, exits cleanly), and the
 Prometheus/Grafana stack. FIA is behind a profile because it carries

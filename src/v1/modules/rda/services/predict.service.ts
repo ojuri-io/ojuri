@@ -1,15 +1,19 @@
+import { randomUUID } from "crypto";
 import httpStatus from "http-status";
 import { injectable } from "tsyringe";
 import appConfig from "@config/app.config";
 import { createServiceLogger } from "@shared/utils/logger/service-logger";
 import { metricsService } from "@shared/metrics/metrics.service";
 import OnnxService from "@shared/onnx/onnx.service";
-import KafkaProducer from "@shared/kafka/kafka-producer";
+import KafkaProducer, { TransactionEvent } from "@shared/kafka/kafka-producer";
+import { AuditPipeline } from "@shared/enums/audit-pipeline.enum";
+import DecisionPublishError from "@shared/error/decision-publish.error";
 import { explain, ReasonCode } from "@shared/onnx/reason-codes";
 import RulesService from "@shared/rules/rules.service";
 import { RuleContext } from "@shared/rules/rule.types";
 import ModelRegistryService from "@shared/models/model-registry.service";
 import DecisionAuditService from "@shared/audit/decision-audit.service";
+import { DecisionAuditRecord } from "@shared/audit/decision-audit.types";
 import WebhookService from "@shared/webhooks/webhook.service";
 import IdempotencyService from "@shared/idempotency/idempotency.service";
 import { loadCatalog } from "@shared/features/feature-catalog";
@@ -21,9 +25,11 @@ import { RuleStage } from "@shared/enums/rule-stage.enum";
 import DuplicateTransactionError from "@shared/error/duplicate-transaction.error";
 import FeatureService from "./feature.service";
 import { PredictRequestDto, PredictResponseDto } from "../dtos/predict-request.dto";
+import { CalibrationMode } from "@shared/onnx/onnx.types";
 import {
   FeaturesPayload,
   FinalVerdict,
+  MlDecision,
   MlOutcome,
   ModelMeta,
   PredictDecisionContext,
@@ -43,6 +49,7 @@ const log = createServiceLogger("PredictService");
 
 const IDEMPOTENCY_TTL_MS = Number(process.env.IDEMPOTENCY_TTL_MS) || 24 * 60 * 60 * 1000;
 const DEFAULT_TENANT = "default";
+const EMPTY_FEATURES: Record<string, number> = Object.freeze({});
 
 @injectable()
 class PredictService {
@@ -68,14 +75,20 @@ class PredictService {
     invocation: PredictInvocation,
     startTime: number,
   ): Promise<PredictOutcome> {
+    const tenantId = invocation.tenantId ?? DEFAULT_TENANT;
     const reserved = await this.idempotencyService.reserveTransactionId(
-      invocation.tenantId ?? DEFAULT_TENANT,
+      tenantId,
       invocation.request.transaction_id,
     );
     if (!reserved) {
       return { kind: "duplicate", transactionId: invocation.request.transaction_id };
     }
-    return this.runAndWrap(invocation, startTime);
+    // A reservation held past a failed prediction burns the
+    // transaction_id for the full idempotency TTL, so the client's retry
+    // of a 5xx gets a 409 with no cached response to replay.
+    return this.runAndWrap(invocation, startTime, () =>
+      this.idempotencyService.releaseTransactionId(tenantId, invocation.request.transaction_id),
+    );
   }
 
   private async executeWithIdempotencyKey(
@@ -120,6 +133,7 @@ class PredictService {
   private async runAndWrap(
     invocation: PredictInvocation,
     startTime: number,
+    onFailure?: () => Promise<void>,
   ): Promise<PredictOutcome> {
     try {
       const response = await this.predict(invocation, startTime);
@@ -129,6 +143,11 @@ class PredictService {
     } catch (err) {
       if (err instanceof DuplicateTransactionError) {
         return { kind: "duplicate", transactionId: err.transactionId };
+      }
+      if (onFailure) {
+        await onFailure().catch((e) =>
+          log.warn("release", "Failed to release transaction reservation", { err: String(e) }),
+        );
       }
       this.recordError();
       throw err;
@@ -144,12 +163,44 @@ class PredictService {
     const modelMeta = this.resolveModel(request.segment ?? request.transaction_type);
     metricsService.recordPredictStage("resolve_model", performance.now() - t0);
 
+    // Every shipped PRE rule reads request fields only, so paying the
+    // Redis feature read before them is pure latency on a request the
+    // rules engine is about to decline outright.
+    t0 = performance.now();
+    const requestCtx = this.buildRuleContext(request, tenantId, EMPTY_FEATURES);
+    const earlyHit = this.rulesService.evaluateRequestOnlyPre(requestCtx);
+    metricsService.recordPredictStage("pre_rules_request_only", performance.now() - t0);
+
+    if (this.isHardRuleDecision(earlyHit)) {
+      const ctx = PredictDecisionContextFactory.fromPreRule({
+        invocation,
+        request,
+        startTime,
+        rule: earlyHit,
+        finalDecision: ruleActionToDecision(earlyHit.rule.action),
+        threshold: modelMeta.threshold,
+        championVersion: modelMeta.championVersion,
+        shadowVersion: modelMeta.shadowVersion,
+        // null, not empty: the rule decided without ever loading
+        // features, which is a different claim from "Redis missed, so we
+        // scored on defaults". The audit row must not assert the latter.
+        reasonCodes: null,
+        featuresSnapshot: null,
+        isDefault: false,
+      });
+      // The decision doesn't need features, but the audit trail does.
+      // Load them behind the response and patch the queued row.
+      return this.finalize(ctx, this.loadFeaturesForAudit(request));
+    }
+
     t0 = performance.now();
     const features = await this.loadFeatures(request);
     metricsService.recordPredictStage("feature_load", performance.now() - t0);
 
+    const ruleCtx: RuleContext = { ...requestCtx, features: features.snapshot };
+
     t0 = performance.now();
-    const preHit = this.evaluatePreRules(request, tenantId, features.snapshot);
+    const preHit = this.rulesService.evaluate(RuleStage.PRE, ruleCtx);
     metricsService.recordPredictStage("pre_rules", performance.now() - t0);
 
     if (this.isHardRuleDecision(preHit)) {
@@ -166,7 +217,7 @@ class PredictService {
         featuresSnapshot: features.snapshot,
         isDefault: features.isDefault,
       });
-      return this.finalize(ctx);
+      return this.finalize(ctx, null);
     }
 
     t0 = performance.now();
@@ -177,22 +228,17 @@ class PredictService {
     );
     metricsService.recordPredictStage("inference", performance.now() - t0);
 
-    // Shadow scoring overlaps with reason codes + POST rules; awaited
-    // just before the audit record is built so the score lands on the
-    // same row (no post-hoc UPDATE racing the batched audit flush).
-    const shadowScorePromise: Promise<number | null> = modelMeta.shadowVersion
-      ? this.onnxService.predictShadow(features.enrichedVector)
-      : Promise.resolve(null);
+    // Observational only, so it never blocks the response: the score is
+    // patched into the queued audit row if it lands before the flush.
+    const shadowScorePromise = this.scoreShadow(modelMeta, features.enrichedVector);
 
     t0 = performance.now();
     const reasonCodes = explain(features.enrichedVector);
     metricsService.recordPredictStage("reason_codes", performance.now() - t0);
 
     t0 = performance.now();
-    const verdict = this.evaluatePostRules(request, tenantId, features.snapshot, ml);
+    const verdict = this.evaluatePostRules(ruleCtx, ml);
     metricsService.recordPredictStage("post_rules", performance.now() - t0);
-
-    const shadowScore = await shadowScorePromise;
 
     const ctx = PredictDecisionContextFactory.fromMlDecision({
       invocation,
@@ -202,16 +248,29 @@ class PredictService {
       finalDecision: verdict.finalDecision,
       decisionSource: verdict.decisionSource,
       mlScore: ml.score,
+      calibratedScore: ml.calibratedScore,
       mlDecision: ml.decision,
       threshold: modelMeta.threshold,
       championVersion: modelMeta.championVersion,
       shadowVersion: modelMeta.shadowVersion,
-      shadowScore,
+      shadowScore: null,
       reasonCodes,
       featuresSnapshot: features.snapshot,
       isDefault: features.isDefault,
     });
-    return this.finalize(ctx);
+    return this.finalize(
+      ctx,
+      shadowScorePromise ? shadowScorePromise.then((shadowScore) => ({ shadowScore })) : null,
+    );
+  }
+
+  private scoreShadow(
+    modelMeta: ModelMeta,
+    vector: Float32Array,
+  ): Promise<number | null> | null {
+    if (!modelMeta.shadowVersion) return null;
+    if (Math.random() >= appConfig.onnx.shadowSampleRate) return null;
+    return this.onnxService.predictShadow(vector);
   }
 
   private resolveModel(segment?: string): ModelMeta {
@@ -235,31 +294,41 @@ class PredictService {
     return { enrichedVector: vector, snapshot, isDefault };
   }
 
-  private evaluatePreRules(
-    request: PredictRequestDto,
-    tenantId: string | null | undefined,
-    features: Record<string, number>,
-  ): PredictRuleHit | null {
-    const ctx = this.buildRuleContext(request, tenantId, features);
-    return this.rulesService.evaluate(RuleStage.PRE, ctx);
-  }
-
   private async runInference(
     vector: Float32Array,
     threshold: number,
     reviewThreshold: number | null,
   ): Promise<MlOutcome> {
-    const score = await this.onnxService.predict(vector);
-    return { score, decision: bandDecision(score, threshold, reviewThreshold) };
+    const outcome = await this.onnxService.predict(vector);
+
+    // The breaker fallback means inference never ran. Declining on
+    // infrastructure failure turns one contention spike into customer-
+    // facing mass declines; routing to REVIEW keeps a human in the loop.
+    if (outcome.degraded) {
+      return {
+        score: outcome.score,
+        calibratedScore: null,
+        decision: appConfig.circuitBreaker.onnx.fallbackDecision as MlDecision,
+        degraded: true,
+      };
+    }
+
+    // Thresholds were tuned against the raw score distribution; ENFORCE
+    // is only correct once they have been re-derived from calibrated data.
+    const decisionScore =
+      appConfig.onnx.calibrationMode === CalibrationMode.ENFORCE && outcome.calibratedScore !== null
+        ? outcome.calibratedScore
+        : outcome.score;
+
+    return {
+      score: outcome.score,
+      calibratedScore: outcome.calibratedScore,
+      decision: bandDecision(decisionScore, threshold, reviewThreshold),
+      degraded: false,
+    };
   }
 
-  private evaluatePostRules(
-    request: PredictRequestDto,
-    tenantId: string | null | undefined,
-    features: Record<string, number>,
-    ml: MlOutcome,
-  ): FinalVerdict {
-    const baseCtx = this.buildRuleContext(request, tenantId, features);
+  private evaluatePostRules(baseCtx: RuleContext, ml: MlOutcome): FinalVerdict {
     const postCtx: RuleContext = { ...baseCtx, ml_score: ml.score, ml_decision: ml.decision };
     const postHit = this.rulesService.evaluate(RuleStage.POST, postCtx);
 
@@ -270,7 +339,11 @@ class PredictService {
         decisionSource: DecisionSource.POST_RULE,
       };
     }
-    return { postRule: null, finalDecision: ml.decision, decisionSource: DecisionSource.ML };
+    return {
+      postRule: null,
+      finalDecision: ml.decision,
+      decisionSource: ml.degraded ? DecisionSource.BREAKER_FALLBACK : DecisionSource.ML,
+    };
   }
 
   private isHardRuleDecision(
@@ -279,22 +352,101 @@ class PredictService {
     return hit !== null && hit.rule.action !== RuleAction.NONE;
   }
 
-  private async finalize(ctx: PredictDecisionContext): Promise<PredictResponseDto> {
+  private async finalize(
+    ctx: PredictDecisionContext,
+    lateAudit: Promise<Partial<DecisionAuditRecord>> | null,
+  ): Promise<PredictResponseDto> {
     const latencyMs = Date.now() - ctx.startTime;
     metricsService.recordDecision(ctx.finalDecision);
 
+    // Attach the handler now: persistAudit can throw, and an unhandled
+    // rejection from an already-started promise would take the process
+    // down. Redis failing and the audit queue backing up correlate.
+    const late = lateAudit?.catch((err) => {
+      log.warn("audit", "Late audit enrichment failed", { err: String(err) });
+      return null;
+    });
+
+    const record = DecisionAuditFactory.createRecord(ctx, latencyMs);
+
+    if (appConfig.audit.pipeline === AuditPipeline.STREAM) {
+      return this.finalizeStream(ctx, record, late, latencyMs);
+    }
+
     const t0 = performance.now();
-    const auditId = this.persistAudit(ctx, latencyMs);
+    // Sync mode writes straight through, so there is no queued row left
+    // to patch — the late fields have to land before the insert.
+    if (appConfig.audit.syncWrite) {
+      Object.assign(record, (late && (await late)) ?? {});
+    }
+    const auditId = await this.persistAudit(record);
     metricsService.recordPredictStage("audit_enqueue", performance.now() - t0);
+
+    if (late && !appConfig.audit.syncWrite) {
+      void late.then((fields) => fields && this.decisionAudit.patchLate(auditId, fields));
+    }
 
     this.dispatchAsyncEffects(ctx, auditId);
 
     return PredictResponseFactory.create(ctx, auditId, latencyMs);
   }
 
-  private persistAudit(ctx: PredictDecisionContext, latencyMs: number): string {
-    const record = DecisionAuditFactory.createRecord(ctx, latencyMs);
-    return this.decisionAudit.enqueue(record);
+  /**
+   * Log-first pipeline: the event — carrying the full audit payload — is
+   * the durable write, acked by the broker before the client hears the
+   * decision. The audit table is materialised from the topic by
+   * AuditStreamConsumer. Values that resolve after publication (shadow
+   * scores, early-PRE feature snapshots) follow as an enrichment event
+   * the consumer applies as an UPDATE.
+   */
+  private async finalizeStream(
+    ctx: PredictDecisionContext,
+    record: DecisionAuditRecord,
+    late: Promise<Partial<DecisionAuditRecord> | null> | undefined,
+    latencyMs: number,
+  ): Promise<PredictResponseDto> {
+    const auditId = randomUUID();
+    const event = TransactionEventFactory.fromDecisionContext(ctx, auditId);
+    event.audit = { ...record, auditId };
+
+    const t0 = performance.now();
+    try {
+      await this.kafkaProducer.publishDurable(event);
+    } catch (err) {
+      log.error("kafka", "Durable decision publish failed", { err: String(err) });
+      throw new DecisionPublishError(ctx.request.transaction_id);
+    }
+    metricsService.recordPredictStage("audit_publish", performance.now() - t0);
+
+    if (late) {
+      void late.then((fields) => {
+        if (fields && Object.keys(fields).length > 0) {
+          this.kafkaProducer.publishEnrichment({ audit_id: auditId, fields });
+        }
+      });
+    }
+
+    setImmediate(() => {
+      this.publishBlockedEvent(ctx, event);
+      this.publishDecisionWebhook(ctx, auditId);
+    });
+
+    return PredictResponseFactory.create(ctx, auditId, latencyMs);
+  }
+
+  private loadFeaturesForAudit(
+    request: PredictRequestDto,
+  ): Promise<Partial<DecisionAuditRecord>> {
+    return this.loadFeatures(request).then((features) => ({
+      featuresSnapshot: features.snapshot,
+      featuresDefault: features.isDefault,
+      reasonCodes: explain(features.enrichedVector),
+    }));
+  }
+
+  private async persistAudit(record: DecisionAuditRecord): Promise<string> {
+    if (!appConfig.audit.syncWrite) return this.decisionAudit.enqueue(record);
+    return this.decisionAudit.recordDurable(record);
   }
 
   // Kafka publish + outbound webhook are off the response path. setImmediate
@@ -311,11 +463,25 @@ class PredictService {
     try {
       const event = TransactionEventFactory.fromDecisionContext(ctx, auditId);
       this.kafkaProducer.publishAsync(event);
-      if (ctx.finalDecision === Decision.DECLINE) {
+      this.publishBlockedEvent(ctx, event);
+    } catch (err) {
+      log.error("kafka", "Deferred Kafka publish failed", { err: String(err) });
+    }
+  }
+
+  // A breaker-fallback decline carries no model signal, so there is
+  // nothing for FIA to investigate — and during an outage every
+  // request would otherwise queue an LLM report.
+  private publishBlockedEvent(ctx: PredictDecisionContext, event: TransactionEvent): void {
+    try {
+      const investigable =
+        ctx.finalDecision === Decision.DECLINE &&
+        ctx.decisionSource !== DecisionSource.BREAKER_FALLBACK;
+      if (investigable) {
         this.kafkaProducer.publishAsync(event, appConfig.kafka.blockedTopic, event.transaction_id);
       }
     } catch (err) {
-      log.error("kafka", "Deferred Kafka publish failed", { err: String(err) });
+      log.error("kafka", "Blocked-topic publish failed", { err: String(err) });
     }
   }
 

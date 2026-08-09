@@ -20,9 +20,10 @@
  */
 
 import { loadCatalog } from "@shared/features/feature-catalog";
-import { ReasonCode, ReasonFeatureSpec } from "./reason-codes.types";
+import { ReasonBasis, ReasonCode, ReasonFeatureSpec } from "./reason-codes.types";
 
 export type { ReasonCode, ReasonFeatureSpec } from "./reason-codes.types";
+export { ReasonBasis } from "./reason-codes.types";
 
 const SPECS: ReasonFeatureSpec[] = [
   { feature: "velocity_1h",                code: "VELOCITY_1H",      description: "Transactions in the last hour above baseline", baseline: 1,     scale: 5,     weight:  0.30 },
@@ -52,6 +53,7 @@ export const REASON_CODE_CATALOGUE: Array<{ code: string; description: string }>
 type ResolvedSpec = ReasonFeatureSpec & { index: number };
 
 let resolvedSpecs: ResolvedSpec[] | null = null;
+let modelWeights: Record<string, number> | null = null;
 
 function resolveSpecs(): ResolvedSpec[] {
   if (resolvedSpecs) return resolvedSpecs;
@@ -68,9 +70,43 @@ function resolveSpecs(): ResolvedSpec[] {
   return resolvedSpecs;
 }
 
-/** Test-only — clears memoised catalogue positions. */
+/**
+ * Replace the hand-set weight magnitudes with the deployed model's
+ * normalised gain importances, keeping each spec's sign — direction is
+ * domain knowledge the importances don't carry. Called on every model
+ * load; passing null reverts to the built-in constants.
+ */
+export function setModelWeights(weights: Record<string, number> | null): void {
+  if (!weights) {
+    modelWeights = null;
+    return;
+  }
+  const usable = Object.entries(weights).filter(
+    ([, v]) => typeof v === "number" && Number.isFinite(v) && v >= 0
+  );
+  const max = usable.reduce((m, [, v]) => Math.max(m, v), 0);
+  if (usable.length === 0 || max <= 0) {
+    modelWeights = null;
+    return;
+  }
+  modelWeights = Object.fromEntries(usable.map(([k, v]) => [k, v / max]));
+}
+
+function weightFor(spec: ReasonFeatureSpec): { weight: number; basis: ReasonBasis } {
+  const learned = modelWeights?.[spec.feature];
+  if (learned === undefined) {
+    return { weight: spec.weight, basis: ReasonBasis.HEURISTIC };
+  }
+  return {
+    weight: Math.sign(spec.weight) * learned,
+    basis: ReasonBasis.MODEL_WEIGHTED,
+  };
+}
+
+/** Test-only — clears memoised catalogue positions and model weights. */
 export function _resetResolvedSpecsForTests(): void {
   resolvedSpecs = null;
+  modelWeights = null;
 }
 
 export function explain(features: Float32Array, topN = 3): ReasonCode[] {
@@ -81,13 +117,15 @@ export function explain(features: Float32Array, topN = 3): ReasonCode[] {
     if (value === undefined || Number.isNaN(value)) continue;
 
     const z = (value - spec.baseline) / (spec.scale || 1);
-    const contribution = spec.weight * Math.tanh(z);
+    const { weight, basis } = weightFor(spec);
+    const contribution = weight * Math.tanh(z);
 
     contributions.push({
       code: spec.code,
       description: spec.description,
       contribution: round(contribution),
       value: round(value),
+      basis,
     });
   }
 

@@ -2,7 +2,8 @@ import type Redis from "ioredis";
 import { singleton } from "tsyringe";
 import { createServiceLogger } from "@shared/utils/logger/service-logger";
 import RedisClient from "@shared/redis-client/redis-client";
-import { evaluate } from "./evaluator";
+import { collectVarPaths, evaluate, hasStringHaystack } from "./evaluator";
+import { validateExpression } from "./rule-validation";
 import RuleRepo from "./repositories/rule.repo";
 import { Rule } from "./model/rule.model";
 import { CreateRuleInput, RuleContext, RuleHit, RuleRecord, RuleStage, UpdateRuleInput } from "./rule.types";
@@ -16,6 +17,10 @@ const RULES_INVALIDATION_CHANNEL = "ojuri:rules:invalidate";
 class RulesService {
   private preRules: RuleRecord[] = [];
   private postRules: RuleRecord[] = [];
+  // Best (numerically lowest) priority among PRE rules that read a
+  // `features.*` path, split by whether they apply to every tenant.
+  private preFeatureBestPriorityShared: number = Number.POSITIVE_INFINITY;
+  private preFeatureBestPriorityByTenant: Map<string, number> = new Map();
   private timer: NodeJS.Timeout | null = null;
   private subscriber: Redis | null = null;
   private loaded = false;
@@ -74,9 +79,28 @@ class RulesService {
 
     this.preRules = pre;
     this.postRules = post;
+    this.preFeatureBestPriorityShared = Number.POSITIVE_INFINITY;
+    this.preFeatureBestPriorityByTenant = new Map();
+    for (const rule of pre) {
+      if (rule.requestOnly) continue;
+      if (!rule.tenantId) {
+        this.preFeatureBestPriorityShared = Math.min(
+          this.preFeatureBestPriorityShared,
+          rule.priority
+        );
+        continue;
+      }
+      const current = this.preFeatureBestPriorityByTenant.get(rule.tenantId) ?? Infinity;
+      this.preFeatureBestPriorityByTenant.set(rule.tenantId, Math.min(current, rule.priority));
+    }
     this.loaded = true;
+    this.warnOnDeadRules([...pre, ...post]);
 
-    log.debug("reload", "Rules reloaded", { pre: pre.length, post: post.length });
+    log.debug("reload", "Rules reloaded", {
+      pre: pre.length,
+      preRequestOnly: pre.filter((r) => r.requestOnly).length,
+      post: post.length,
+    });
   }
 
   /** Snapshot of the in-memory cache. Used by the admin reload endpoint. */
@@ -89,32 +113,84 @@ class RulesService {
     await this.publishInvalidation();
   }
 
-  evaluate(stage: RuleStage, ctx: RuleContext): RuleHit | null {
-    const rules = stage === "PRE" ? this.preRules : this.postRules;
-    for (const rule of rules) {
-      if (rule.tenantId && ctx.tenant_id && rule.tenantId !== ctx.tenant_id) {
-        continue;
-      }
-      try {
-        if (evaluate(rule.expression, ctx)) {
-          return { rule, stage };
-        }
-      } catch (err) {
-        log.error("evaluate", "Rule expression failed to evaluate; skipping", {
-          ruleId: rule.id,
-          ruleName: rule.name,
-          err: String(err),
-        });
-      }
+  /**
+   * PRE-stage pass over rules that read request fields only, run before
+   * the Redis feature load so a hit can skip it entirely. Only returns a
+   * hit that outranks every feature-dependent PRE rule this tenant can
+   * see — otherwise short-circuiting would let a low-priority
+   * request-only rule beat a high-priority feature rule that the full
+   * ordered pass would have matched first.
+   */
+  evaluateRequestOnlyPre(ctx: RuleContext): RuleHit | null {
+    const cutoff = this.featureDependentCutoff(ctx.tenant_id);
+    for (const rule of this.preRules) {
+      if (!rule.requestOnly) continue;
+      if (rule.priority >= cutoff) break;
+      if (this.tenantMismatch(rule, ctx)) continue;
+      if (this.matches(rule, ctx)) return { rule, stage: "PRE" as RuleStage };
     }
     return null;
   }
 
+  // Scoped per tenant: one tenant's low-priority feature rule must not
+  // disable the short-circuit for every other tenant.
+  private featureDependentCutoff(tenantId: string | undefined): number {
+    const tenantBest = tenantId
+      ? this.preFeatureBestPriorityByTenant.get(tenantId) ?? Number.POSITIVE_INFINITY
+      : Number.POSITIVE_INFINITY;
+    return Math.min(this.preFeatureBestPriorityShared, tenantBest);
+  }
+
+  evaluate(stage: RuleStage, ctx: RuleContext): RuleHit | null {
+    const rules = stage === "PRE" ? this.preRules : this.postRules;
+    for (const rule of rules) {
+      if (this.tenantMismatch(rule, ctx)) continue;
+      if (this.matches(rule, ctx)) return { rule, stage };
+    }
+    return null;
+  }
+
+  /**
+   * Rules stored before `in` was restricted to array haystacks now
+   * evaluate false on every transaction. That is indistinguishable from
+   * "correctly not matching", so a fraud control can go dark silently —
+   * only save-time validation rejects the shape, and it never ran on
+   * rows that predate it.
+   */
+  private warnOnDeadRules(rules: RuleRecord[]): void {
+    for (const rule of rules) {
+      if (!hasStringHaystack(rule.expression)) continue;
+      log.error("reload", "Rule can never match: `in` with a non-array haystack", {
+        ruleId: rule.id,
+        ruleName: rule.name,
+      });
+    }
+  }
+
+  private tenantMismatch(rule: RuleRecord, ctx: RuleContext): boolean {
+    return Boolean(rule.tenantId && ctx.tenant_id && rule.tenantId !== ctx.tenant_id);
+  }
+
+  private matches(rule: RuleRecord, ctx: RuleContext): boolean {
+    try {
+      return evaluate(rule.expression, ctx);
+    } catch (err) {
+      log.error("evaluate", "Rule expression failed to evaluate; skipping", {
+        ruleId: rule.id,
+        ruleName: rule.name,
+        err: String(err),
+      });
+      return false;
+    }
+  }
+
   async create(input: CreateRuleInput): Promise<Rule> {
+    const stage = input.stage ?? ("POST" as RuleStage);
+    validateExpression(input.expression, stage);
     const row = await this.repo.save({
       name: input.name,
       description: input.description ?? null,
-      stage: input.stage ?? "POST",
+      stage,
       priority: input.priority ?? 100,
       action: input.action,
       expression: input.expression,
@@ -150,6 +226,12 @@ class RulesService {
 
     if (Object.keys(fields).length === 0) return null;
 
+    if (fields.expression !== undefined) {
+      const existing = await this.repo.findById(id);
+      if (!existing) return null;
+      validateExpression(fields.expression, (fields.stage ?? existing.stage) as RuleStage);
+    }
+
     const row = await this.repo.patchById(id, fields as any);
     await this.reload().catch((err) =>
       log.error("update", "Local rules reload after update failed", { err: String(err) })
@@ -182,6 +264,11 @@ class RulesService {
   }
 
   private toRecord(row: Rule): RuleRecord {
+    const expression =
+      typeof row.expression === "string"
+        ? JSON.parse(row.expression as unknown as string)
+        : row.expression;
+    const vars = collectVarPaths(expression);
     return {
       id: row.id,
       name: row.name,
@@ -189,10 +276,10 @@ class RulesService {
       stage: row.stage as RuleStage,
       priority: row.priority,
       action: row.action as RuleRecord["action"],
-      expression:
-        typeof row.expression === "string" ? JSON.parse(row.expression as unknown as string) : row.expression,
+      expression,
       isActive: row.isActive,
       tenantId: row.tenantId,
+      requestOnly: ![...vars].some((v) => v.startsWith("features.")),
     };
   }
 }

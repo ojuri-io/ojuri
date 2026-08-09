@@ -43,13 +43,20 @@ export interface FeaturesPayload {
 
 export interface MlOutcome {
   score: number;
+  calibratedScore: number | null;
   decision: MlDecision;
+  degraded: boolean;
 }
+
+export type MlDecisionSource =
+  | DecisionSource.ML
+  | DecisionSource.POST_RULE
+  | DecisionSource.BREAKER_FALLBACK;
 
 export interface FinalVerdict {
   postRule: PredictRuleHit | null;
   finalDecision: Decision;
-  decisionSource: DecisionSource.ML | DecisionSource.POST_RULE;
+  decisionSource: MlDecisionSource;
 }
 
 export interface PreRuleContextInput {
@@ -61,8 +68,8 @@ export interface PreRuleContextInput {
   threshold: number;
   championVersion: string;
   shadowVersion: string | null;
-  reasonCodes: ReasonCode[];
-  featuresSnapshot: Record<string, number>;
+  reasonCodes: ReasonCode[] | null;
+  featuresSnapshot: Record<string, number> | null;
   isDefault: boolean;
 }
 
@@ -72,15 +79,16 @@ export interface MlDecisionContextInput {
   startTime: number;
   postRule: PredictRuleHit | null;
   finalDecision: Decision;
-  decisionSource: DecisionSource.ML | DecisionSource.POST_RULE;
+  decisionSource: MlDecisionSource;
   mlScore: number;
+  calibratedScore: number | null;
   mlDecision: MlDecision;
   threshold: number;
   championVersion: string;
   shadowVersion: string | null;
   shadowScore: number | null;
-  reasonCodes: ReasonCode[];
-  featuresSnapshot: Record<string, number>;
+  reasonCodes: ReasonCode[] | null;
+  featuresSnapshot: Record<string, number> | null;
   isDefault: boolean;
 }
 
@@ -92,12 +100,13 @@ export interface PredictDecisionContext {
   decisionSource: DecisionSource;
   rule: PredictRuleHit | null;
   mlScore: number;
+  calibratedScore: number | null;
   mlDecision: MlDecision;
   threshold: number;
   championVersion: string;
   shadowVersion: string | null;
   shadowScore: number | null;
-  reasonCodes: ReasonCode[];
-  featuresSnapshot: Record<string, number>;
+  reasonCodes: ReasonCode[] | null;
+  featuresSnapshot: Record<string, number> | null;
   isDefault: boolean;
 }

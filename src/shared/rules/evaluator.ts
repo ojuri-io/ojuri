@@ -1,5 +1,52 @@
 import { RuleContext, RuleExpression } from "./rule.types";
 
+export const RULE_OPERATORS = [
+  "var",
+  "==",
+  "!=",
+  ">",
+  ">=",
+  "<",
+  "<=",
+  "and",
+  "or",
+  "not",
+  "in",
+] as const;
+
+/** True when any `in` uses a non-array haystack — a shape that can no
+ *  longer match anything. */
+export function hasStringHaystack(expr: RuleExpression): boolean {
+  if (expr === null || typeof expr !== "object") return false;
+  if (Array.isArray(expr)) return expr.some((e) => hasStringHaystack(e));
+
+  for (const [op, args] of Object.entries(expr as Record<string, unknown>)) {
+    if (op === "var") continue;
+    if (op === "in" && Array.isArray(args) && !Array.isArray(args[1])) return true;
+    if (hasStringHaystack(args as RuleExpression)) return true;
+  }
+  return false;
+}
+
+/** Every `var` path an expression reads. Used by save-time validation and
+ *  by the request-only classification that lets PRE rules short-circuit
+ *  before the Redis feature read. */
+export function collectVarPaths(expr: RuleExpression, out: Set<string> = new Set()): Set<string> {
+  if (expr === null || typeof expr !== "object") return out;
+  if (Array.isArray(expr)) {
+    for (const e of expr) collectVarPaths(e, out);
+    return out;
+  }
+  for (const [op, args] of Object.entries(expr as Record<string, unknown>)) {
+    if (op === "var") {
+      if (typeof args === "string") out.add(args);
+      continue;
+    }
+    collectVarPaths(args as RuleExpression, out);
+  }
+  return out;
+}
+
 /**
  * Minimal JSON-Logic-style evaluator. Intentionally small — fraud
  * rules need predicates, comparisons, set membership, and boolean
@@ -44,11 +91,14 @@ function evaluateAny(expr: RuleExpression, ctx: RuleContext): unknown {
     case "not":
       return !evaluateAny(args, ctx);
     case "in": {
+      // Array haystacks only. A string haystack used to fall through to
+      // `includes()`, turning set membership into a substring match —
+      // `{"in": [{"var":"ip_country"}, "NGNE"]}` matched "GN" as readily
+      // as "NG".
       const [needle, haystack] = args;
       const n = evaluateAny(needle, ctx);
       const h = evaluateAny(haystack, ctx);
       if (Array.isArray(h)) return h.some((v) => v == n); // eslint-disable-line eqeqeq
-      if (typeof h === "string") return h.includes(String(n));
       return false;
     }
     default:

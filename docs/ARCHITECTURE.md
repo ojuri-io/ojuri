@@ -530,8 +530,10 @@ state is loaded back into the prompt for grounding. See
 
 The shipped `docker-compose.yml` runs the reference production stack:
 
-- **NGINX** on host port 80 in front of three RDA replicas (`rda-1`,
-  `rda-2`, `rda-3`), each capped at 1 CPU / 4 GB.
+- **NGINX** on host port 80 in front of the `rda` service
+  (`RDA_REPLICAS` replicas, default 3), each capped at 1 CPU / 4 GB.
+  NGINX resolves the replica IPs once at startup — restart it after
+  changing the replica count.
 - **One PAA instance** (`paa-1`) in consumer group `pattern-analysis`,
   capped at 2 CPU / 8 GB. Metrics on host port 9091. PAA is a singleton
   by design: the graph + velocity windows live in process memory, so

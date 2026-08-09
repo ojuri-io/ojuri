@@ -89,6 +89,8 @@ class MLAService:
         self.current_model_version = "v1.0"
         self.next_version = "v1.0"
         self.retraining_in_progress = False
+        self._last_retrain_attempt_at = 0.0
+        self._drift_feed_watermark = 0.0
 
         # Telemetry for the operator dashboard. Mirrors FIA's /stats so
         # the frontend can render every service the same way.
@@ -218,6 +220,15 @@ class MLAService:
 
                     logger.info(f"   Next version will be: {self.next_version}")
 
+                    # Otherwise the threshold sits at the config default
+                    # until the next retrain, un-anchoring it from the
+                    # model actually serving traffic.
+                    self.drift_detector.calibrate_f1_threshold(
+                        (latest_model_info.get("metrics") or {}).get("f1_score"),
+                        config.DRIFT_F1_MARGIN,
+                        config.MIN_DEPLOY_F1,
+                    )
+
                 else:
                     logger.warning("⚠️  XGBoost JSON booster not found - cannot load for A/B testing")
                     logger.warning("   First retraining will deploy without comparison")
@@ -254,6 +265,20 @@ class MLAService:
 
         self._run_training_pipeline({'reason': 'initial_training'})
 
+    def _evaluate_drift(self) -> None:
+        drift_detected, metrics = self.drift_detector.check_drift()
+        self._stats["drift_checks"] += 1
+        self._stats["last_drift_check_at"] = time.time()
+        if not drift_detected:
+            return
+        logger.warning(
+            "🚨 DRIFT DETECTED — F1 %.4f, max PSI %.4f, reasons: %s",
+            metrics.get("f1_score", 0.0),
+            metrics.get("max_psi", 0.0),
+            "; ".join(metrics.get("drift_reasons", [])),
+        )
+        self.on_drift_detected(metrics)
+
     def on_drift_detected(self, drift_metrics):
         """
         Callback when drift is detected.
@@ -270,6 +295,27 @@ class MLAService:
             return
 
         self._run_training_pipeline(drift_metrics)
+
+    def _cooldown_blocks(self, reason: str) -> bool:
+        """
+        The detector window is only cleared on a *successful* deployment,
+        so an A/B-rejected candidate leaves it full and the next check
+        trips again immediately. An operator-requested retrain is an
+        explicit instruction and is never suppressed.
+        """
+        if reason in ("manual", "initial_training"):
+            return False
+
+        elapsed = time.time() - self._last_retrain_attempt_at
+        if elapsed >= config.RETRAIN_COOLDOWN_SECONDS:
+            return False
+
+        logger.info(
+            "Retrain trigger '%s' suppressed — %.0fs of the %ss cooldown elapsed",
+            reason, elapsed, config.RETRAIN_COOLDOWN_SECONDS,
+        )
+        self._stats["retrains_suppressed"] = self._stats.get("retrains_suppressed", 0) + 1
+        return True
 
     def _run_training_pipeline(self, drift_metrics):
         """Run the full training pipeline.
@@ -289,9 +335,6 @@ class MLAService:
         correct status + metrics instead of unconditionally marking
         every attempt "succeeded".
         """
-        self.retraining_in_progress = True
-        self._stats["retrainings_started"] += 1
-        self._stats["last_retraining_started_at"] = time.time()
         result: Dict[str, Any] = {
             "deployed": False,
             "metrics": None,
@@ -299,6 +342,19 @@ class MLAService:
             "failure_reason": None,
             "model_version": None,
         }
+
+        # Checked here rather than per-caller so drift and label-volume
+        # triggers can't each start a run in the same tick.
+        trigger = drift_metrics.get("reason", "drift")
+        if self._cooldown_blocks(trigger):
+            result["reason"] = "cooldown"
+            result["failure_reason"] = "within the retrain cooldown"
+            return result
+
+        self._last_retrain_attempt_at = time.time()
+        self.retraining_in_progress = True
+        self._stats["retrainings_started"] += 1
+        self._stats["last_retraining_started_at"] = time.time()
 
         try:
             logger.info("")
@@ -316,14 +372,14 @@ class MLAService:
 
             # Step 2: Preprocess data
             logger.info("Step 2/7: Preprocessing data (SMOTE + normalization)...")
-            X_train, X_val, X_test, y_train, y_val, y_test = \
-                self.preprocessor.preprocess(X, y)
+            splits = self.preprocessor.preprocess(X, y)
+            X_train, X_val, X_test, y_train, y_val, y_test = splits.as_legacy_tuple()
 
             # Step 3: Train new model
             logger.info("Step 3/7: Training XGBoost model...")
             mode, continued_trees = self._load_training_mode()
             new_model, calibrator, training_metrics = self.trainer.train(
-                X_train, y_train, X_val, y_val,
+                splits,
                 mode=mode,
                 prior_model=self.current_model,
                 continued_trees=continued_trees,
@@ -360,6 +416,9 @@ class MLAService:
                     # deployed so the operator can see WHY it was rejected.
                     self._stats["last_f1"] = training_metrics.get("f1_score")
                     self._stats["last_auc"] = training_metrics.get("auc_roc") or training_metrics.get("auc")
+                    # Clear the window on rejection too. Leaving it full
+                    # means the next check re-trips on the same samples.
+                    self.drift_detector.reset()
                     return result
 
                 logger.info("✅ New model is significantly better - proceeding with deployment")
@@ -447,6 +506,12 @@ class MLAService:
             baseline_distributions = self.data_loader.get_feature_distributions(X)
             self.drift_detector.set_baseline_distributions(baseline_distributions)
             self.drift_detector.reset()
+            # Re-anchor "drifted" to the model now serving traffic.
+            self.drift_detector.calibrate_f1_threshold(
+                training_metrics.get("f1_score"),
+                config.DRIFT_F1_MARGIN,
+                config.MIN_DEPLOY_F1,
+            )
 
             logger.info("")
             logger.info("=" * 70)
@@ -590,7 +655,9 @@ class MLAService:
             logger.info("Label-volume retrain trigger disabled (LABEL_RETRAIN_THRESHOLD=0)")
             return
 
-        self._label_watermark = time.time()
+        # Anchored to the last completed retrain, not process start —
+        # labels that arrived while MLA was down must still count.
+        self._label_watermark = self._last_retrain_epoch()
 
         def _loop():
             while True:
@@ -607,11 +674,103 @@ class MLAService:
             config.LABEL_CHECK_INTERVAL_SECONDS,
         )
 
+    def _last_retrain_epoch(self) -> float:
+        from sqlalchemy import text
+
+        try:
+            with self.db_engine.connect() as conn:
+                completed = conn.execute(
+                    text(
+                        'SELECT extract(epoch from max("completedAt")) '
+                        'FROM "retrainRuns" WHERE status = \'succeeded\''
+                    )
+                ).scalar()
+            return float(completed or 0.0)
+        except Exception as exc:
+            logger.warning("Could not read last retrain time — counting all labels: %s", exc)
+            return 0.0
+
+    def _feed_drift_from_labels(self) -> int:
+        """
+        Push newly-labelled decisions into the drift windows.
+
+        The Kafka path only updates the detector when an event carries
+        `fraud_label`, and nothing in RDA ever publishes one — the sole
+        producer is decision-time `predict.service.ts`, whose event has
+        `fraud` (the decision) but no ground truth. So the F1/PSI drift
+        monitoring the retraining story is built around never received a
+        single sample. Ground truth does land in Postgres, so read it
+        from there instead of adding a topic and three write sites.
+        """
+        from sqlalchemy import text
+
+        with self.db_engine.connect() as conn:
+            rows = conn.execute(
+                text(
+                    'SELECT a."championScore", a."finalDecision", t."groundTruthFraud", '
+                    '       t.amount, t."accountAgeDays", t."sessionToTxnSeconds", '
+                    '       extract(epoch from t."groundTruthRecordedAt") AS recorded_at '
+                    'FROM transactions t '
+                    'JOIN "decisionAuditLog" a ON a."transactionId" = t."transactionId" '
+                    'WHERE t."groundTruthRecordedAt" > to_timestamp(:mark) '
+                    '  AND t."groundTruthFraud" IS NOT NULL '
+                    # Rule and breaker-fallback rows carry a score the
+                    # model never produced (0 for PRE rules, 1.0 for the
+                    # breaker), so scoring them as model predictions
+                    # would let a policy change or an outage trigger a
+                    # retrain. Matches the training loader's filter.
+                    '  AND (a."decisionSource" IS NULL OR a."decisionSource" = \'ML\') '
+                    'ORDER BY t."groundTruthRecordedAt" ASC '
+                    'LIMIT :limit'
+                ),
+                {"mark": self._drift_feed_watermark, "limit": config.DRIFT_WINDOW_SIZE},
+            ).fetchall()
+
+        fed = 0
+        newest_recorded_at = self._drift_feed_watermark
+        for row in rows:
+            score, decision, actual, amount, account_age, session_secs, recorded_at = row
+            features = {
+                name: float(value)
+                for name, value in (
+                    ("amount", amount),
+                    ("account_age_days", account_age),
+                    ("session_to_txn_seconds", session_secs),
+                )
+                if value is not None
+            }
+            self.drift_detector.update(
+                prediction=1 if str(decision).upper() == "DECLINE" else 0,
+                actual=int(bool(actual)),
+                probability=float(score) if score is not None else 0.0,
+                features=features,
+            )
+            fed += 1
+            if recorded_at is not None:
+                newest_recorded_at = max(newest_recorded_at, float(recorded_at))
+
+        if fed:
+            # Advance to the newest row actually consumed, not to now:
+            # a backlog larger than the LIMIT would otherwise have its
+            # remainder skipped permanently, and the first poll after a
+            # cold start (watermark 0) would discard the entire history.
+            self._drift_feed_watermark = newest_recorded_at
+            self._stats["drift_samples_fed"] = self._stats.get("drift_samples_fed", 0) + fed
+            logger.info("Fed %d newly-labelled decisions into the drift windows", fed)
+
+        return fed
+
     def _check_label_volume(self) -> None:
         from sqlalchemy import text
 
         self._stats["label_volume_checks"] += 1
         self._stats["last_label_check_at"] = time.time()
+
+        try:
+            if self._feed_drift_from_labels():
+                self._evaluate_drift()
+        except Exception as exc:
+            logger.warning("Drift feed from Postgres labels failed: %s", exc)
 
         with self.db_engine.connect() as conn:
             count = conn.execute(

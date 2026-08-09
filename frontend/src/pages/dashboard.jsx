@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import { Ti, fmtNaira, fmtAge } from '../components/shell.jsx';
+import { decisionSourceLabel, isRuleSource } from '../utils/decision-source.js';
 import {
   getStatsToday,
   getStatsWindow,
@@ -125,7 +126,8 @@ function Dashboard({ toast: _toast, user: _user, queue, models, reports, webhook
       typeof c === 'string' ? c : c?.code || '',
     ).filter(Boolean);
     const decisionSource = q.decisionSource || (q.stage === 'PRE_RULE' ? 'PRE_RULE' : 'ML');
-    const isRule = decisionSource === 'PRE_RULE' || decisionSource === 'POST_RULE';
+    const isRule = isRuleSource(decisionSource, q.stage);
+    const sourceLabel = decisionSourceLabel(decisionSource, q.stage);
     const ruleName = q.ruleName || null;
     const ruleStage = q.ruleStage || (decisionSource === 'PRE_RULE' ? 'PRE' : decisionSource === 'POST_RULE' ? 'POST' : null);
     const topReason = reasonCodes[0] || null;
@@ -156,9 +158,8 @@ function Dashboard({ toast: _toast, user: _user, queue, models, reports, webhook
       isRule,
       pillLabel,
       pillTitle,
-      // Source = layer that drove the decision. Cleaner than the
-      // previous hard-coded "PRE_RULE" string for every row.
-      sourceLabel: isRule ? `RULE · ${ruleStage || '—'}` : 'ML',
+      // Source = layer that drove the decision.
+      sourceLabel: isRule ? `RULE · ${ruleStage || '—'}` : sourceLabel,
       age: ageMin != null ? fmtAge(ageMin) + ' ago' : '',
     };
   });

@@ -18,6 +18,7 @@ class TestIntegration:
         """Test full training pipeline without external services."""
         from src.training.preprocessor import DataPreprocessor
         from src.training.trainer import ModelTrainer
+        from src.training.splits import PreprocessedSplits
         from src.training.validator import ModelValidator
         from src.deployment.onnx_converter import ONNXConverter
         import pandas as pd
@@ -49,7 +50,7 @@ class TestIntegration:
         
         # Train
         trainer = ModelTrainer(config)
-        model, _calibrator, metrics = trainer.train(X_train, y_train, X_val, y_val)
+        model, _calibrator, metrics = trainer.train(PreprocessedSplits.from_arrays(X_train, y_train, X_val, y_val))
         
         assert metrics['f1_score'] > 0
         assert metrics['auc_roc'] > 0.5
@@ -93,6 +94,7 @@ class TestIntegration:
         import pandas as pd
         from src.training.preprocessor import DataPreprocessor
         from src.training.trainer import ModelTrainer
+        from src.training.splits import PreprocessedSplits
         
         class MockConfig:
             XGBOOST_N_ESTIMATORS = 5
@@ -142,7 +144,7 @@ class TestIntegration:
             X_train, X_val, X_test, y_train, y_val, y_test = preprocessor.preprocess(X, y)
             
             trainer = ModelTrainer(config)
-            model, _calibrator, training_metrics = trainer.train(X_train, y_train, X_val, y_val)
+            model, _calibrator, training_metrics = trainer.train(PreprocessedSplits.from_arrays(X_train, y_train, X_val, y_val))
             
             assert model is not None
             assert training_metrics['f1_score'] > 0
