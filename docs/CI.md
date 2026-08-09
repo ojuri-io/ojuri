@@ -8,11 +8,11 @@ every push to `main` and on every PR targeting `main`.
 
 | Job | What it checks | Typical duration |
 |---|---|---|
-| `root · lint + test + build` | RDA: ESLint, Jest, `tsc`, `npm audit` | ~90 s |
-| `paa-service · lint + test + build` | PAA: same matrix | ~45 s |
-| `frontend · lint + test + build` | Sentinel: Vitest + Vite build | ~45 s |
+| `root · lint + test + build` | RDA: ESLint, Jest, `tsc`, `npm audit` | ~45 s |
+| `paa-service · lint + test + build` | PAA: same matrix | ~25 s |
+| `frontend · lint + test + build` | Sentinel: Vitest + Vite build | ~25 s |
 | `python syntax check` | `py_compile` on every `.py` under `mla-service/src/` and `fia-service/src/` | ~5 s |
-| `docker stack build + smoke` | `docker compose build` + `up -d` + boot the full stack + run end-to-end assertions through NGINX | 6–8 min |
+| `docker stack build + smoke` | `docker compose build` + `up -d` + boot the full stack + run end-to-end assertions through NGINX | ~3.5 min |
 
 The first three run in a matrix and parallelise. The Docker job is
 sequential by nature (it builds and boots the stack).

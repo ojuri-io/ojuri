@@ -29,7 +29,23 @@ python3 scripts/fraud-sim-score.py /tmp/sim-p3.jsonl
 ```
 
 Environment: `RDA_URL` (default `http://localhost:3000`), `SIM_RPS`
-(default 160), `--scale 0.1` for a quick pass. Deterministic per
+(default 160), `--scale 0.1` for a quick pass.
+
+> **Set `RDA_URL` explicitly against the Docker stack.** The default
+> targets port 3000, which the production compose file does not publish —
+> NGINX answers on port 80. The script has no preflight check, so a wrong
+> target fails on every request rather than telling you once. Use
+> `RDA_URL=http://localhost` for the compose stack, and keep
+> `http://localhost:3000` only when RDA is running directly on your
+> machine via `npm run start:dev`.
+>
+> Also raise or disable the NGINX rate limit before a full run: at
+> `SIM_RPS=160` from a single source IP you are above the shipped
+> `100r/s` cap, and rejected requests are counted as errors rather than
+> decisions. See
+> [`ARCHITECTURE.md`](ARCHITECTURE.md#8-performance-characteristics).
+
+Deterministic per
 `(seed, phase)`; the legit population is identical across phases while
 fraud cohorts are fresh per phase, so phase 3 measures generalization
 to unseen accounts, not memorization.
