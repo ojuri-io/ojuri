@@ -129,6 +129,38 @@ baseline.
   matches now, so the app's own `/livez` and `/readyz` pass through
   the catch-all unchanged.
 
+- **`scripts/demo-traffic.mjs` defaulted to an unreachable URL** — the
+  default `http://localhost:3000` is not published by the production
+  compose stack (NGINX answers on `:80`), so the documented host-side
+  invocation exited with "RDA is unreachable". It now probes `:80` then
+  `:3000`, so both the Docker stack and `npm run start:dev` work with no
+  `RDA_URL` set. An explicit `RDA_URL` is still used verbatim.
+
+### Documentation
+
+- **README restructured around the adopter journey** — quick start
+  first, then what the platform does, then a path split for
+  evaluating / integrating / operating / contributing. Install
+  prerequisites and the build-from-source path moved into collapsed
+  sections, and symptoms moved to the new
+  [`docs/TROUBLESHOOTING.md`](docs/TROUBLESHOOTING.md). Prose rewritten
+  in plain language throughout.
+- **Corrected README instructions that failed when executed** — the
+  quick-start `curl` returns 409 on a second run (fixed
+  `transaction_id`, now called out); the sample response showed
+  `threshold` 0.65 on a `TRANSFER` payload where the seeded segment
+  threshold is 0.30, and omitted the `basis` field on reason codes;
+  `"model_version": "default"` was described as no model being
+  registered, when `00_initial_model_version` seeds exactly that
+  version as ACTIVE on purpose; `frontend/.env.example` already targets
+  the Docker stack, so the instruction to uncomment that block was
+  stale; and `python --version` fails where no bare `python` exists, so
+  the MLA setup now creates the venv with `python3.11`.
+- **`docs/ARCHITECTURE.md` performance table** now carries the
+  post-review contended measurement (p99 84.5 ms, ~516 RPS) alongside
+  the superseded 295 ms baseline, which the table had been presenting
+  as current.
+
 ### Notes
 
 - Round 2 of the review (OJR-27–40) consisted of defects introduced by

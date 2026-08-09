@@ -21,6 +21,7 @@ to wire one capability up. For architecture-level notes, see
 | [`IDEMPOTENCY.md`](IDEMPOTENCY.md)        | `Idempotency-Key` semantics, scoping, TTL, conflict handling.          |
 | [`FIA-API.md`](FIA-API.md)                | On-demand investigation reports and conversational follow-ups.         |
 | [`FRONTEND.md`](FRONTEND.md)              | Sentinel operator dashboard — layout, auth, offline mode, extending.   |
+| [`TROUBLESHOOTING.md`](TROUBLESHOOTING.md) | Common symptoms on a fresh install and what each one means.           |
 
 For what's planned next, see [`../ROADMAP.md`](../ROADMAP.md). For the
 per-release history, see [`../CHANGELOG.md`](../CHANGELOG.md).
