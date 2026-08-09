@@ -123,14 +123,15 @@ You get back a decision and the reasons for it:
   "model_version": "default",
   "threshold": 0.3,
   "audit_id": "d9686470-…",
-  "latency_ms": 38,
+  "latency_ms": 9,
   "timestamp": 1786293849415
 }
 ```
 
-Your numbers will differ — the probability and the reason codes depend on
-what the system has seen so far. The `threshold` is `0.3` because this is
-a `TRANSFER`; each transaction type has its own bar.
+Your numbers will differ — the probability and reason codes depend on what
+the system has seen so far, and `latency_ms` depends on your hardware and
+what else it's doing. The `threshold` is `0.3` because this is a
+`TRANSFER`; each transaction type has its own bar.
 
 **Running it a second time returns `409`.** Each `transaction_id` can only
 be scored once, so change it before you try again. That's deliberate: it
