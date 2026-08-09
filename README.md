@@ -427,8 +427,8 @@ For per-service detail, data-flow diagrams, and deployment topology, see
 Scoring itself is very fast — 49 microseconds at the 99th percentile. A
 full `POST /v1/predict` is 6 ms at the 99th percentile when nothing else
 is running, measured against a single instance directly rather than
-through NGINX. Under load, with 16 clients at once, that rises to about
-295 ms, because Node's event loop becomes the bottleneck.
+through NGINX. With 16 clients at once it holds around 516 requests per
+second, with a 99th percentile of 85 ms.
 
 **Treat these as rough orientation, not promises.** They were measured on
 one Apple Silicon laptop. Measure on your own hardware — and read the

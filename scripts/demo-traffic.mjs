@@ -1,4 +1,9 @@
-const RDA_URL = (process.env.RDA_URL ?? "http://localhost:3000").replace(/\/$/, "");
+// Docker publishes only NGINX on :80; `npm run start:dev` publishes only :3000.
+// Probing both means neither setup needs RDA_URL set.
+const RDA_CANDIDATES = process.env.RDA_URL
+  ? [process.env.RDA_URL.replace(/\/$/, "")]
+  : ["http://localhost", "http://localhost:3000"];
+let rdaUrl = RDA_CANDIDATES[0];
 const API_KEY = process.env.DEMO_API_KEY ?? "";
 const TX_COUNT = Number(process.env.DEMO_TX_COUNT ?? 500);
 const WAIT_SECONDS = Number(process.env.DEMO_WAIT_FOR_RDA_SECONDS ?? 0);
@@ -160,13 +165,18 @@ function sleep(ms) {
 
 async function waitForRda() {
   const deadline = Date.now() + WAIT_SECONDS * 1000;
-  for (;;) {
-    try {
-      const res = await fetch(`${RDA_URL}/livez`, { signal: AbortSignal.timeout(3000) });
-      if (res.ok) return;
-    } catch {}
+  for (; ;) {
+    for (const candidate of RDA_CANDIDATES) {
+      try {
+        const res = await fetch(`${candidate}/livez`, { signal: AbortSignal.timeout(3000) });
+        if (res.ok) {
+          rdaUrl = candidate;
+          return;
+        }
+      } catch { }
+    }
     if (Date.now() >= deadline) {
-      console.error(`RDA is unreachable at ${RDA_URL} — is the stack up? (set RDA_URL to override)`);
+      console.error(`RDA is unreachable at ${RDA_CANDIDATES.join(" or ")} — is the stack up? (set RDA_URL to override)`);
       process.exit(1);
     }
     await sleep(2000);
@@ -183,14 +193,14 @@ async function main() {
   const counts = { sent: 0, accepted: 0, declined: 0, review: 0, errors: 0 };
   const interval = 1000 / RPS;
 
-  console.log(`Sending ${txs.length} transactions to ${RDA_URL}/v1/predict at ~${RPS} rps (run ${RUN_ID})`);
+  console.log(`Sending ${txs.length} transactions to ${rdaUrl}/v1/predict at ~${RPS} rps (run ${RUN_ID})`);
 
   for (const tx of txs) {
     const started = Date.now();
     tx.timestamp = started;
     counts.sent += 1;
     try {
-      const res = await fetch(`${RDA_URL}/v1/predict`, {
+      const res = await fetch(`${rdaUrl}/v1/predict`, {
         method: "POST",
         headers,
         body: JSON.stringify(tx),

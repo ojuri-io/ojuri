@@ -635,7 +635,8 @@ limit, assert every response is HTTP 200 before computing percentiles.
 | ONNX inference, batch = 1 (CPUExecutionProvider) | p50 / p99 | 0.010 ms / 0.049 ms |
 | ONNX inference, batch = 128 | throughput | ~1.18 M predictions/s |
 | RDA `POST /v1/predict`, single client (3,000 trials), **uncontended — baseline, before idempotency + audit joined the hot path** | p50 / p99 / mean | 1.24 ms / 4.06 ms / 1.36 ms |
-| RDA `POST /v1/predict`, 16 concurrent, 5,000 trials, **direct to one replica, unique IDs, all 200 OK** | mean / p50 / p95 / p99 / p999 / RPS | 35 ms / 43 ms / 140 ms / **295 ms** / 3.3 s / ~237 |
+| RDA `POST /v1/predict`, 16 concurrent, 2,000 trials, **direct to one replica, unique IDs, all 200 OK — current, post-1.4.0 review fixes** | p50 / p95 / p99 / RPS | 28.9 ms / 51.7 ms / **84.5 ms** / ~516 |
+| RDA `POST /v1/predict`, 16 concurrent, 5,000 trials — **superseded pre-1.4.0 baseline, kept for comparison** | mean / p50 / p95 / p99 / p999 / RPS | 35 ms / 43 ms / 140 ms / 295 ms / 3.3 s / ~237 |
 | RDA per-stage means at 16 concurrent (from `predict_stage_duration_ms{stage}`) | feature_load / inference / others | 19 ms / 16 ms / <1 ms |
 | MLA retrain on IEEE-CIS (683,852 train + 5-fold CV + SMOTE) | wall time | 27.67 s |
 | Deployed IEEE-CIS XGBoost on held-out test (118,108 rows) | F1 / AUC-ROC / Precision / Recall | 0.554 / 0.911 / 0.841 / 0.414 |
