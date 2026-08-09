@@ -3,13 +3,17 @@ import RoleRepo from "./repositories/role.repo";
 import { Role } from "./model/role.model";
 import { PERMISSION_CODES, ALL_PERMISSIONS } from "./permissions";
 import { ConflictError, NotFoundError } from "./user.service";
+import AuthService from "./auth.service";
 import { createServiceLogger } from "@shared/utils/logger/service-logger";
 
 const log = createServiceLogger("RoleService");
 
 @singleton()
 class RoleService {
-  constructor(private readonly roles: RoleRepo) {}
+  constructor(
+    private readonly roles: RoleRepo,
+    private readonly auth: AuthService
+  ) {}
 
   list(tenantId?: string): Promise<Role[]> {
     return this.roles.list(tenantId);
@@ -75,6 +79,8 @@ class RoleService {
 
     const next = await this.roles.updateById(id, update);
     if (!next) throw new NotFoundError("Role not found after update");
+    // A role edit can touch any number of users — drop the whole grants cache.
+    if (update.permissions) this.auth.invalidateGrants();
     log.info("update", "Role updated", { id, fields: Object.keys(update) });
     return next;
   }
@@ -86,6 +92,7 @@ class RoleService {
       throw new ConflictError("System roles cannot be deleted");
     }
     await this.roles.deleteById(id);
+    this.auth.invalidateGrants();
     log.info("delete", "Role deleted", { id });
   }
 }

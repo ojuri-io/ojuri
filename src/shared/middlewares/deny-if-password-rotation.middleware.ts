@@ -10,24 +10,19 @@ import { ErrorResponse } from "@shared/utils/response.util";
  * reach `/auth/login`, `/auth/me`, and `/auth/change-password` until
  * the rotation is completed.
  *
- * Reads the `mustChangePassword` claim from the JWT directly — no DB
- * roundtrip on the hot path. `AuthService.changePassword` mints a
- * fresh token after a successful rotation so the next request from
- * the same caller carries the cleared flag without an extra login.
+ * Reads `mustChangePassword` through `verifyTokenLive`, which overlays
+ * the JWT with current database state (30 s cache shared with
+ * `requireAuth`, so the two hooks cost one DB read per user per TTL).
+ * An admin-forced rotation therefore locks the target's session within
+ * the cache TTL instead of waiting for their next login.
  *
  * Plugin-level hooks fire before route-level `preHandler`, so this
  * hook can't rely on `req.auth` being populated by `requireAuth`. It
  * does its own bearer-token extraction + verify and bails silently
  * (lets `requireAuth` produce the 401) when the token is absent or
- * invalid. When the token is valid AND the claim is set, it short-
+ * invalid. When the token is valid AND the flag is set, it short-
  * circuits with 423 Locked and a stable `code` so the frontend can
  * distinguish this gate from a plain 401.
- *
- * Trade-off vs the previous DB-lookup implementation: a force-rotation
- * set by an admin only takes effect on the target user's next login
- * (or after their existing token expires — 8 h default). Operators
- * who need immediate enforcement can revoke API keys or rotate the
- * JWT secret to invalidate every outstanding token.
  */
 export async function denyIfPasswordRotation(req: FastifyRequest, res: FastifyReply) {
   const header = req.headers.authorization as string | undefined;
@@ -35,7 +30,7 @@ export async function denyIfPasswordRotation(req: FastifyRequest, res: FastifyRe
   if (!token) return; // let requireAuth produce the 401
 
   const auth = container.resolve(AuthService);
-  const subject = auth.verifyToken(token);
+  const subject = await auth.verifyTokenLive(token);
   if (!subject) return; // ditto — let requireAuth reject
 
   if (subject.mustChangePassword) {
