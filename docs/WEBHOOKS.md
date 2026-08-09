@@ -10,17 +10,13 @@ management / ledger / customer-comms systems without polling.
 |----------------------|---------------------------------------------------------|--------|
 | `decision.created`   | Any `/v1/predict` returns a decision (ACCEPT, DECLINE, REVIEW). | **Live** |
 | `decision.overridden`| A human reviewer overrides a decision via `POST /v1/decisions/:auditId/override`. | **Live** |
-| `model.activated`    | A model version transitions to `ACTIVE`.                | **Reserved — never fires yet** |
-| `rule.activated`     | A rule is created or toggled active.                    | **Reserved — never fires yet** |
+| `model.activated`    | `POST /v1/admin/models/:version/status` sets a version to `ACTIVE`. | **Live** |
+| `rule.activated`     | A rule is created active, or an existing rule is toggled active via `PATCH /v1/admin/rules/:id`. | **Live** |
 
-> **Don't build on the reserved events yet.** `model.activated` and
-> `rule.activated` are accepted by the subscription validator and stored
-> on your subscription, but nothing in RDA publishes them today — no
-> delivery will ever arrive, and nothing will tell you so. If you need to
-> react to a model promotion or a rule change now, poll
-> `GET /v1/admin/models` or `GET /v1/admin/rules` instead. The event names
-> are declared so that subscriptions created today keep working when the
-> publishers land.
+`rule.activated` fires on the *transition* into active — re-saving a rule
+that is already active does not re-notify. Both admin events are
+published fire-and-forget: a slow or failing subscriber can never delay
+or fail a model promotion or a rule change.
 
 Each subscription declares which events it wants; non-matching events
 are not enqueued.

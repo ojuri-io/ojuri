@@ -2,6 +2,8 @@ import { FastifyReply, FastifyRequest } from "fastify";
 import { injectable } from "tsyringe";
 import httpStatus from "http-status";
 import RulesService from "@shared/rules/rules.service";
+import WebhookService from "@shared/webhooks/webhook.service";
+import { WebhookEvent } from "@shared/enums/webhook-event.enum";
 import RuleValidationError from "@shared/error/rule-validation.error";
 import { ErrorResponse, SuccessResponse } from "@shared/utils/response.util";
 import { createServiceLogger } from "@shared/utils/logger/service-logger";
@@ -11,12 +13,16 @@ const log = createServiceLogger("RulesAdminController");
 
 @injectable()
 class RulesController {
-  constructor(private rulesService: RulesService) {}
+  constructor(
+    private rulesService: RulesService,
+    private webhookService: WebhookService
+  ) {}
 
   create = async (req: FastifyRequest<{ Body: CreateRuleDto }>, res: FastifyReply) => {
     try {
       const createdBy = req.auth?.username ?? req.apiKey?.name ?? null;
       const row = await this.rulesService.create({ ...req.body, createdBy });
+      if (row.isActive) this.publishRuleActivated(row);
       return res.code(httpStatus.CREATED).send(SuccessResponse("Rule created", row));
     } catch (err) {
       if (err instanceof RuleValidationError) {
@@ -68,8 +74,32 @@ class RulesController {
         .code(httpStatus.BAD_REQUEST)
         .send(ErrorResponse("No updatable fields provided or rule not found"));
     }
+    // Only a transition into active is an activation; re-saving an
+    // already-active rule must not re-notify subscribers.
+    if (row.isActive && req.body.isActive === true) this.publishRuleActivated(row);
     return res.send(SuccessResponse("Rule updated", row));
   };
+
+  // Fire-and-forget: a webhook subscriber must never be able to fail or
+  // delay a rule change.
+  private publishRuleActivated(row: {
+    id: string;
+    name: string;
+    stage: string;
+    action: string;
+    priority: number;
+  }): void {
+    this.webhookService
+      .publish(WebhookEvent.RULE_ACTIVATED, {
+        rule_id: row.id,
+        name: row.name,
+        stage: row.stage,
+        action: row.action,
+        priority: row.priority,
+        activated_at: new Date().toISOString(),
+      })
+      .catch(() => undefined);
+  }
 
   delete = async (req: FastifyRequest<{ Params: { id: string } }>, res: FastifyReply) => {
     const ok = await this.rulesService.delete(req.params.id);

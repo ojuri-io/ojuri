@@ -10,7 +10,9 @@ const log = createServiceLogger("ModelRegistry");
 
 const REFRESH_INTERVAL_MS = Number(process.env.MODEL_REGISTRY_REFRESH_MS) || 30_000;
 
-export type ModelStatus = "CANDIDATE" | "SHADOW" | "ACTIVE" | "RETIRED";
+import { ModelStatus } from "@shared/enums/model-status.enum";
+
+export { ModelStatus };
 
 export type ModelVersionRecord = ModelVersion;
 
@@ -94,7 +96,7 @@ class ModelRegistryService {
 
     const previousChampion = this.champion;
     const previousShadow = this.shadow;
-    this.champion = versions.find((v) => v.status === "ACTIVE") || null;
+    this.champion = versions.find((v) => v.status === ModelStatus.ACTIVE) || null;
     this.shadow = versions.find((v) => v.status === "SHADOW") || null;
 
     const shadowChanged =
@@ -211,7 +213,7 @@ class ModelRegistryService {
       version: input.version,
       sourceUri: input.sourceUri,
       sha256: input.sha256 ?? null,
-      status: "CANDIDATE",
+      status: ModelStatus.CANDIDATE,
       defaultThreshold:
         input.defaultThreshold ??
         this.runtimeSettings.getFraudThreshold(appConfig.fraud.threshold),
@@ -227,7 +229,7 @@ class ModelRegistryService {
     // a new champion silently drops every per-segment override back to
     // the model default until rows are re-seeded. Carry them forward
     // before the swap so the transition is threshold-neutral.
-    const outgoing = status === "ACTIVE" ? this.champion : null;
+    const outgoing = status === ModelStatus.ACTIVE ? this.champion : null;
     const row = await this.versionRepo.transitionStatus(version, status);
     if (row && outgoing && outgoing.version !== version) {
       const copied = await this.thresholdRepo
