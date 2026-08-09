@@ -1,4 +1,4 @@
-import { ModelStatus } from "@shared/models/model-registry.service";
+import { ModelStatus } from "@shared/enums/model-status.enum";
 
 export interface RegisterModelDto {
   version: string;

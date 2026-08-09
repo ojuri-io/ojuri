@@ -3,6 +3,7 @@ import * as fs from "fs";
 import * as path from "path";
 import { Knex } from "knex";
 import { DB_TABLES } from "../../shared/enums/db-tables.enum";
+import { ModelStatus } from "../../shared/enums/model-status.enum";
 import { InitialModelSeedEntry } from "../types/initial-model-seed.types";
 
 // "default" on purpose: the response's model_version keeps signalling
@@ -70,7 +71,7 @@ export async function seed(knex: Knex): Promise<void> {
     version: VERSION_LABEL,
     sourceUri: MODEL_RELATIVE_PATH,
     sha256: sha256(modelPath),
-    status: "ACTIVE",
+    status: ModelStatus.ACTIVE,
     defaultThreshold: DEFAULT_THRESHOLD,
     metadata: {
       feature_schema_version: catalog.schemaVersion,

@@ -7,6 +7,7 @@ import { PredictRequestDto } from "../dtos/predict-request.dto";
 import { IDEMPOTENCY_KEY_MAX_LENGTH } from "@shared/idempotency/idempotency.service";
 import DecisionAuditService from "@shared/audit/decision-audit.service";
 import AppError from "@shared/error/app.error";
+import { WebhookEvent } from "@shared/enums/webhook-event.enum";
 import WebhookService from "@shared/webhooks/webhook.service";
 import { ErrorResponse, SuccessResponse } from "@shared/utils/response.util";
 import { metricsService } from "@shared/metrics/metrics.service";
@@ -115,7 +116,7 @@ class PredictController {
 
     this.webhookService
       .publish(
-        "decision.overridden",
+        WebhookEvent.DECISION_OVERRIDDEN,
         {
           audit_id: auditId,
           transaction_id: row.transactionId,

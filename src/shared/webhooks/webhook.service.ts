@@ -4,23 +4,12 @@ import { createServiceLogger } from "@shared/utils/logger/service-logger";
 import WebhookSubscriptionRepo from "./repositories/webhook-subscription.repo";
 import WebhookDeliveryRepo, { DeliveryWithSubscription } from "./repositories/webhook-delivery.repo";
 import { isWebhookUrlSafe } from "./url-guard";
+import { WebhookEvent } from "@shared/enums/webhook-event.enum";
+import { WebhookSubscriptionInput } from "./webhook.types";
 
 const log = createServiceLogger("WebhookService");
 
-export type WebhookEvent =
-  | "decision.created"
-  | "decision.overridden"
-  | "model.activated"
-  | "rule.activated";
-
-export interface WebhookSubscriptionInput {
-  tenantId: string;
-  url: string;
-  events: WebhookEvent[];
-  secret?: string;
-  maxRetries?: number;
-  timeoutMs?: number;
-}
+export type { WebhookSubscriptionInput };
 
 @singleton()
 class WebhookService {

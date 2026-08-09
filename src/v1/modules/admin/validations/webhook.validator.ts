@@ -1,7 +1,11 @@
+import { WebhookEvent } from "@shared/enums/webhook-event.enum";
+
+const SUBSCRIBABLE_EVENTS = Object.values(WebhookEvent).join(",");
+
 export const registerWebhookValidationRules = {
   url: "required|string|min:8|max:1024",
   events: "required|array",
-  "events.*": "string|in:decision.created,decision.overridden,model.activated,rule.activated",
+  "events.*": `string|in:${SUBSCRIBABLE_EVENTS}`,
   tenantId: "string|max:255",
   secret: "string|min:16|max:255",
   maxRetries: "numeric|min:0|max:20",

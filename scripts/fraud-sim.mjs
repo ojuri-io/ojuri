@@ -18,7 +18,30 @@ const PHASE = Number(args.phase ?? 1);
 const DAYS = Number(args.days ?? 14);
 const SCALE = Number(args.scale ?? 1);
 const OUT = args.out ?? `/tmp/fraud-sim-p${PHASE}.jsonl`;
-const RDA_URL = (process.env.RDA_URL ?? "http://localhost:3000").replace(/\/$/, "");
+// transaction_id is UNIQUE per tenant, so a fixed id makes the second run
+// of a phase collide on every row. Vary it per run; pin SIM_RUN_ID when you
+// need two runs to produce byte-identical ids.
+const RUN_ID = process.env.SIM_RUN_ID ?? Date.now().toString(36);
+// Docker publishes only NGINX on :80; `npm run start:dev` publishes only :3000.
+// Probing both means neither setup needs RDA_URL set.
+const RDA_CANDIDATES = process.env.RDA_URL
+  ? [process.env.RDA_URL.replace(/\/$/, "")]
+  : ["http://localhost", "http://localhost:3000"];
+let rdaUrl = RDA_CANDIDATES[0];
+
+async function resolveRda() {
+  for (const candidate of RDA_CANDIDATES) {
+    try {
+      const res = await fetch(`${candidate}/livez`, { signal: AbortSignal.timeout(3000) });
+      if (res.ok) {
+        rdaUrl = candidate;
+        return;
+      }
+    } catch { }
+  }
+  console.error(`RDA is unreachable at ${RDA_CANDIDATES.join(" or ")} — is the stack up? (set RDA_URL to override)`);
+  process.exit(1);
+}
 const TARGET_RPS = Number(process.env.SIM_RPS ?? 160);
 const CONCURRENCY = Number(process.env.SIM_CONCURRENCY ?? 20);
 
@@ -80,7 +103,7 @@ let txSeq = 0;
 function baseTx(sender, receiver, ts, overrides = {}) {
   txSeq += 1;
   return {
-    transaction_id: `sim-p${PHASE}-${String(txSeq).padStart(7, "0")}`,
+    transaction_id: `sim-${RUN_ID}-p${PHASE}-${String(txSeq).padStart(7, "0")}`,
     sender_id: sender.id,
     receiver_id: receiver.id,
     amount: 1000,
@@ -272,7 +295,7 @@ const started = Date.now();
 
 async function sendOne(ev) {
   try {
-    const res = await fetch(`${RDA_URL}/v1/predict`, {
+    const res = await fetch(`${rdaUrl}/v1/predict`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(ev.tx),
@@ -305,7 +328,9 @@ async function sendOne(ev) {
   }
 }
 
-console.log(`phase ${PHASE}: ${events.length} transactions over ${DAYS} simulated days → ${RDA_URL} (${TARGET_RPS} rps target)`);
+await resolveRda();
+
+console.log(`phase ${PHASE}: ${events.length} transactions over ${DAYS} simulated days → ${rdaUrl} (${TARGET_RPS} rps target)`);
 
 let inFlight = [];
 for (const ev of events) {

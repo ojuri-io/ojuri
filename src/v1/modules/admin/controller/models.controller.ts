@@ -1,8 +1,11 @@
 import { FastifyReply, FastifyRequest } from "fastify";
 import { injectable } from "tsyringe";
 import httpStatus from "http-status";
-import ModelRegistryService from "@shared/models/model-registry.service";
+import ModelRegistryService, { ModelVersionRecord } from "@shared/models/model-registry.service";
 import DecisionAuditRepo from "@shared/audit/repositories/decision-audit.repo";
+import WebhookService from "@shared/webhooks/webhook.service";
+import { WebhookEvent } from "@shared/enums/webhook-event.enum";
+import { ModelStatus } from "@shared/enums/model-status.enum";
 import { ErrorResponse, SuccessResponse } from "@shared/utils/response.util";
 import {
   RegisterModelDto,
@@ -15,7 +18,8 @@ import {
 class ModelsController {
   constructor(
     private modelRegistry: ModelRegistryService,
-    private auditRepo: DecisionAuditRepo
+    private auditRepo: DecisionAuditRepo,
+    private webhookService: WebhookService
   ) {}
 
   /**
@@ -115,6 +119,10 @@ class ModelsController {
   ) => {
     const row = await this.modelRegistry.setStatus(req.params.version, req.body.status);
     if (!row) return res.code(httpStatus.NOT_FOUND).send(ErrorResponse("Model not found"));
+
+    if (req.body.status === ModelStatus.ACTIVE) {
+      this.publishModelActivated(row);
+    }
     return res.send(SuccessResponse("Model status updated", row));
   };
 
@@ -155,6 +163,20 @@ class ModelsController {
       return res.code(httpStatus.INTERNAL_SERVER_ERROR).send(ErrorResponse(msg));
     }
   };
+
+  // Fire-and-forget: a webhook subscriber must never be able to fail or
+  // delay a model promotion.
+  private publishModelActivated(row: ModelVersionRecord): void {
+    this.webhookService
+      .publish(WebhookEvent.MODEL_ACTIVATED, {
+        version: row.version,
+        source_uri: row.sourceUri,
+        sha256: row.sha256,
+        default_threshold: row.defaultThreshold,
+        activated_at: row.activatedAt ?? new Date().toISOString(),
+      })
+      .catch(() => undefined);
+  }
 }
 
 export default ModelsController;

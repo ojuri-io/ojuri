@@ -19,6 +19,7 @@ import IdempotencyService from "@shared/idempotency/idempotency.service";
 import { loadCatalog } from "@shared/features/feature-catalog";
 import { buildFeatures } from "@shared/features/feature-builder";
 import { Decision } from "@shared/enums/decision.enum";
+import { WebhookEvent } from "@shared/enums/webhook-event.enum";
 import { DecisionSource } from "@shared/enums/decision-source.enum";
 import { RuleAction } from "@shared/enums/rule-action.enum";
 import { RuleStage } from "@shared/enums/rule-stage.enum";
@@ -489,7 +490,7 @@ class PredictService {
     const { invocation, request, reasonCodes } = ctx;
     this.webhookService
       .publish(
-        "decision.created",
+        WebhookEvent.DECISION_CREATED,
         {
           transaction_id: request.transaction_id,
           sender_id: request.sender_id,

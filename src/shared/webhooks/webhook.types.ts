@@ -1,9 +1,9 @@
 import { WebhookEvent } from "@shared/enums/webhook-event.enum";
 
-export interface RegisterWebhookDto {
+export interface WebhookSubscriptionInput {
+  tenantId: string;
   url: string;
   events: WebhookEvent[];
-  tenantId?: string;
   secret?: string;
   maxRetries?: number;
   timeoutMs?: number;

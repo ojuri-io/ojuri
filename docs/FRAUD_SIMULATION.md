@@ -28,22 +28,29 @@ python3 scripts/fraud-sim-score.py /tmp/sim-p1.jsonl
 python3 scripts/fraud-sim-score.py /tmp/sim-p3.jsonl
 ```
 
-Environment: `RDA_URL` (default `http://localhost:3000`), `SIM_RPS`
-(default 160), `--scale 0.1` for a quick pass.
+Environment: `RDA_URL`, `SIM_RPS` (default 160), `SIM_RUN_ID`,
+`--scale 0.1` for a quick pass.
 
-> **Set `RDA_URL` explicitly against the Docker stack.** The default
-> targets port 3000, which the production compose file does not publish —
-> NGINX answers on port 80. The script has no preflight check, so a wrong
-> target fails on every request rather than telling you once. Use
-> `RDA_URL=http://localhost` for the compose stack, and keep
-> `http://localhost:3000` only when RDA is running directly on your
-> machine via `npm run start:dev`.
->
-> Also raise or disable the NGINX rate limit before a full run: at
-> `SIM_RPS=160` from a single source IP you are above the shipped
-> `100r/s` cap, and rejected requests are counted as errors rather than
-> decisions. See
+`RDA_URL` is optional — the script probes `http://localhost` (NGINX, the
+compose stack) then `http://localhost:3000` (a host-side `npm run
+start:dev`) and uses whichever answers `/livez`. Set it explicitly to
+target anything else; a wrong value then fails loudly at startup rather
+than on all 128k requests.
+
+> **Raise or disable the NGINX rate limit before a full run.** At the
+> default `SIM_RPS=160` from a single source IP you are above the shipped
+> `100r/s` cap, so NGINX rejects with 503 without forwarding upstream and
+> those rejections land in the error count instead of the scorecard. Drop
+> `SIM_RPS` below 100, source from multiple IPs, or lift the limit for
+> the run. See
 > [`ARCHITECTURE.md`](ARCHITECTURE.md#8-performance-characteristics).
+
+**Re-running a phase.** `transaction_id` is unique per tenant, so ids
+carry a per-run prefix — otherwise the second run of a phase would 409 on
+every row against the same database. The simulation itself stays
+deterministic: same `(seed, phase)` gives the same populations, amounts
+and cohorts, so two runs produce the same scorecard. Pin `SIM_RUN_ID`
+when you need two runs to emit byte-identical ids.
 
 Deterministic per
 `(seed, phase)`; the legit population is identical across phases while
