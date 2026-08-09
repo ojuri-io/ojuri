@@ -29,7 +29,7 @@ At launch (June 7, 2026) Ojuri ships:
   browser, audit log, saved reports with CSV/JSON export,
   investigations + conversational thread, users + roles, service health.
 - **Adoption tooling** — synthetic-data load generator, decision replay
-  CLI, full Docker Compose stack (NGINX + 3× RDA + 1× PAA singleton + Postgres +
+  CLI, full Docker Compose stack (NGINX + N× RDA (`RDA_REPLICAS`, default 3) + 1× PAA singleton + Postgres +
   Redis + Kafka + Prometheus + Grafana, with FIA gated behind a Compose
   profile so first boot is fast).
 

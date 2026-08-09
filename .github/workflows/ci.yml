@@ -147,7 +147,7 @@ jobs:
           done
           echo "::error::nginx did not become healthy in 90s"
           docker compose ps
-          docker compose logs nginx rda-1 --tail 50
+          docker compose logs nginx rda --tail 50
           exit 1
 
       # Migrations now run as a Compose one-shot `db-migrate` service
@@ -318,10 +318,10 @@ jobs:
       # demo:load can come back with review=0 simply because most of
       # the rule-matching entries happened to land on a replica whose
       # in-memory cache hadn't been forced to reload yet.
-      - name: Restart RDA replicas so all three cold-boot the seeded rules
+      - name: Restart RDA replicas so all of them cold-boot the seeded rules
         run: |
           set -e
-          docker compose restart rda-1 rda-2 rda-3
+          docker compose restart rda
           # Wait for nginx to re-route to the recovered replicas — the
           # restart is fast (~2-3s per container) but nginx's upstream
           # health checks take a tick to follow.
@@ -365,7 +365,7 @@ jobs:
           echo "::group::compose ps"
           docker compose ps
           echo "::endgroup::"
-          for svc in nginx rda-1 rda-2 rda-3 paa-1 db-migrate postgres redis kafka; do
+          for svc in nginx rda paa-1 db-migrate postgres redis kafka; do
             echo "::group::$svc logs (last 60)"
             docker compose logs --tail 60 $svc || true
             echo "::endgroup::"

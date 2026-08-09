@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **Configurable RDA replica count (`RDA_REPLICAS`, default 3)** — the
+  three hand-copied `rda-1/2/3` compose services collapse into a single
+  `rda` service scaled via `deploy.replicas`. NGINX balances across the
+  replica IPs Docker DNS returns (restart nginx after changing the
+  count so it re-resolves), and Prometheus discovers replicas via DNS
+  service discovery instead of static targets. The GHCR overlay and CI
+  reference the `rda` service name; per-replica names (`rda-1:3000`
+  upstreams, static scrape targets) are gone.
+
 ### Fixed
 
 - **Permission changes now apply mid-session** — the JWT authenticates

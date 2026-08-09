@@ -21,15 +21,7 @@
 # =============================================================================
 
 services:
-  rda-1:
-    build: !reset null
-    image: ghcr.io/ojuri-io/rda:${OJURI_VERSION:-v1}
-
-  rda-2:
-    build: !reset null
-    image: ghcr.io/ojuri-io/rda:${OJURI_VERSION:-v1}
-
-  rda-3:
+  rda:
     build: !reset null
     image: ghcr.io/ojuri-io/rda:${OJURI_VERSION:-v1}
 

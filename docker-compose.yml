@@ -11,9 +11,7 @@ services:
     extra_hosts:
       - "host.docker.internal:host-gateway"
     depends_on:
-      - rda-1
-      - rda-2
-      - rda-3
+      - rda
     networks:
       - ojuri-network
     restart: unless-stopped
@@ -26,14 +24,17 @@ services:
   # ============================================
   # RDA Service Replicas (Real-Time Detection Agent)
   # ============================================
-  rda-1:
+  # Scale with RDA_REPLICAS (default 3). NGINX resolves the `rda` DNS
+  # name once at startup and balances across every replica IP Docker
+  # returns — after changing the count, restart nginx so it re-resolves.
+  rda:
     build:
       context: .
       dockerfile: Dockerfile
     environment:
       - NODE_ENV=${NODE_ENV:-development}
       - PORT=3000
-      - APP_NAME=ojuri-rda-1
+      - APP_NAME=ojuri-rda
       - REDIS_HOST=redis
       - REDIS_PORT=6379
       - REDIS_PASSWORD=${REDIS_PASSWORD:-}
@@ -92,138 +93,7 @@ services:
       - ojuri-network
     restart: unless-stopped
     deploy:
-      resources:
-        limits:
-          memory: 4G
-
-  rda-2:
-    build:
-      context: .
-      dockerfile: Dockerfile
-    environment:
-      - NODE_ENV=${NODE_ENV:-development}
-      - PORT=3000
-      - APP_NAME=ojuri-rda-2
-      - REDIS_HOST=redis
-      - REDIS_PORT=6379
-      - REDIS_PASSWORD=${REDIS_PASSWORD:-}
-      # Use the INTERNAL listener (advertised as kafka:29092) for
-      # container-to-container traffic. Port 9092 is the EXTERNAL
-      # listener that advertises localhost:9092 for host clients —
-      # which from inside this container resolves to its own loopback
-      # and produces the "Consumer crashed → restart" flap.
-      - KAFKA_BROKERS=kafka:29092
-      - KAFKA_TOPIC=transactions.completed
-      - KAFKA_BLOCKED_TOPIC=transactions.blocked
-      - AUDIT_PIPELINE=${AUDIT_PIPELINE:-queue}
-      - MODEL_PATH=/app/models/fraud_model.onnx
-      - FRAUD_THRESHOLD=0.65
-      - ONNX_SESSION_POOL_SIZE=4
-      - LOG_LEVEL=info
-      - DB_CLIENT=pg
-      - DB_URL=postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-postgres}@postgres:5432/${POSTGRES_DB:-fraud_db}
-      # Service-health fan-out (same defaults as rda-1; without these the
-      # Sentinel "System health" page reports PAA/FIA/MLA as down when
-      # NGINX happens to route the probe to this replica, because the
-      # HealthService falls back to host-side 127.0.0.1 ports that aren't
-      # reachable from inside the container).
-      - PAA_HEALTH_URL=${PAA_HEALTH_URL:-http://paa-1:9090}
-      - FIA_HEALTH_URL=${FIA_HEALTH_URL:-http://fia:9094}
-      - MLA_HEALTH_URL=${MLA_HEALTH_URL:-http://host.docker.internal:9095}
-      - AUTH_JWT_SECRET=${AUTH_JWT_SECRET}
-      - AUTH_JWT_TTL_SECONDS=${AUTH_JWT_TTL_SECONDS:-28800}
-      - RDA_REQUIRE_API_KEY=${RDA_REQUIRE_API_KEY:-false}
-      - MLA_SERVICE_TOKEN=${MLA_SERVICE_TOKEN:-}
-      - DB_HOST=postgres
-      - DB_PORT=5432
-      - DB_DATABASE=${POSTGRES_DB:-fraud_db}
-      - DB_USERNAME=${POSTGRES_USER:-postgres}
-      - DB_PASSWORD=${POSTGRES_PASSWORD:-postgres}
-    extra_hosts:
-      # Linux hosts need this so `host.docker.internal` (the MLA probe)
-      # resolves; macOS Docker Desktop provides it implicitly.
-      - "host.docker.internal:host-gateway"
-    volumes:
-      - ./models:/app/models:ro
-      - ./data/training-imports:/app/data/training-imports:ro
-      - ./data/training-uploads:/app/data/training-uploads
-    depends_on:
-      redis:
-        condition: service_healthy
-      kafka:
-        condition: service_healthy
-      postgres:
-        condition: service_healthy
-      db-migrate:
-        condition: service_completed_successfully
-    networks:
-      - ojuri-network
-    restart: unless-stopped
-    deploy:
-      resources:
-        limits:
-          memory: 4G
-
-  rda-3:
-    build:
-      context: .
-      dockerfile: Dockerfile
-    environment:
-      - NODE_ENV=${NODE_ENV:-development}
-      - PORT=3000
-      - APP_NAME=ojuri-rda-3
-      - REDIS_HOST=redis
-      - REDIS_PORT=6379
-      - REDIS_PASSWORD=${REDIS_PASSWORD:-}
-      # Use the INTERNAL listener (advertised as kafka:29092) for
-      # container-to-container traffic. Port 9092 is the EXTERNAL
-      # listener that advertises localhost:9092 for host clients —
-      # which from inside this container resolves to its own loopback
-      # and produces the "Consumer crashed → restart" flap.
-      - KAFKA_BROKERS=kafka:29092
-      - KAFKA_TOPIC=transactions.completed
-      - KAFKA_BLOCKED_TOPIC=transactions.blocked
-      - AUDIT_PIPELINE=${AUDIT_PIPELINE:-queue}
-      - MODEL_PATH=/app/models/fraud_model.onnx
-      - FRAUD_THRESHOLD=0.65
-      - ONNX_SESSION_POOL_SIZE=4
-      - LOG_LEVEL=info
-      - DB_CLIENT=pg
-      - DB_URL=postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-postgres}@postgres:5432/${POSTGRES_DB:-fraud_db}
-      # Service-health fan-out (same defaults as rda-1; without these the
-      # Sentinel "System health" page reports PAA/FIA/MLA as down when
-      # NGINX happens to route the probe to this replica).
-      - PAA_HEALTH_URL=${PAA_HEALTH_URL:-http://paa-1:9090}
-      - FIA_HEALTH_URL=${FIA_HEALTH_URL:-http://fia:9094}
-      - MLA_HEALTH_URL=${MLA_HEALTH_URL:-http://host.docker.internal:9095}
-      - AUTH_JWT_SECRET=${AUTH_JWT_SECRET}
-      - AUTH_JWT_TTL_SECONDS=${AUTH_JWT_TTL_SECONDS:-28800}
-      - RDA_REQUIRE_API_KEY=${RDA_REQUIRE_API_KEY:-false}
-      - MLA_SERVICE_TOKEN=${MLA_SERVICE_TOKEN:-}
-      - DB_HOST=postgres
-      - DB_PORT=5432
-      - DB_DATABASE=${POSTGRES_DB:-fraud_db}
-      - DB_USERNAME=${POSTGRES_USER:-postgres}
-      - DB_PASSWORD=${POSTGRES_PASSWORD:-postgres}
-    extra_hosts:
-      - "host.docker.internal:host-gateway"
-    volumes:
-      - ./models:/app/models:ro
-      - ./data/training-imports:/app/data/training-imports:ro
-      - ./data/training-uploads:/app/data/training-uploads
-    depends_on:
-      redis:
-        condition: service_healthy
-      kafka:
-        condition: service_healthy
-      postgres:
-        condition: service_healthy
-      db-migrate:
-        condition: service_completed_successfully
-    networks:
-      - ojuri-network
-    restart: unless-stopped
-    deploy:
+      replicas: ${RDA_REPLICAS:-3}
       resources:
         limits:
           memory: 4G
@@ -569,23 +439,23 @@ services:
   # ============================================
   # Sends ~500 realistic transactions (recurring senders plus embedded
   # fraud patterns: money ring, mule fan-out, VPN, structuring) straight
-  # at rda-1 so a fresh stack has a populated dashboard. Opt in with
-  # `docker compose --profile demo run --rm demo-seed`.
+  # at the rda service so a fresh stack has a populated dashboard. Opt
+  # in with `docker compose --profile demo run --rm demo-seed`.
   demo-seed:
     profiles: ["demo"]
     image: node:20-alpine
     command: ["node", "/scripts/demo-traffic.mjs"]
     environment:
-      - RDA_URL=http://rda-1:3000
+      - RDA_URL=http://rda:3000
       - DEMO_API_KEY=${DEMO_API_KEY:-}
       - DEMO_TX_COUNT=${DEMO_TX_COUNT:-500}
-      # rda-1 has no compose healthcheck, so the script polls /livez
+      # rda has no compose healthcheck, so the script polls /livez
       # itself instead of relying on a service_healthy condition.
       - DEMO_WAIT_FOR_RDA_SECONDS=90
     volumes:
       - ./scripts:/scripts:ro
     depends_on:
-      rda-1:
+      rda:
         condition: service_started
     networks:
       - ojuri-network

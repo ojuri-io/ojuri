@@ -16,14 +16,17 @@ scrape_configs:
     static_configs:
       - targets: ["localhost:9090"]
 
-  # RDA Service metrics
+  # RDA Service metrics. DNS service discovery follows RDA_REPLICAS —
+  # each replica's A record becomes a target, re-resolved every 30 s,
+  # so scaling needs no Prometheus config change. Instance labels are
+  # replica IPs (stable names aren't available from Docker DNS).
   - job_name: "rda"
     metrics_path: /v1/metrics
-    static_configs:
-      - targets:
-          - "rda-1:3000"
-          - "rda-2:3000"
-          - "rda-3:3000"
+    dns_sd_configs:
+      - names: ["rda"]
+        type: A
+        port: 3000
+        refresh_interval: 30s
     relabel_configs:
       - source_labels: [__address__]
         target_label: instance

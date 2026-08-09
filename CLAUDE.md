@@ -71,7 +71,7 @@ The dev server proxies `/v1/*` → `VITE_RDA_URL` (default `http://localhost:300
 ```bash
 docker compose up -d redis postgres kafka zookeeper                          # infra only
 docker compose -f docker-compose.yml -f docker-compose.dev.yml up rda-dev paa-dev --build   # dev with hot-reload
-docker compose up --build                                                    # full prod stack (3× RDA, 1× PAA singleton, NGINX, Prometheus, Grafana)
+docker compose up --build                                                    # full prod stack (N× RDA via RDA_REPLICAS (default 3), 1× PAA singleton, NGINX, Prometheus, Grafana)
 ```
 
 Postgres in Docker listens on **5433** (not 5432) to avoid host conflicts.
