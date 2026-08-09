@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **Permission changes now apply mid-session** — the JWT authenticates
+  identity only; `requireAuth` resolves permissions, `isActive`, and
+  `mustChangePassword` from Postgres per request through a 30 s
+  in-process grants cache (`AuthService.verifyTokenLive`). Role edits,
+  role (un)assignment, user deactivation/deletion, and forced password
+  rotation take effect on live sessions within the cache TTL —
+  instantly on the replica that handled the admin call — instead of on
+  the user's next login (previously up to the 8 h token TTL). The
+  token's permission claim is still minted for compatibility but is
+  never consulted for authorization.
+
 ## [1.4.0] - 2026-08-08
 
 This release remediates a full line-by-line architecture review — 45
