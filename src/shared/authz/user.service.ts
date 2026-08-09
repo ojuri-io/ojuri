@@ -3,7 +3,7 @@ import { singleton } from "tsyringe";
 import UserRepo, { UserWithRoles } from "./repositories/user.repo";
 import RoleRepo from "./repositories/role.repo";
 import { createServiceLogger } from "@shared/utils/logger/service-logger";
-import { BCRYPT_ROUNDS } from "./auth.service";
+import AuthService, { BCRYPT_ROUNDS } from "./auth.service";
 
 const log = createServiceLogger("UserService");
 
@@ -11,7 +11,8 @@ const log = createServiceLogger("UserService");
 class UserService {
   constructor(
     private readonly users: UserRepo,
-    private readonly roles: RoleRepo
+    private readonly roles: RoleRepo,
+    private readonly auth: AuthService
   ) {}
 
   async list(opts: {
@@ -98,6 +99,7 @@ class UserService {
     }
 
     await this.users.updateById(id, patch);
+    this.auth.invalidateGrants(id);
     const detail = await this.users.findByIdWithRoles(id);
     if (!detail) throw new NotFoundError("User not found after update");
     log.info("update", "User updated", { id, fields: Object.keys(patch) });
@@ -111,6 +113,7 @@ class UserService {
     const existing = await this.users.findByIdWithRoles(id);
     if (!existing) throw new NotFoundError("User not found");
     await this.users.deleteById(id);
+    this.auth.invalidateGrants(id);
     log.info("delete", "User deleted", { id });
   }
 
@@ -121,6 +124,7 @@ class UserService {
     if (!role) throw new NotFoundError("Role not found");
 
     await this.users.assignRole(userId, roleId, assignedBy);
+    this.auth.invalidateGrants(userId);
     const detail = await this.users.findByIdWithRoles(userId);
     if (!detail) throw new NotFoundError("User not found after role assignment");
     return detail;
@@ -134,6 +138,7 @@ class UserService {
       throw new ConflictError("Cannot remove the user's last remaining role");
     }
     await this.users.unassignRole(userId, roleId);
+    this.auth.invalidateGrants(userId);
     const detail = await this.users.findByIdWithRoles(userId);
     if (!detail) throw new NotFoundError("User not found after role removal");
     return detail;

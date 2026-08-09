@@ -10,6 +10,7 @@ export interface UserWithRoles {
   email: string | null;
   tenantId: string;
   isActive: boolean;
+  mustChangePassword: boolean;
   lastLoginAt: Date | null;
   createdAt: Date;
   roles: { id: string; name: string; permissions: string[] }[];
@@ -171,6 +172,7 @@ function mapWithRoles(u: User, roles: RawRoleRow[]): UserWithRoles {
     email: u.email,
     tenantId: u.tenantId,
     isActive: u.isActive,
+    mustChangePassword: u.mustChangePassword,
     lastLoginAt: u.lastLoginAt,
     createdAt: u.createdAt,
     roles,

@@ -175,8 +175,8 @@ curl -X POST http://localhost:3000/v1/admin/roles \
     ]
   }'
 
-# Edit permissions on a custom role (server hot-reloads on the next
-# login — see "Permission changes don't take effect mid-session" below).
+# Edit permissions on a custom role (applies to live sessions within
+# ~30 s — see "Permission changes apply mid-session" below).
 curl -X PATCH http://localhost:3000/v1/admin/roles/<id> \
   -H "authorization: Bearer …" \
   -H "content-type: application/json" \
@@ -196,21 +196,31 @@ Guards:
 - A role must grant at least one permission; sending `[]` returns
   `409`.
 
-## Permission changes don't take effect mid-session
+## Permission changes apply mid-session
 
-The JWT carries a snapshot of the user's merged permissions at the
-moment of login. Changing a role's permissions, assigning a new role,
-or removing a role only affects the user on their **next login**. If
-you need immediate revocation:
+The JWT authenticates **identity only**. On every authenticated
+request the server resolves the subject's permissions, `isActive`
+flag, and `mustChangePassword` flag from Postgres through a 30-second
+in-process cache (`AuthService.verifyTokenLive`). The permission
+claim still embedded in the token is a login-time snapshot kept for
+compatibility and debugging — it is never consulted for
+authorization.
 
-1. Disable the user (`PATCH /v1/admin/users/:id { isActive: false }`)
-   — the next request rejects with `401` because the JWT verifier
-   currently doesn't re-check the user row, but a quick follow-up
-   commit can add that check by replacing `verifyToken` with a
-   DB-backed check on the auth-sensitive routes.
+Consequences:
 
-The shorter `AUTH_JWT_TTL_SECONDS` is set, the tighter that window;
-defaults to 8 hours.
+- Editing a role's permissions, assigning a role, or removing a role
+  takes effect on live sessions within at most 30 s. On the replica
+  that handled the admin call the grants cache is invalidated
+  immediately; other replicas converge when their cache entry
+  expires.
+- Disabling a user (`PATCH /v1/admin/users/:id { isActive: false }`)
+  or deleting them rejects their outstanding tokens with `401` within
+  the same window — no need to wait out `AUTH_JWT_TTL_SECONDS`.
+- An admin-forced password rotation locks the target's session (423)
+  within the same window.
+
+For a hard, instant, fleet-wide revocation of every outstanding
+token, rotate `AUTH_JWT_SECRET`.
 
 ## Error matrix
 
