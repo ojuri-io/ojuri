@@ -1,28 +1,36 @@
 # Architecture
 
-Ojuri is a self-hosted multi-agent fraud detection platform. This document is
-the technical reference: it describes how the four backend agents and the
-Sentinel operator dashboard cooperate, what each one is responsible for, how
-data flows between them, and where the platform's failure modes are. Per-feature
-contracts (auth, rules, model registry, features, audit, reason codes,
-webhooks, idempotency, FIA HTTP API, frontend) live in their own documents
-under `docs/` and are linked from each section rather than restated here.
+This is the technical reference for how Ojuri is put together: what each
+service does, how data moves between them, and what happens when things
+break.
+
+Individual contracts — auth, rules, the model registry, features, audit,
+reason codes, webhooks, idempotency, the FIA API, the frontend — each have
+their own document under `docs/`, linked from the relevant section rather
+than repeated here.
 
 ## 1. Overview
 
-The platform is a polyglot monorepo of **four backend services plus a frontend
-SPA** that share PostgreSQL, Redis, and Apache Kafka. The split is deliberate:
-the synchronous fraud-decision path runs in **RDA** (TypeScript / Fastify) so
-that the millisecond-scale authorization budget is never spent on graph
-analysis or LLM inference, while the heavier asynchronous work runs in
-**PAA** (TypeScript Kafka worker), **MLA** (Python drift + retraining), and
-**FIA** (Python LLM investigations). The Sentinel operator dashboard
-(React + Vite) issues admin reads and rare writes; it never sits on the
-prediction hot path.
+Ojuri is four backend services and a dashboard, sharing PostgreSQL, Redis
+and Kafka.
 
-`fraud_db` is a single Postgres database owned by RDA's Knex migrations under
-`src/database/migrations/`. PAA, MLA, and FIA read and write the same tables
-but do not own migrations — schema changes go through the root.
+The split exists to protect one thing: the few milliseconds you have to
+approve or decline a payment. **RDA** (TypeScript / Fastify) owns that
+budget and does nothing else. Everything expensive happens somewhere
+else, after the fact:
+
+| Service | Language | Does |
+|---|---|---|
+| **RDA** | TypeScript / Fastify | Decides. The only service on the authorization path. |
+| **PAA** | TypeScript / KafkaJS | Builds the behavioural picture — who pays whom, how often. |
+| **MLA** | Python | Watches for the model going stale and retrains it. |
+| **FIA** | Python | Writes an investigation report for each declined payment. |
+| **Sentinel** | React + Vite | Operator dashboard. Admin reads and occasional writes only. |
+
+One Postgres database, `fraud_db`, backs all of them. RDA owns the schema
+through its Knex migrations in `src/database/migrations/`; the other
+services read and write the same tables but never migrate them. Schema
+changes go through the root.
 
 ## 2. System diagram
 
@@ -116,86 +124,126 @@ flowchart TB
     class Models storeTone
 ```
 
-Postgres in Docker is exposed on host port **5433** (container 5432) and Redis
-on **6380** (container 6379) to avoid clashes with locally-installed servers.
-Kafka topics are partitioned by **`sender_id`** for `transactions.completed`
-(per-user ordering for PAA's graph + velocity updates) and by
-**`transaction_id`** for `transactions.blocked` (so a single attacking sender
-does not pin all of FIA's work to one partition).
+Two port notes: Postgres is on host **5433** and Redis on **6380** (rather
+than 5432 and 6379) so they don't collide with servers you already have
+installed.
+
+The two Kafka topics are partitioned on different keys, deliberately.
+`transactions.completed` is keyed by **`sender_id`**, so one user's events
+always arrive at PAA in order. `transactions.blocked` is keyed by
+**`transaction_id`**, so a single attacking sender can't pin all of FIA's
+work onto one partition.
 
 ## 3. Design principles
 
-1. **RDA is the only service on the authorization hot path.** Every other
-   agent is async-only. If PAA, MLA, FIA, or Sentinel is down, predictions
-   continue to succeed.
-2. **Async fan-out via Kafka with dual-topic separation.** RDA always
-   publishes to `transactions.completed`; on `DECLINE` it additionally
-   publishes the same event to `transactions.blocked`. The second topic
-   exists so FIA's seconds-per-call LLM workload cannot share a queue with
-   PAA's millisecond pipeline.
-3. **Graceful degradation, not failure.** Redis and ONNX inference both
-   sit behind `opossum` circuit breakers. Redis lookup falls back to a
-   population-default feature snapshot (predictions continue with degraded
-   accuracy); ONNX inference fails closed (probability 1.0 → DECLINE) so a
-   model-runtime crash blocks rather than approves transactions.
-4. **Filesystem model registry with hot-swap.** Trained models land in
-   `models/versions/<v>/` via a bind-mount shared between MLA (writer) and
-   RDA (reader). `ModelRegistryService` emits `onActiveChange`;
-   `OnnxService` subscribes and atomically replaces the in-process session
-   — no RDA restart.
-5. **Audit log as the source of truth.** Every `/v1/predict` writes one
-   row to `decisionAuditLog` with model versions, scores, threshold, rules
-   that fired, reason codes, feature snapshot, and reviewer fields.
-   Reviewer overrides populate `transactions.groundTruthFraud`, which
-   MLA's training query prefers via `COALESCE` — the platform learns from
-   verified human decisions, not from its own past output.
-6. **Catalogue-driven feature contract.** A single
-   `models/feature-catalog.v1.json` (+ optional adopter overlay) defines
-   the ONNX input tensor. Every model bakes its `feature_schema_version`
-   into `meta.json`; RDA refuses to load a model whose schema doesn't
-   match the running catalogue. See [`FEATURES.md`](FEATURES.md).
+**1. Only RDA can affect a payment.** Everything else is asynchronous. If
+PAA, MLA, FIA or the dashboard is down, payments keep being scored.
+
+**2. Two topics, not one.** Every decision goes to
+`transactions.completed`. Declines go to `transactions.blocked` as well.
+The second topic exists so FIA — which takes seconds per report — can
+never sit in the same queue as PAA, which works in milliseconds.
+
+**3. Degrade, don't fail.** Redis and ONNX both sit behind `opossum`
+circuit breakers, and they degrade differently on purpose:
+
+- *Redis unavailable* → carry on with population-default features. A
+  slightly less accurate decision beats no decision.
+- *Inference unavailable* → fall back to `CB_ONNX_FALLBACK_DECISION`,
+  which defaults to **`REVIEW`**. Nobody gets declined because of an
+  infrastructure fault; the transaction goes to a person instead. Set it
+  to `DECLINE` if you'd rather fail closed.
+
+Either way the audit row records what happened, so "the model scored 1.0"
+is never confused with "inference never ran" (`decisionSource =
+BREAKER_FALLBACK`).
+
+**4. Models hot-swap from the filesystem.** MLA writes to
+`models/versions/<v>/` on a shared bind-mount; RDA reads it.
+`ModelRegistryService` emits `onActiveChange`, `OnnxService` swaps the
+session in place. No restart.
+
+**5. The audit log is the record.** Every `/v1/predict` writes a row with
+model versions, scores, threshold, rules that fired, reason codes, the
+feature snapshot and reviewer fields. When a reviewer overrides a
+decision, that verdict lands in `transactions.groundTruthFraud`, and
+MLA's training query prefers it via `COALESCE`. The system learns from
+people, not from its own earlier guesses.
+
+**6. Features are a contract, not a convention.**
+`models/feature-catalog.v1.json` (plus any adopter overlay) defines the
+input tensor. Every model records its `feature_schema_version` in
+`meta.json`, and RDA refuses to load one that doesn't match the running
+catalogue — a silent dimension mismatch is worse than a failed load. See
+[`FEATURES.md`](FEATURES.md).
 
 ## 4. Per-service architecture
 
 ### 4.1 RDA — Real-Time Detection Agent
 
-**Responsibility.** Synchronous fraud decision at transaction time. RDA owns
-the `/v1/predict` API, the entire authorization pipeline, and the
-admin / auth / rules / model-registry / audit / webhooks / idempotency
-surface area used by the operator dashboard. It is also the only producer
-on Kafka.
+**What it does.** Decides, synchronously, at transaction time. RDA owns
+`/v1/predict` and the whole authorization pipeline, plus the admin surface
+the dashboard talks to — auth, rules, model registry, audit, webhooks,
+idempotency. It is also the only service that produces to Kafka.
 
-**Stack.** TypeScript / Fastify / `tsyringe` DI / ONNX Runtime. Located at
-the repository root under `src/`. Migrations under
-`src/database/migrations/`.
+**Stack.** TypeScript, Fastify, `tsyringe` for DI, ONNX Runtime. Lives at
+the repo root under `src/`, with migrations in `src/database/migrations/`.
 
-**Predict pipeline** (`src/v1/modules/rda/services/predict.service.ts`):
+**The predict pipeline** (`src/v1/modules/rda/services/predict.service.ts`):
 
-1. Resolve `(championVersion, shadowVersion, threshold)` from
-   `ModelRegistryService` for the request's `segment`.
-2. Pull the raw Redis snapshot via `FeatureService` (circuit-broken).
-3. Build a catalogue-aligned `Float32Array` via `buildFeatures(...)`.
-4. Evaluate **PRE-stage rules**. A matching `ALLOW` / `DENY` / `REVIEW`
-   short-circuits the pipeline; the ML model is not called.
-5. Run ONNX inference (circuit-broken, fail-closed at probability 1.0).
-6. Compute reason codes from feature deviations.
-7. Evaluate **POST-stage rules** against the ML score and the feature
-   snapshot. A match overrides the ML decision.
-8. Write one row to `decisionAuditLog` (errors swallowed — audit failures
-   never break the decision path).
-9. Publish fire-and-forget to Kafka: always `transactions.completed`,
-   additionally `transactions.blocked` when the final decision is
-   `DECLINE`.
-10. Publish the `decision.created` webhook fire-and-forget.
-11. Return the response with `decision`, `fraud_probability`,
-    `reason_codes`, `model_version`, `threshold`, and `audit_id`.
+1. Resolve the champion version, shadow version and threshold from
+   `ModelRegistryService`, keyed on
+   `request.segment ?? request.transaction_type`.
+2. **Run the request-only PRE rules first — before touching Redis**
+   (`rulesService.evaluateRequestOnlyPre`). Every
+   rule that ships reads request fields only, so loading features first
+   would be pure wasted latency on a request that's about to be declined
+   outright. If one of these fires, the pipeline stops here. The audit row
+   records `featuresSnapshot: null` rather than a default snapshot,
+   because "a rule decided without ever loading features" is a different
+   claim from "Redis missed, so we scored on defaults". Features are then
+   loaded *behind* the response, purely to complete the audit trail.
+3. Load the Redis snapshot through `FeatureService` (circuit-broken) and
+   build the catalogue-aligned `Float32Array` with `buildFeatures(...)`.
+4. **Run the full PRE rules**, now with features in context. A match
+   short-circuits and the model is never called.
+5. Run ONNX inference (circuit-broken). If the breaker falls back, the
+   decision comes from `CB_ONNX_FALLBACK_DECISION` (default `REVIEW`) and
+   the row is stamped `decisionSource = BREAKER_FALLBACK`.
+6. Turn the score into a decision: at or above `threshold` → `DECLINE`; at
+   or above `reviewThreshold` → `REVIEW`; otherwise `ACCEPT`.
+7. Compute reason codes from feature deviations.
+8. **Run the POST rules** against the score and the feature snapshot. A
+   match overrides whatever the model decided.
+9. Queue the `decisionAuditLog` row. The write happens in the background
+   by default; `AUDIT_SYNC_WRITE=true` makes it persist before
+   responding. **A full queue is not swallowed** — it raises
+   `AuditQueueBackpressureError`, which becomes an HTTP 503, so a
+   Postgres outage can't quietly gut the audit trail while decisions
+   carry on flowing.
+10. Respond with `decision`, `fraud_probability`, `reason_codes`,
+    `model_version`, `threshold` and `audit_id`.
+11. Once the response has flushed (`setImmediate`), publish to Kafka and
+    fire the `decision.created` webhook — both fire-and-forget, neither
+    on the response path. Always `transactions.completed`; also
+    `transactions.blocked` if the decision was `DECLINE`. Under
+    `AUDIT_PIPELINE=stream` this inverts: the publish is awaited with
+    `acks=all` *before* the response, so the row is durable in Kafka
+    before the caller ever sees the decision.
 
-**Decision shape.** `decision` is one of `ACCEPT`, `DECLINE`, or `REVIEW`.
-The ML model only produces `ACCEPT` or `DECLINE`; the `REVIEW` outcome can
-only originate from a rule whose action is `REVIEW`.
+**Where a REVIEW can come from.** `decision` is `ACCEPT`, `DECLINE` or
+`REVIEW`, and it's worth knowing that `REVIEW` has three separate origins:
 
-**Failure mode.** RDA going down is the only failure that affects
-authorization. Multiple replicas behind NGINX provide horizontal redundancy.
+1. a rule whose action is `REVIEW`,
+2. the ML review band — a score between `reviewThreshold` and `threshold`
+   (`bandDecision`, in `src/v1/modules/rda/utils/band-decision.ts`),
+3. the ONNX breaker fallback, when inference didn't run at all.
+
+A fresh install sets the review margin to 0, which makes the band inert —
+the model never returns `REVIEW` until an operator configures one.
+
+**If RDA goes down**, that's the only failure that stops payments being
+scored. Run several replicas behind NGINX.
 
 **Per-feature references.** [`AUTH.md`](AUTH.md), [`AUTHZ.md`](AUTHZ.md),
 [`RULES.md`](RULES.md), [`MODEL-REGISTRY.md`](MODEL-REGISTRY.md),
@@ -205,27 +253,32 @@ authorization. Multiple replicas behind NGINX provide horizontal redundancy.
 
 ### 4.2 PAA — Pattern Analysis Agent
 
-**Responsibility.** Asynchronous feature computation. PAA consumes every
-completed transaction, maintains a directed transaction graph and per-sender
-velocity windows in memory, and writes the resulting features back to Redis
-so the **next** RDA prediction sees fresh signals.
+**What it does.** PAA is the system's memory. It reads every completed
+transaction, keeps a directed graph of who pays whom and per-sender
+velocity windows in process memory, and writes the resulting features
+back to Redis — so the **next** prediction RDA makes is better informed
+than the last.
 
-**Stack.** TypeScript Kafka consumer (KafkaJS). Located under
-`paa-service/`. Not a Fastify app; the worker is `paa-service/src/worker.ts`
-with a standalone `http.Server` exposing `/livez`, `/readyz`, `/metrics`,
-`/stats` on `METRICS_PORT` (default 9090). PAA has its own `package.json`,
-`tsconfig.json`, and DI aliases — the root `npm install` does not install
-PAA dependencies.
+**Stack.** A KafkaJS consumer in TypeScript under `paa-service/`. Not a
+Fastify app: `paa-service/src/worker.ts` runs a plain `http.Server`
+exposing `/livez`, `/readyz`, `/metrics` and `/stats` on `METRICS_PORT`
+(default 9090). It has its own `package.json`, `tsconfig.json` and path
+aliases — the root `npm install` won't install its dependencies.
 
 **Inputs.** Subscribes to `transactions.completed` under consumer group
 `pattern-analysis`. Auto-commit is disabled; offsets advance per-partition
 after processing.
 
 **Outputs.**
-- Redis hash `features:{senderId}` — overwritten with the latest
+- Redis hash `features:{userId}` — overwritten with the latest
   catalogue-keyed velocity + graph features.
-- Postgres `transactions` (per-event row), `graphMetadata` (persisted every
-  100 events — `processedCount % 100`), `velocitySnapshots`.
+- Postgres `transactions` (per-event row), `graphMetadata`,
+  `velocitySnapshots`. Graph metadata is snapshotted for both sender and
+  receiver into a `Map` keyed by `userId` and bulk-upserted when the map
+  reaches the batch size (100) or the 10 s timer fires. Keying by user
+  rather than counting events matters: the map dedupes hot users, so
+  Postgres write pressure tracks the *unique-user* rate, not the event
+  rate.
 
 **Computed features.** Velocity over 1m / 5m / 15m / 1h / 24h / 7d / 30d
 windows; amount mean and standard deviation; graph PageRank, clustering
@@ -233,20 +286,50 @@ coefficient, in-/out-degree, community membership, hub indicator.
 PageRank is O(V·E) and is recomputed on a configurable interval
 (`GRAPH_UPDATE_INTERVAL`, default 5 min) rather than per-event.
 
-**Failure mode.** If PAA is down, Redis features grow stale and RDA's
-`FeatureService` returns the population-default snapshot (logged as a
-degraded-accuracy warning). The decision path continues.
+**Run exactly one.** The graph and the velocity windows live in process
+memory, so a second member of the `pattern-analysis` consumer group
+doesn't add capacity — it splits the partitions. Each replica then runs
+PageRank and Louvain over half the graph, and a fraud ring whose members
+hash to different partitions becomes invisible to both. Detection quietly
+gets worse with no error anywhere.
+
+Two mechanisms guard this. PAA takes a Redis leader lease
+(`ojuri:paa:leader`, TTL `PAA_LEADER_LEASE_TTL_MS`, default 30 s) before
+it consumes anything; a second instance waits up to
+`PAA_LEADER_ACQUIRE_TIMEOUT_MS` (default 120 s) for a handover and then
+exits rather than joining the group. Two properties of that lease are
+easy to get wrong and both matter:
+
+- **Renewal fails closed.** An unreachable Redis does not mean "still the
+  leader" — the key expires server-side regardless, so a network
+  partition outlasting the TTL means a challenger has already taken over.
+  The lease is surrendered on elapsed time, not only on a confirmed loss.
+- **A fenced-out instance throws its buffers away.** Its graph is partial
+  by definition, so flushing it would overwrite what the new leader has
+  already written. `stop({ discard: true })` drops the buffers; the
+  flushing path is for SIGTERM only.
+
+This is a lease, not a fencing token: it cannot stop a process that was
+paused past its TTL from issuing one last write. `PAA_REQUIRE_LEADER_LEASE=false`
+disables the fence entirely. The `paa_group_members` gauge (must stay at
+1) and an ERROR log remain as backstop observability.
+
+**If PAA goes down**, Redis features go stale and `FeatureService` starts
+returning the population-default snapshot, logged as a degraded-accuracy
+warning. Payments keep being scored — just with less context.
 
 ### 4.3 MLA — Model Learning Agent
 
-**Responsibility.** Offline drift detection, retraining, statistical
-validation, ONNX export, and registration with RDA. MLA closes the
-supervised-learning loop.
+**What it does.** MLA closes the learning loop, entirely offline: watch
+for drift, retrain, prove the new model is actually better, export it to
+ONNX, register it with RDA.
 
-**Stack.** Python 3.11. Located under `mla-service/` with its own
-`requirements.txt` and `venv`. The ONNX toolchain is pinned —
-`onnx==1.13.0`, `onnxmltools==1.10.0`, `onnxconverter-common==1.12.0`
-— because newer releases break XGBoost-to-ONNX conversion.
+**Stack.** Python 3.11 under `mla-service/`, with its own
+`requirements.txt` and `venv`. The ONNX toolchain is pinned to
+`onnx==1.13.0`, `onnxmltools==1.10.0` and
+`onnxconverter-common==1.12.0` — newer releases break XGBoost-to-ONNX
+conversion, so don't bump them without testing the full
+training → ONNX → RDA inference path end to end.
 
 **Inputs.**
 - Postgres `transactions` for training rows. The training query uses
@@ -257,27 +340,42 @@ supervised-learning loop.
   (consumer group separate from PAA's).
 
 **Outputs.**
-- `models/versions/<v>/{model.onnx, model.pkl, scaler.npz, meta.json}` on
-  the shared bind-mount.
+- `models/versions/<v>/{model.onnx, model.json, scaler.npz,
+  calibrator.npz, meta.json}` on the shared bind-mount. The scaler must
+  be loaded alongside the model; `meta.json` carries the
+  `feature_schema_version`, the isotonic calibration breakpoints, and the
+  reason-code weights.
 - `POST /v1/admin/models` then `POST /v1/admin/models/<v>/status {status:
   "ACTIVE"}` against RDA when `RDA_API_URL` + `MLA_SERVICE_TOKEN` are set.
 
-**Drift triggers.** `DriftDetector` retrains when F1-score on recent
-labelled data drops below `DRIFT_F1_THRESHOLD` (default 0.92) **or** PSI on
-the `amount` feature exceeds `DRIFT_PSI_THRESHOLD` (default 0.25). PSI uses
-10 histogram bins.
+**Drift triggers.** `DriftDetector` retrains when F1 on recent labelled
+data falls below the deployed champion's validation F1 minus
+`DRIFT_F1_MARGIN` (default 0.05), falling back to the absolute
+`DRIFT_F1_THRESHOLD` (default **0.4**) when no champion metrics exist —
+**or** when PSI on the `amount` feature exceeds `DRIFT_PSI_THRESHOLD`
+(default 0.25, 10 histogram bins). A retrain also fires on
+`LABEL_RETRAIN_THRESHOLD` (500) newly verified labels, watermarked
+against the last `succeeded` row in `retrainRuns` so labels arriving
+while MLA is down still count after a restart. All triggers share
+`RETRAIN_COOLDOWN_SECONDS` (default 6 h).
 
-**Promotion gate.** `ModelValidator.ab_test()` runs McNemar's chi-squared
-test with continuity correction against the currently deployed model. The
-candidate is deployed only if F1 improves by at least `min_improvement`
-(default 0.01) and the change is statistically significant at α = 0.05
-(with a small-sample fallback path for when `b + c < 10` disagreements
-leave McNemar with no power).
+Drift windows are fed from Postgres ground truth on the label poll —
+RDA never publishes labelled events, so the Kafka stream alone cannot
+close this loop.
 
-**Failure mode.** If MLA is down, no new models are trained or activated;
-the currently ACTIVE model keeps serving. If MLA cannot reach RDA after a
-successful training run, the version is still written to disk and an
-operator can activate it manually from the admin UI.
+**Promotion gate.** A new model doesn't ship just because it scored
+better — it has to beat the deployed one convincingly.
+`ModelValidator.ab_test()` runs McNemar's chi-squared test with
+continuity correction against the current champion, and deploys only if
+F1 improves by at least `min_improvement` (default 0.01) **and** the
+difference is significant at α = 0.05. When the two models disagree on
+fewer than 10 cases, McNemar has no power to speak of, so a small-sample
+path handles that case instead of reading noise as a win.
+
+**If MLA goes down**, nothing is trained or promoted and the current
+ACTIVE model keeps serving — the system doesn't degrade, it just stops
+improving. If MLA trains successfully but can't reach RDA, the version is
+still on disk and an operator can activate it from the dashboard.
 
 **Per-feature reference.** [`TRAINING.md`](TRAINING.md),
 [`MODEL-REGISTRY.md`](MODEL-REGISTRY.md), and the service-level README at
@@ -297,8 +395,11 @@ authorization path.
 (CUDA → MPS → CPU).
 
 **Inputs.**
-- Kafka `transactions.blocked` under consumer group `fraud-investigation`,
-  keyed by `transaction_id`. Consumer is configured with
+- Kafka `transactions.blocked`, keyed by `transaction_id`, under the
+  consumer group `KAFKA_CONSUMER_GROUP` — the code default is
+  `fraud-investigation`, but the shipped compose file sets
+  `ojuri-investigation`, which is what you will observe on the reference
+  stack. Consumer is configured with
   `max_poll_records=1` and `max_poll_interval_ms=600000` (10 min) so a
   slow LLM generation does not trigger a partition rebalance.
 - HTTP — `POST /v1/reports` for on-demand reports on any transaction (not
@@ -311,8 +412,14 @@ authorization path.
 - Postgres `investigationConversations` for follow-up turns.
 
 **Resilience.** An in-memory retry counter caps redelivery at
-`MAX_RETRIES = 3`; after that the offset is committed and the failure is
-logged loudly so a poison message cannot wedge a partition. A
+`MAX_RETRIES = 3`. After that the event is published to the dead-letter
+topic `KAFKA_DLQ_TOPIC` (default `transactions.blocked.dlq`) **before**
+the offset is committed, then the failure is logged loudly. The DLQ
+exists precisely so a poison message neither wedges a partition nor
+vanishes: the transaction was declined, an investigation report was
+owed, and without the dead-letter hop no trace of that debt would
+survive outside a log line. The `/stats` counter `dropped_poison`
+tracks it. A
 deterministic `_rule_based_report()` fallback runs when `transformers` /
 `torch` are missing, the model fails to load, or generated JSON fails
 schema validation. Fallback rows are tagged with `-fallback` on
@@ -379,19 +486,25 @@ sequenceDiagram
     C->>N: POST /v1/predict + X-Api-Key + Idempotency-Key
     N->>R: forward
     R->>R: api-key auth, rate-limit, idempotency lookup
-    R->>R: ModelRegistry.resolve(segment)
-    R->>Rd: HGETALL features:{sender_id}
-    Rd-->>R: snapshot (or default on miss / breaker open)
-    R->>R: buildFeatures(catalogue, request, snapshot)
-    R->>R: evaluate PRE rules
-    alt PRE rule matches
-        R->>R: skip ML
-    else no PRE match
-        R->>O: ONNX inference (XGBoost)
-        O-->>R: fraud probability
-        R->>R: evaluate POST rules (with ml_score, ml_decision)
+    R->>R: ModelRegistry.resolve(segment ?? transaction_type)
+    R->>R: evaluate request-only PRE rules (before any Redis read)
+    alt request-only PRE rule matches
+        R->>R: short-circuit; featuresSnapshot = null<br/>(features loaded after the response, for audit only)
+    else no early match
+        R->>Rd: HGETALL features:{user_id}
+        Rd-->>R: snapshot (or default on miss / breaker open)
+        R->>R: buildFeatures(catalogue, request, snapshot)
+        R->>R: evaluate full PRE rules (with features)
+        alt full PRE rule matches
+            R->>R: skip ML
+        else no PRE match
+            R->>O: ONNX inference (XGBoost)
+            O-->>R: probability, or degraded=true on breaker fallback
+            R->>R: band score → ACCEPT / REVIEW / DECLINE
+            R->>R: evaluate POST rules (with ml_score, ml_decision)
+        end
     end
-    R->>P: INSERT decisionAuditLog (best-effort, errors swallowed)
+    R->>P: enqueue decisionAuditLog (async; full queue → 503)
     R-->>C: 200 { decision, fraud_probability, reason_codes, model_version, audit_id, ... }
     R-)K: publish transactions.completed (key = sender_id)
     opt decision == DECLINE
@@ -423,9 +536,15 @@ flowchart LR
 
 The dual-topic split is **the** mechanism that lets FIA run at LLM latency
 (40–90 s/report on Apple MPS) without ever back-pressuring PAA (millisecond
-graph + velocity updates). Both consumer groups can scale independently —
-PAA runs two replicas in the reference Compose, FIA runs one (single PyTorch
-session).
+graph + velocity updates). The reference Compose runs **exactly one PAA**
+(`replicas: 1`) and one FIA (single PyTorch session). PAA is not
+horizontally scalable — see §6 for why a second consumer-group member
+silently degrades detection.
+
+Consumer-group names in the diagram are the values the shipped compose
+file sets. Both Python services default to something different in code
+(`model-learning-v2` for MLA, `fraud-investigation` for FIA) when
+`KAFKA_CONSUMER_GROUP` is unset.
 
 ### 5.3 Model promotion + hot-swap
 
@@ -455,9 +574,21 @@ End-to-end:
    row's `metadata`, compares to the running catalogue's `schemaVersion`,
    and **refuses to load** on mismatch (the previous session keeps
    serving; the failure is logged at ERROR level).
-7. On match, `OnnxService` resolves the `sourceUri` to a local path,
-   copies the bytes into `MODEL_PATH` via an atomic rename, and reloads
-   the session. No RDA restart.
+7. On match, `OnnxService` resolves the `sourceUri` to a local path and
+   loads the session **from that path directly**. It also tries to copy
+   the bytes into the canonical `MODEL_PATH`, so anyone bypassing the
+   registry or restarting cold still gets the right artefact — but that
+   copy is **best-effort**. Compose mounts `models/` read-only into RDA,
+   so `EROFS` here is normal and harmless; the warning log is expected,
+   and serving continues from the version artefact. Calibration
+   breakpoints travel with the version directory, not the canonical copy.
+   No RDA restart.
+8. Both health probes re-run before the new session serves traffic.
+
+A champion that was already `ACTIVE` before the process booted never
+fires the change listener, so `OnnxService` applies it explicitly at
+startup. Without that, a cold restart would quietly keep serving whatever
+`MODEL_PATH` happened to hold.
 
 See [`MODEL-REGISTRY.md`](MODEL-REGISTRY.md) for endpoints, segment
 thresholds, and shadow scoring details.
@@ -513,8 +644,9 @@ sequenceDiagram
         alt retries < MAX_RETRIES
             F->>F: leave offset uncommitted (re-delivered)
         else MAX_RETRIES exceeded
-            F->>K: commit offset (poison message bounded)
-            F->>F: log loudly
+            F->>K: publish to transactions.blocked.dlq
+            F->>K: then commit offset (poison message bounded)
+            F->>F: log loudly, bump dropped_poison
         end
     end
 ```
@@ -547,10 +679,15 @@ The shipped `docker-compose.yml` runs the reference production stack:
   image is heavy; first-time adopters should not pay that cost before
   seeing the rest of the stack run. FIA listens on host port 9094 and is
   capped at 16 GB / 2 CPU.
-- **MLA** is not in `docker-compose.yml` by default — it runs from its
-  own venv on the host, on `METRICS_PORT` 9095. The RDA service-health
-  fan-out includes `MLA_HEALTH_URL=http://host.docker.internal:9095` for
-  this reason.
+- **MLA** is in `docker-compose.yml` behind the `mla` profile, so a plain
+  `up` doesn't start it. You can run it either way:
+  - *In Compose* — add `--profile mla` and set
+    `MLA_HEALTH_URL=http://mla:9095` in `.env`, so the RDA replicas probe
+    the container rather than the host.
+  - *On the host in a venv* — the historical default, and the better
+    choice when you want GPU access for training. It listens on
+    `METRICS_PORT` 9095, which is why the health fan-out defaults to
+    `MLA_HEALTH_URL=http://host.docker.internal:9095`.
 - **Sentinel** is served separately (Vite dev server on 5173, or a
   static build behind your own reverse proxy in production). It is not
   bundled into compose.
@@ -578,23 +715,35 @@ through nodemon.
 | Trigger | System response | Observable signal | Recovery |
 |---|---|---|---|
 | Redis down or slow | `FeatureService` circuit breaker opens; predict path uses `DEFAULT_REDIS_SNAPSHOT`. Predictions continue with degraded accuracy. | `redis-features` breaker state gauge; `featuresDefault = true` rows in `decisionAuditLog`. | Restart Redis; breaker closes automatically on a successful probe. |
-| ONNX inference failure | Circuit breaker fallback returns probability 1.0 → DECLINE. Fail-closed. | `onnx-predict` breaker state gauge; ONNX error logs from `onnx.service.ts` line ~46. | Investigate the model file (corrupt? schema mismatch?). Roll back to a known-good version via the registry. |
+| ONNX inference failure or timeout | Breaker fallback returns `degraded: true`; the decision becomes `CB_ONNX_FALLBACK_DECISION` (default `REVIEW`), stamped `decisionSource = BREAKER_FALLBACK`. Degraded declines are **not** published to `transactions.blocked` — there is no model signal for FIA to investigate, and during an outage every request would otherwise queue an LLM report. | `onnx-predict` breaker state gauge; `BREAKER_FALLBACK` rows in `decisionAuditLog`; ONNX error logs from `onnx.service.ts`. | Check the model file (corrupt? schema mismatch?) and whether `CB_ONNX_TIMEOUT` (750 ms) sits below your real p95 under load — a timeout set too low turns ordinary contention into mass REVIEWs. Roll back via the registry. |
 | Schema-version mismatch on model activation | `OnnxService.applyActiveVersion` refuses to load; previous session keeps serving traffic. | RDA ERROR log `Refusing to load model — feature schema mismatch` with reported vs expected versions. | Either retrain against the current catalogue or revert the adopter overlay. |
 | Kafka unreachable | `publishAsync` retries then buffers each entry to LevelDB as `{ v: 2, topic, partitionKey, event }`. Predictions succeed; PAA / MLA / FIA lag. | RDA WARN logs from `kafka-producer.ts`; PAA / FIA / MLA readiness drops. | On reconnect, `flushBuffer` replays buffered entries to their original topic + partition key. |
 | PAA down | Redis features grow stale; `FeatureService` continues to serve whatever is in Redis (or default on miss). | PAA `/readyz` 503; `paa_kafka_lag` grows. | Restart PAA; it consumes from the last committed offset and Redis catches up. |
 | MLA down | No drift detection, no retraining, no automatic promotion. ACTIVE model continues to serve. | MLA `/livez` unreachable; no new rows in `modelVersions`. | Restart MLA. Manual training via `python -m src.main --train` is also available. |
 | FIA LLM load failure | With `FIA_FALLBACK_ON_LLM_FAILURE=true` (default), a deterministic rule-based report is produced; `llmModelVersion` ends in `-fallback`. With `false`, the consumer surfaces 500s and a poison-counter bounds retry. | `llm_model` reported on `/stats`; fallback-tagged rows in `investigationReports`. | Fix the device / weights / dependencies, restart FIA. |
-| Postgres down | Audit log writes fail (swallowed — predictions continue); idempotency cache writes fail (predictions still succeed, but a retry within TTL will not replay). `readyz` probes flip to 503. | Liveness up, readiness down on RDA / PAA / FIA. | LB removes the replica; restart Postgres. The audit log is best-effort — rows during the outage are lost. If regulatory zero-loss audit is required, journal through Kafka. |
-| Poison message on `transactions.blocked` | FIA in-memory retry counter caps redelivery at `MAX_RETRIES = 3`, then commits the offset and logs loudly. | `/stats` `dropped_poison` increments. | Inspect the message in the Kafka offset; fix the producer side if there's a schema bug. |
+| Postgres down | The audit queue drains nowhere and fills. Individual write errors are logged, but once the queue hits `AUDIT_QUEUE_CAPACITY` (50,000) `enqueue` throws and `/v1/predict` returns **503** — deliberately, so an outage can't silently gut the audit trail while decisions keep flowing. Idempotency writes also fail, so a retry within TTL won't replay. `readyz` flips to 503. | Liveness up, readiness down; 503s on predict; audit-write failure metrics. | LB removes the replica; restart Postgres. Rows buffered in memory at the moment of a crash are lost. For zero-loss audit, run `AUDIT_PIPELINE=stream` so the row is durable in Kafka before the caller sees the decision. |
+| Poison message on `transactions.blocked` | FIA retries up to `MAX_RETRIES = 3`, then publishes the event to `transactions.blocked.dlq` **before** committing the offset, so the owed investigation is recoverable rather than lost to a log line. | `/stats` `dropped_poison` increments; messages land on the DLQ topic. | Read the DLQ topic to see what failed and why; fix the producer side if it's a schema bug, then replay. |
 
-The two layers of circuit breakers in RDA (`redis-features` and
-`onnx-predict`) intentionally have asymmetric fallback policies. Redis
-fallback **continues** the prediction with degraded features because the
-worst case is a slightly less accurate decision. ONNX fallback **declines**
-because the worst case of approving on a broken model is unbounded fraud
-loss. See `src/shared/circuit-breaker/` for the breaker primitives and
-`src/v1/modules/rda/services/feature.service.ts` + `src/shared/onnx/onnx.service.ts`
-for the policies.
+RDA's two breakers (`redis-features` and `onnx-predict`) fall back
+differently, and the reasoning is worth stating plainly.
+
+**Redis falls back and carries on.** If features are unavailable the
+prediction still runs, just on population defaults. The worst outcome is
+one slightly less accurate decision, which is better than no decision.
+
+**ONNX falls back to a human.** If inference didn't run, there is no
+score to act on. Declining looks like the safe choice, but it isn't: the
+breaker fires on per-call *timeouts* too, so a threshold set below your
+real p95 turns an ordinary contention spike into mass customer-facing
+declines. Routing to `REVIEW` keeps a person in the loop and keeps the
+blast radius bounded. Adopters who genuinely prefer failing closed set
+`CB_ONNX_FALLBACK_DECISION=DECLINE`.
+
+Neither fallback is silent: both stamp the audit row, so you can always
+separate "the model said so" from "the model never ran". Breaker
+primitives live in `src/shared/circuit-breaker/`; the policies live in
+`src/v1/modules/rda/services/feature.service.ts` and
+`src/shared/onnx/onnx.service.ts`.
 
 ## 8. Performance characteristics
 
@@ -682,7 +831,7 @@ F1 / AUC there is the honest signal.
 
 ### Service-level READMEs
 
-- [`paa-service/`](../paa-service/) — no README yet; consult `paa-service/src/worker.ts` for the entry point
+- [`paa-service/README.md`](../paa-service/README.md) — including why PAA must stay a singleton
 - [`mla-service/README.md`](../mla-service/README.md)
 - [`fia-service/README.md`](../fia-service/README.md)
 - [`frontend/README.md`](../frontend/README.md)
