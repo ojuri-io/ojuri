@@ -45,6 +45,7 @@ services:
       - KAFKA_BROKERS=kafka:29092
       - KAFKA_TOPIC=transactions.completed
       - KAFKA_BLOCKED_TOPIC=transactions.blocked
+      - AUDIT_PIPELINE=${AUDIT_PIPELINE:-queue}
       - MODEL_PATH=/app/models/fraud_model.onnx
       - FRAUD_THRESHOLD=0.65
       - ONNX_SESSION_POOL_SIZE=4
@@ -114,6 +115,7 @@ services:
       - KAFKA_BROKERS=kafka:29092
       - KAFKA_TOPIC=transactions.completed
       - KAFKA_BLOCKED_TOPIC=transactions.blocked
+      - AUDIT_PIPELINE=${AUDIT_PIPELINE:-queue}
       - MODEL_PATH=/app/models/fraud_model.onnx
       - FRAUD_THRESHOLD=0.65
       - ONNX_SESSION_POOL_SIZE=4
@@ -181,6 +183,7 @@ services:
       - KAFKA_BROKERS=kafka:29092
       - KAFKA_TOPIC=transactions.completed
       - KAFKA_BLOCKED_TOPIC=transactions.blocked
+      - AUDIT_PIPELINE=${AUDIT_PIPELINE:-queue}
       - MODEL_PATH=/app/models/fraud_model.onnx
       - FRAUD_THRESHOLD=0.65
       - ONNX_SESSION_POOL_SIZE=4
