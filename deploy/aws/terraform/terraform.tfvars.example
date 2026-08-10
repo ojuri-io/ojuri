@@ -1,0 +1,30 @@
+# Copy to terraform.tfvars and edit. Every value here is optional — running with
+# no tfvars file at all produces a working environment on an AWS-provided HTTPS
+# domain. Never put secrets in this file; they are generated for you and stored
+# in SSM Parameter Store.
+
+# region        = "eu-west-1"
+# instance_type = "t3a.xlarge"
+
+# Custom hostname. Leave it out entirely to use the *.cloudfront.net domain,
+# which already has a valid certificate and needs no DNS work at all.
+# domain_name = "sandbox.example.com"
+
+# DNS in Route53: set the zone too and one apply does everything.
+# route53_zone_id = "Z01234567890ABCDEFGHI"
+
+# DNS anywhere else (Cloudflare, Namecheap, ...): leave route53_zone_id empty
+# and use the two-step flow. Apply once with this false, add the records that
+# `terraform output dns_records_to_create` prints, then set it true and apply
+# again. See the README section "Putting it on your own subdomain".
+# dns_records_created = false
+
+# Minutes without traffic before the instance stops itself. 0 disables it.
+# idle_stop_minutes = 60
+
+# Unconditional daily stop, UTC. This is the ceiling on what a day can cost.
+# nightly_stop_utc = "22:00"
+
+# Set false to remove the public wake page. The environment then starts only via
+# `make up` or the AWS console.
+# wake_button_enabled = true
