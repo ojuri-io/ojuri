@@ -131,19 +131,17 @@ you have ≥16 GB free RAM.
 
 ## Benchmarking
 
-Two shipped defaults produce confidently-wrong fast numbers. Both are in
-[`ARCHITECTURE.md`](ARCHITECTURE.md#8-performance-characteristics) in full:
+**My load test shows lots of 503s** — you are almost certainly above the
+NGINX rate limit from a single source IP.
 
-- **NGINX rate limit.** `/v1/predict` is capped at 100 r/s with a burst of
-  50 per source IP. From one benchmark host, anything above ~150 RPS is
-  rejected with HTTP 503 without reaching RDA — you end up measuring
-  NGINX's reject latency.
-- **Idempotency duplicate short-circuit.** Reusing one `transaction_id`
-  across requests returns 409 without running the model, which is far
-  faster than the real predict path.
+**My load test shows lots of 409s** — you are reusing one
+`transaction_id`, so the requests short-circuit without running the
+model.
 
-Measure with a unique `transaction_id` per request, and assert every
-response is HTTP 200 before computing percentiles.
+Both are expected, and both make a benchmark look far faster than the
+real decision path. The full explanation and how to measure honestly
+live in [Benchmarking traps to
+avoid](ARCHITECTURE.md#8-performance-characteristics).
 
 ---
 

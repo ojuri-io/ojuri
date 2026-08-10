@@ -271,18 +271,13 @@ The previous "PROTOTYPE MODE: USING PLACEHOLDER FEATURES" warnings and 411-zero-
 
 Orientation values, not SLA targets. Re-measure on your own hardware.
 
-**Two benchmarking traps in this codebase produce confidently-wrong fast numbers — read this before quoting any p99.**
-
-1. **NGINX rate limit.** `nginx/nginx.conf` declares `limit_req zone=api_limit:10m rate=100r/s burst=50` on `/v1/predict`. From a single benchmark host (one source IP), anything above ~150 RPS is rejected with HTTP 503 — NGINX returns the response without forwarding upstream (`rt=0.000 uct="-"` in the access log). A naïve high-RPS bench measures NGINX's reject latency, not the decision path.
-2. **Idempotency duplicate short-circuit.** When a request's `transaction_id` matches one already reserved, `PredictService.executePrediction` returns `{ kind: "duplicate" }` and the controller responds 409 without running the model. A bench that posts a single body to every request measures the duplicate-rejection path, which is much faster than the real predict pipeline.
-
-To measure honestly: unique `transaction_id` per request, multi-IP source or temporarily raised rate-limit, and **assert every response is HTTP 200 before computing percentiles**.
+**Before quoting any p99, read [Benchmarking traps to avoid](docs/ARCHITECTURE.md#8-performance-characteristics).** Two shipped defaults — the NGINX rate limit and the idempotency duplicate short-circuit — return fast responses without ever running the model, so a naive bench measures the reject path. That section is canonical; it is not restated here, because the last time it was, the two copies drifted and this file kept asserting a superseded p99.
 
 **Measured values** (single RDA replica, direct port 3000 to bypass NGINX, unique `transaction_id` per request, all 200 OK):
 
 - ONNX model only (deployed PaySim model, 122 KB, batch=1): p50=0.010 ms, p99=0.049 ms.
 - RDA `/v1/predict`, single client, uncontended: p99 ≈ 6 ms (idempotency reservation + audit enqueue are now on the hot path; the earlier 4 ms figure predates those two stages).
-- RDA `/v1/predict`, 16 concurrent, 2,000 trials, post-1.4.0 review fixes: p50=28.9 ms, p95=51.7 ms, **p99=84.5 ms**, ~516 RPS, zero breaker fallbacks. This supersedes the pre-fix 5,000-trial run (mean 35 ms, p50=43 ms, p95=140 ms, p99=295 ms, p999=3.3 s, ~237 RPS), whose per-stage means were `feature_load` 19 ms and `inference` 16 ms — both an order of magnitude above their uncontended cost because Node's event loop was serialising async resolutions under contention. The non-ML stages (rules, reason codes, audit_enqueue) stay sub-1 ms in both runs.
+- RDA `/v1/predict`, 16 concurrent, 2,000 trials, post-1.4.0 review fixes: p50=28.9 ms, p95=51.7 ms, **p99=84.5 ms**, ~516 RPS, zero breaker fallbacks. This supersedes the pre-fix 5,000-trial run (mean 35 ms, p50=43 ms, p95=140 ms, p99=295 ms, p999=3.3 s, ~237 RPS), whose per-stage means were `feature_load` 19 ms, `inference` 16 ms, and sub-1 ms for the non-ML stages (rules, reason codes, audit_enqueue) — the two ML stages an order of magnitude above their uncontended cost because Node's event loop was serialising async resolutions under contention. Per-stage means have not been re-measured since the fixes, so they describe the old regime only.
 - IEEE-CIS XGBoost training: 683,852 train / 118,108 test in 27.67 s; held-out F1=0.554, AUC=0.911.
 - FIA (Phi-3-mini, MPS, fp16): ~46 s LLM load, ~6–10 min one-time MPS warmup, then ~40–90 s per report. Idempotency guard verified end-to-end.
 
