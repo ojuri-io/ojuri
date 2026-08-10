@@ -556,13 +556,21 @@ async function main() {
     };
   }
 
-  const lat = results
-    .filter((r) => r.status === 200)
-    .map((r) => r.latency_ms)
-    .sort((a, b) => a - b);
+  const scored = results.filter((r) => r.status === 200);
+  const rateLimited = results.filter((r) => r.status === 503).length;
+  const duplicates = results.filter((r) => r.status === 409).length;
+  const otherFailures = results.length - scored.length - rateLimited - duplicates;
+
+  const lat = scored.map((r) => r.latency_ms).sort((a, b) => a - b);
   const q = (p: number) => lat[Math.min(lat.length - 1, Math.floor(lat.length * p))] ?? 0;
   summary.latency_ms = { p50: q(0.5), p95: q(0.95), p99: q(0.99) };
-  summary.throughput_rps = Math.round((results.length / elapsedMs) * 1000);
+  // Only scored requests count toward throughput. Counting rejects here
+  // inflates RPS with responses the model never ran — the whole point of
+  // the rate-limit trap is that they return fast.
+  summary.throughput_rps = Math.round((scored.length / elapsedMs) * 1000);
+  summary.scored = scored.length;
+  summary.rejected = { rate_limited_503: rateLimited, duplicate_409: duplicates, other: otherFailures };
+  summary.numbers_trustworthy = rateLimited === 0 && duplicates === 0 && otherFailures === 0;
 
   // Write JSON file with full decisions for downstream analysis.
   const outPath = resolve(args.out);
@@ -578,7 +586,28 @@ async function main() {
         `expected=${s.expected} hit-rate=${s.detection_rate} median_score=${s.median_score}`,
     );
   }
-  console.log(`Latency p50/p95/p99 = ${q(0.5)}/${q(0.95)}/${q(0.99)} ms · ~${summary.throughput_rps} req/s`);
+  console.log(
+    `Latency p50/p95/p99 = ${q(0.5)}/${q(0.95)}/${q(0.99)} ms · ~${summary.throughput_rps} req/s ` +
+      `(over ${scored.length}/${results.length} scored)`,
+  );
+  if (!summary.numbers_trustworthy) {
+    console.error("");
+    console.error("!! These latency and throughput numbers are NOT citable.");
+    if (rateLimited) {
+      console.error(
+        `   ${rateLimited} request(s) hit the NGINX rate limit (503) and never reached RDA. ` +
+          `Lower the rate, source from multiple IPs, or bypass NGINX.`,
+      );
+    }
+    if (duplicates) {
+      console.error(
+        `   ${duplicates} request(s) were rejected as duplicate transaction_id (409) ` +
+          `and never ran the model.`,
+      );
+    }
+    if (otherFailures) console.error(`   ${otherFailures} other non-200 response(s).`);
+    console.error("   See docs/ARCHITECTURE.md#8-performance-characteristics");
+  }
   console.log(`Wrote ${outPath}`);
 }
 

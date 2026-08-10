@@ -290,7 +290,7 @@ for (let v = 0; v < N(300); v++) {
 events.sort((a, b) => a.tx.timestamp - b.tx.timestamp);
 
 const out = createWriteStream(OUT);
-const counts = { sent: 0, ACCEPT: 0, DECLINE: 0, REVIEW: 0, errors: 0 };
+const counts = { sent: 0, ACCEPT: 0, DECLINE: 0, REVIEW: 0, errors: 0, rateLimited: 0, duplicates: 0 };
 const started = Date.now();
 
 async function sendOne(ev) {
@@ -303,6 +303,11 @@ async function sendOne(ev) {
     });
     if (!res.ok) {
       counts.errors += 1;
+      // 503 and 409 are the two ways this harness silently produces a
+      // scorecard the model never contributed to, so they are counted
+      // apart from genuine failures.
+      if (res.status === 503) counts.rateLimited += 1;
+      else if (res.status === 409) counts.duplicates += 1;
       if (counts.errors <= 5) console.error(`HTTP ${res.status}: ${(await res.text()).slice(0, 160)}`);
       return;
     }
@@ -358,4 +363,17 @@ const mins = ((Date.now() - started) / 60000).toFixed(1);
 console.log(`\nphase ${PHASE} complete in ${mins} min`);
 console.log(`  sent=${counts.sent} ACCEPT=${counts.ACCEPT} DECLINE=${counts.DECLINE} REVIEW=${counts.REVIEW} errors=${counts.errors}`);
 console.log(`  ground truth: ${OUT}`);
+
+if (counts.rateLimited || counts.duplicates) {
+  console.error("");
+  console.error("!! This scorecard is NOT citable — some transactions were never scored.");
+  if (counts.rateLimited) {
+    console.error(`   ${counts.rateLimited} hit the NGINX rate limit (503). Lower SIM_RPS below 100, source from multiple IPs, or raise the limit.`);
+  }
+  if (counts.duplicates) {
+    console.error(`   ${counts.duplicates} were rejected as duplicate transaction_id (409). Use a fresh SIM_RUN_ID or a clean database.`);
+  }
+  console.error("   See docs/ARCHITECTURE.md#8-performance-characteristics");
+  process.exit(1);
+}
 if (counts.errors > counts.sent * 0.02) process.exit(1);

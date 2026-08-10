@@ -41,8 +41,11 @@ allergic to marketing voice. Address them as peers.
 
 ### Voice attributes
 
-1. **Precise.** Specific numbers, real names, concrete examples. *"p99 ≈ 4ms"*
-   not *"blazingly fast."*
+1. **Precise.** Specific numbers, real names, concrete examples. *"p99 ≈ 6 ms
+   uncontended, 85 ms at 16-way concurrency"* not *"blazingly fast."* Quote
+   figures from [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md#8-performance-characteristics),
+   which is the only place they are maintained — a precise number copied
+   into a second file is a number that will be wrong later.
 2. **Honest.** Acknowledge limitations and trade-offs in the same paragraph as
    the strengths. The PaySim F1 disclosure in `ARCHITECTURE.md` is the model.
 3. **Considered.** Each word earns its place. If a sentence can be cut without

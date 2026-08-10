@@ -786,7 +786,7 @@ limit, assert every response is HTTP 200 before computing percentiles.
 | RDA `POST /v1/predict`, single client (3,000 trials), **uncontended — baseline, before idempotency + audit joined the hot path** | p50 / p99 / mean | 1.24 ms / 4.06 ms / 1.36 ms |
 | RDA `POST /v1/predict`, 16 concurrent, 2,000 trials, **direct to one replica, unique IDs, all 200 OK — current, post-1.4.0 review fixes** | p50 / p95 / p99 / RPS | 28.9 ms / 51.7 ms / **84.5 ms** / ~516 |
 | RDA `POST /v1/predict`, 16 concurrent, 5,000 trials — **superseded pre-1.4.0 baseline, kept for comparison** | mean / p50 / p95 / p99 / p999 / RPS | 35 ms / 43 ms / 140 ms / 295 ms / 3.3 s / ~237 |
-| RDA per-stage means at 16 concurrent (from `predict_stage_duration_ms{stage}`) | feature_load / inference / others | 19 ms / 16 ms / <1 ms |
+| RDA per-stage means at 16 concurrent (from `predict_stage_duration_ms{stage}`) — **from the superseded run above; not re-measured since the 1.4.0 fixes** | feature_load / inference / others | 19 ms / 16 ms / <1 ms |
 | MLA retrain on IEEE-CIS (683,852 train + 5-fold CV + SMOTE) | wall time | 27.67 s |
 | Deployed IEEE-CIS XGBoost on held-out test (118,108 rows) | F1 / AUC-ROC / Precision / Recall | 0.554 / 0.911 / 0.841 / 0.414 |
 | Phi-3-mini load on Apple MPS, fp16 | wall time | ~46 s |
@@ -794,16 +794,25 @@ limit, assert every response is HTTP 200 before computing percentiles.
 | Phi-3-mini steady-state generation | wall time | ~40–90 s/report |
 
 The single-client and 16-concurrent numbers describe two different
-regimes. Uncontended, the request hot path now completes in ~6 ms p99.
-The 4.06 ms row above is the pre-idempotency, pre-audit baseline
-(ONNX inference + Redis hgetall + a Fastify pass); adding the
-idempotency reservation and the audit-enqueue stage to the hot path
-accounts for the ~2 ms delta. Under concurrent load
-the Node event loop becomes the binding constraint: `feature_load` and
-`inference` stage means both jump by an order of magnitude because
-their async resolutions queue behind whatever is currently CPU-bound
-on the main thread. Closing that gap is open performance work — see
-the `perf/` branches as they land.
+regimes. Uncontended, the request hot path completes in ~6 ms p99. The
+4.06 ms row is the older pre-idempotency, pre-audit baseline (ONNX
+inference + Redis `hgetall` + a Fastify pass); adding the idempotency
+reservation and the audit-enqueue stage accounts for the ~2 ms delta.
+
+Under concurrent load the Node event loop is the binding constraint. On
+the pre-1.4.0 run that showed up starkly — `feature_load` and
+`inference` stage means were 19 ms and 16 ms, an order of magnitude
+above their uncontended cost, because their async resolutions queued
+behind whatever was CPU-bound on the main thread. **Those per-stage
+means have not been re-measured since the 1.4.0 fixes took the p99 from
+295 ms to 84.5 ms, so treat them as describing the old regime, not the
+current one.** Re-running `predict_stage_duration_ms{stage}` under load
+is the obvious next measurement.
+
+Closing the remaining gap between 6 ms uncontended and 84.5 ms at
+16-way concurrency is open work; the `perf/` branches
+(`onnx-session-pool`, `rda-cpu-and-pool-sizing`, `idempotency-redis`)
+are where it is being tried.
 
 Two artefacts ship in `models/` and have very different signals.
 `models/fraud_model.onnx` is the legacy PaySim-trained model — its F1 ≈

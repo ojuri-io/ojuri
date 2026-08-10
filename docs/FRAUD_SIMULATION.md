@@ -28,34 +28,20 @@ python3 scripts/fraud-sim-score.py /tmp/sim-p1.jsonl
 python3 scripts/fraud-sim-score.py /tmp/sim-p3.jsonl
 ```
 
-Environment: `RDA_URL`, `SIM_RPS` (default 160), `SIM_RUN_ID`,
-`--scale 0.1` for a quick pass.
+Environment: `RDA_URL` (optional — the script probes NGINX on `:80`
+then a host-side RDA on `:3000` and uses whichever answers `/livez`),
+`SIM_RPS` (default 160), `SIM_RUN_ID` (pin it when two runs must emit
+byte-identical transaction ids), `--scale 0.1` for a quick pass.
 
-`RDA_URL` is optional — the script probes `http://localhost` (NGINX, the
-compose stack) then `http://localhost:3000` (a host-side `npm run
-start:dev`) and uses whichever answers `/livez`. Set it explicitly to
-target anything else; a wrong value then fails loudly at startup rather
-than on all 128k requests.
+The default `SIM_RPS=160` from one source IP exceeds the shipped NGINX
+rate limit, which turns real decisions into 503s in your error count.
+Read [Benchmarking traps to
+avoid](ARCHITECTURE.md#8-performance-characteristics) before you run a
+full pass or quote any number from it.
 
-> **Raise or disable the NGINX rate limit before a full run.** At the
-> default `SIM_RPS=160` from a single source IP you are above the shipped
-> `100r/s` cap, so NGINX rejects with 503 without forwarding upstream and
-> those rejections land in the error count instead of the scorecard. Drop
-> `SIM_RPS` below 100, source from multiple IPs, or lift the limit for
-> the run. See
-> [`ARCHITECTURE.md`](ARCHITECTURE.md#8-performance-characteristics).
-
-**Re-running a phase.** `transaction_id` is unique per tenant, so ids
-carry a per-run prefix — otherwise the second run of a phase would 409 on
-every row against the same database. The simulation itself stays
-deterministic: same `(seed, phase)` gives the same populations, amounts
-and cohorts, so two runs produce the same scorecard. Pin `SIM_RUN_ID`
-when you need two runs to emit byte-identical ids.
-
-Deterministic per
-`(seed, phase)`; the legit population is identical across phases while
-fraud cohorts are fresh per phase, so phase 3 measures generalization
-to unseen accounts, not memorization.
+The run is deterministic per `(seed, phase)`: the legit population is
+identical across phases while fraud cohorts are fresh per phase, so
+phase 3 measures generalization to unseen accounts, not memorization.
 
 ## Population
 
