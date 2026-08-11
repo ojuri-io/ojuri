@@ -95,6 +95,18 @@ variable "nightly_stop_utc" {
   default     = "22:00"
 }
 
+variable "wake_reserved_concurrency" {
+  description = <<-EOT
+    Concurrency reserved for the wake Lambda. -1 leaves it unreserved, which is
+    the only workable value on an account still at the default limit of 10 total
+    concurrent executions — AWS rejects any reservation that drops unreserved
+    concurrency below 10. Set a small number (5 is plenty) after raising the
+    account limit, since the account ceiling stops bounding the function then.
+  EOT
+  type        = number
+  default     = -1
+}
+
 variable "wake_button_enabled" {
   description = <<-EOT
     Serve a public "wake this demo" page when the instance is stopped. The

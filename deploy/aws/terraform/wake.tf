@@ -76,10 +76,14 @@ resource "aws_lambda_function" "wake" {
   timeout          = 10
   memory_size      = 256
 
-  # A hard ceiling on how much the public endpoint can ever run. Without it a
-  # scripted flood would scale out to the account concurrency limit and bill for
-  # every invocation.
-  reserved_concurrent_executions = 5
+  # A ceiling on how much the public endpoint can ever run, so a scripted flood
+  # cannot scale out and bill for every invocation. Left unset by default: a new
+  # account's total concurrency limit is 10, and AWS rejects any reservation that
+  # would push unreserved concurrency below 10 — so on such an account this
+  # cannot be set at all, and the account limit is itself the ceiling. Set it
+  # once you have raised the account limit, at which point the account no longer
+  # bounds this function.
+  reserved_concurrent_executions = var.wake_reserved_concurrency
 
   environment {
     variables = {
@@ -94,9 +98,56 @@ resource "aws_lambda_function" "wake" {
 # credentials — that is the entire point of the button. The endpoint is safe to
 # expose because the role behind it can only start one instance, concurrency is
 # capped, and the instance stops itself on a timer regardless of who woke it.
-resource "aws_lambda_function_url" "wake" {
+# A Lambda Function URL would be the simpler choice and was the original design,
+# but this account returns AccessDeniedException on anonymous invocation even
+# with AuthType NONE and a public resource policy on the function. API Gateway
+# reaches the function as the apigateway service principal instead of as an
+# anonymous caller, so it does not depend on public invoke being permitted.
+resource "aws_apigatewayv2_api" "wake" {
   count = var.wake_button_enabled ? 1 : 0
 
-  function_name      = aws_lambda_function.wake[0].function_name
-  authorization_type = "NONE"
+  name          = "${local.name}-wake"
+  protocol_type = "HTTP"
+}
+
+resource "aws_apigatewayv2_integration" "wake" {
+  count = var.wake_button_enabled ? 1 : 0
+
+  api_id                 = aws_apigatewayv2_api.wake[0].id
+  integration_type       = "AWS_PROXY"
+  integration_uri        = aws_lambda_function.wake[0].invoke_arn
+  payload_format_version = "2.0"
+}
+
+resource "aws_apigatewayv2_route" "wake" {
+  count = var.wake_button_enabled ? 1 : 0
+
+  api_id    = aws_apigatewayv2_api.wake[0].id
+  route_key = "$default"
+  target    = "integrations/${aws_apigatewayv2_integration.wake[0].id}"
+}
+
+# $default stage serves paths verbatim, with no stage prefix to strip, so
+# /_wake/status arrives at the handler exactly as CloudFront sent it.
+resource "aws_apigatewayv2_stage" "wake" {
+  count = var.wake_button_enabled ? 1 : 0
+
+  api_id      = aws_apigatewayv2_api.wake[0].id
+  name        = "$default"
+  auto_deploy = true
+}
+
+# authorization_type = "NONE" only says the URL does not require SigV4; it does
+# not itself grant permission to call it. The provider already adds an
+# equivalent statement alongside the function URL, so this is belt-and-braces
+# rather than load-bearing — it makes the public grant explicit at the point
+# someone reviewing this file would look for it.
+resource "aws_lambda_permission" "wake_url" {
+  count = var.wake_button_enabled ? 1 : 0
+
+  statement_id           = "AllowPublicFunctionUrlInvoke"
+  action                 = "lambda:InvokeFunctionUrl"
+  function_name          = aws_lambda_function.wake[0].function_name
+  principal              = "*"
+  function_url_auth_type = "NONE"
 }

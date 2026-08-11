@@ -89,6 +89,9 @@ services:
       - AUTH_JWT_SECRET=${AUTH_JWT_SECRET}
       - AUTH_JWT_TTL_SECONDS=${AUTH_JWT_TTL_SECONDS:-28800}
       - RDA_REQUIRE_API_KEY=${RDA_REQUIRE_API_KEY:-false}
+      # Without this the boot-time production guard sees no allowed origin and
+      # refuses to start, so NODE_ENV=production was unrunnable from this file.
+      - SENTINEL_CORS_ORIGINS=${SENTINEL_CORS_ORIGINS:-}
       - MLA_SERVICE_TOKEN=${MLA_SERVICE_TOKEN:-}
       - DB_HOST=postgres
       - DB_PORT=5432
