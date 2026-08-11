@@ -105,7 +105,7 @@ resource "aws_cloudfront_distribution" "main" {
 
     content {
       origin_id   = "wake"
-      domain_name = replace(replace(aws_lambda_function_url.wake[0].function_url, "https://", ""), "/", "")
+      domain_name = replace(aws_apigatewayv2_api.wake[0].api_endpoint, "https://", "")
 
       custom_origin_config {
         http_port              = 80

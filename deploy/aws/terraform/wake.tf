@@ -137,17 +137,17 @@ resource "aws_apigatewayv2_stage" "wake" {
   auto_deploy = true
 }
 
-# authorization_type = "NONE" only says the URL does not require SigV4; it does
-# not itself grant permission to call it. The provider already adds an
-# equivalent statement alongside the function URL, so this is belt-and-braces
-# rather than load-bearing — it makes the public grant explicit at the point
-# someone reviewing this file would look for it.
-resource "aws_lambda_permission" "wake_url" {
+# Nothing invokes the function without this: API Gateway calls Lambda under its
+# own service principal, and an integration pointing at a function it may not
+# invoke fails as a bare 500 with no log line, because the invocation never
+# happens. source_arn keeps the grant to this one API rather than to API Gateway
+# in general.
+resource "aws_lambda_permission" "wake_apigw" {
   count = var.wake_button_enabled ? 1 : 0
 
-  statement_id           = "AllowPublicFunctionUrlInvoke"
-  action                 = "lambda:InvokeFunctionUrl"
-  function_name          = aws_lambda_function.wake[0].function_name
-  principal              = "*"
-  function_url_auth_type = "NONE"
+  statement_id  = "AllowApiGatewayInvoke"
+  action        = "lambda:InvokeFunction"
+  function_name = aws_lambda_function.wake[0].function_name
+  principal     = "apigateway.amazonaws.com"
+  source_arn    = "${aws_apigatewayv2_api.wake[0].execution_arn}/*/*"
 }
