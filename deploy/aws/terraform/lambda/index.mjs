@@ -8,6 +8,12 @@ async function instanceState() {
   return out.Reservations?.[0]?.Instances?.[0]?.State?.Name ?? "unknown";
 }
 
+function acceptsHtml(event) {
+  const headers = event.headers ?? {};
+  const accept = headers.accept ?? headers.Accept ?? "";
+  return accept.toLowerCase().includes("text/html");
+}
+
 function html(state) {
   const booting = state === "pending" || state === "running";
 
@@ -115,10 +121,32 @@ export const handler = async (event) => {
       };
     }
 
+    const state = await instanceState();
+
+    // CloudFront rewrites every origin 5xx to this page, distribution-wide —
+    // there is no per-path error config. So an API client calling /v1/predict
+    // against a sleeping box would otherwise receive an HTML wake page and fail
+    // to parse it. The viewer's Accept header survives to here, which is enough
+    // to tell a browser from a caller that wants JSON.
+    if (!acceptsHtml(event)) {
+      return {
+        statusCode: 503,
+        headers: { "content-type": "application/json", "cache-control": "no-store" },
+        body: JSON.stringify({
+          error: "service_unavailable",
+          state,
+          message:
+            state === "running"
+              ? "The Ojuri sandbox is starting. Retry in a couple of minutes."
+              : "The Ojuri sandbox is asleep. Open the site in a browser to wake it, or POST /_wake/start.",
+        }),
+      };
+    }
+
     return {
       statusCode: 200,
       headers: { "content-type": "text/html; charset=utf-8", "cache-control": "no-store" },
-      body: html(await instanceState()),
+      body: html(state),
     };
   } catch (err) {
     console.error("wake handler failed", err);
