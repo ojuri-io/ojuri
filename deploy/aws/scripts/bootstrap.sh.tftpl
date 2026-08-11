@@ -173,12 +173,21 @@ Description=Ojuri stack
 After=docker.service network-online.target
 Requires=docker.service
 Wants=network-online.target
+# Bounded so a genuinely broken stack stops retrying rather than churning.
+StartLimitIntervalSec=3600
+StartLimitBurst=5
 
 [Service]
 Type=oneshot
 RemainAfterExit=yes
 TimeoutStartSec=900
 ExecStart=/usr/local/bin/ojuri-up
+# Kafka losing its health race on a cold boot aborts every service that depends
+# on it, and a oneshot unit with no retry leaves the box half-up forever: infra
+# running, agents absent, nothing to notice it. Kafka is invariably healthy a
+# moment later, so a delayed retry resolves it without intervention.
+Restart=on-failure
+RestartSec=30
 
 [Install]
 WantedBy=multi-user.target
