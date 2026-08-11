@@ -17,5 +17,9 @@ instance_type = "t3a.xlarge"
 # ISSUED, so CloudFront can take the alias.
 dns_records_created = true
 
+# The marketing site's live API demo calls this sandbox from the browser, which
+# is cross-origin. RDA matches Origin exactly, so both hosts are listed.
+extra_cors_origins = ["https://ojuri.io", "https://www.ojuri.io"]
+
 # Published on ojuri.io so visitors can sign into the sandbox. Public by design.
 demo_user_password = "try-ojuri"
