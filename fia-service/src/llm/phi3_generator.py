@@ -258,7 +258,7 @@ class Phi3ReportGenerator:
         prompt = self._build_chat_prompt(report, history, user_message)
         try:
             raw = self._run_pipeline(prompt)
-            answer = raw.strip()
+            answer = self._truncate_at_turn_boundary(raw)
             if not answer:
                 raise RuntimeError("Empty chat answer")
             return answer, int((time.time() - start) * 1000)
@@ -268,29 +268,65 @@ class Phi3ReportGenerator:
                 raise
             return self._rule_based_chat(report, user_message), int((time.time() - start) * 1000)
 
-    @staticmethod
+    # A plain "USER:/ASSISTANT:" transcript is not the format Phi-3 was tuned on,
+    # so it never emits <|end|> and generation runs to max_new_tokens, filling
+    # the space with invented follow-up turns. The chat template makes the stop
+    # token reachable. The report path hides the same behaviour only because
+    # _parse keeps the first JSON object and discards whatever trails it.
     def _build_chat_prompt(
-        report: Dict[str, Any], history: List[Dict[str, str]], user_message: str
+        self, report: Dict[str, Any], history: List[Dict[str, str]], user_message: str
     ) -> str:
-        lines = [
-            "You are a fraud investigation assistant grounded in the report below.",
-            "Answer follow-up questions concisely. Cite the report when relevant.",
-            "",
-            "REPORT:",
-            f"- verdict: {report.get('verdict')}",
-            f"- recommended_action: {report.get('recommendedAction') or report.get('recommended_action')}",
-            f"- confidence: {report.get('agentConfidence') or report.get('agent_confidence')}",
-            f"- narrative: {report.get('narrative')}",
-            f"- key_indicators: {report.get('keyIndicators') or report.get('key_indicators')}",
-            "",
-            "CONVERSATION:",
-        ]
-        for turn in history:
-            role = turn.get("role", "user").upper()
-            lines.append(f"{role}: {turn.get('content', '')}")
-        lines.append(f"USER: {user_message}")
-        lines.append("ASSISTANT:")
-        return "\n".join(lines)
+        grounding = "\n".join(
+            [
+                "You are a fraud investigation assistant grounded in the report below.",
+                "Answer the question concisely. Cite the report when relevant.",
+                "Answer only the question asked; do not invent further questions.",
+                "",
+                "REPORT:",
+                f"- verdict: {report.get('verdict')}",
+                f"- recommended_action: {report.get('recommendedAction') or report.get('recommended_action')}",
+                f"- confidence: {report.get('agentConfidence') or report.get('agent_confidence')}",
+                f"- narrative: {report.get('narrative')}",
+                f"- key_indicators: {report.get('keyIndicators') or report.get('key_indicators')}",
+            ]
+        )
+
+        messages: List[Dict[str, str]] = []
+        for index, turn in enumerate(history):
+            content = turn.get("content", "")
+            role = turn.get("role", "user")
+            # Phi-3's template rejects a system role, so the grounding rides on
+            # the first user turn instead.
+            if index == 0 and role == "user":
+                content = f"{grounding}\n\n{content}"
+            messages.append({"role": role, "content": content})
+
+        if not messages:
+            messages.append({"role": "user", "content": f"{grounding}\n\n{user_message}"})
+        else:
+            messages.append({"role": "user", "content": user_message})
+
+        tokenizer = self._pipeline.tokenizer if self._pipeline else None
+        if tokenizer is not None and getattr(tokenizer, "chat_template", None):
+            return tokenizer.apply_chat_template(
+                messages, tokenize=False, add_generation_prompt=True
+            )
+
+        rendered = [grounding, ""]
+        rendered += [f"{m['role'].upper()}: {m['content']}" for m in messages]
+        rendered.append("ASSISTANT:")
+        return "\n".join(rendered)
+
+    # Belt and braces for the no-chat-template path, and for a model that talks
+    # past its stop token anyway: an answer ends where the next turn begins.
+    @staticmethod
+    def _truncate_at_turn_boundary(text: str) -> str:
+        cut = len(text)
+        for marker in ("\nUSER:", "\nASSISTANT:", "\nQUESTION:", "\nANSWER:", "<|user|>", "<|end|>"):
+            found = text.find(marker)
+            if found != -1:
+                cut = min(cut, found)
+        return text[:cut].strip()
 
     def _rule_based_chat(self, report: Dict[str, Any], user_message: str) -> str:
         verdict = report.get("verdict")
