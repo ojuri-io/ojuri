@@ -112,6 +112,36 @@ Lockstep keeps the contract simple: when you upgrade, you upgrade
 everything together, and the combination we publish is the
 combination we test.
 
+## Verify the artefact, not the branch
+
+Anything under `src/`, `frontend/src/`, or `src/database/seeds/` is
+compiled into a published image. Merging it to `main` changes nothing
+for a running deployment until a release rebuilds that image — the
+service keeps running the code it was built with.
+
+This is easy to miss because it does not look like a build problem. It
+looks like the fix not working: the setting is right, the branch is
+merged, the deployment reports success, and the behaviour is unchanged.
+During the 1.5.x cycle it happened four times — an ONNX runtime pin, a
+seed file, and an API-key validator twice — and each cost a debugging
+round before anyone thought to check the image.
+
+After cutting a release, confirm the change is in the artefact rather
+than only in the branch:
+
+```bash
+# Is the code actually in the image?
+docker run --rm --entrypoint grep ghcr.io/ojuri-io/rda:v1 \
+  -c isoDate /app/dist/v1/modules/admin/validations/api-key.validator.js
+
+# Does the seed set match what main has?
+docker run --rm --entrypoint ls ghcr.io/ojuri-io/rda:v1 \
+  /app/dist/database/seeds | grep -c '\.js$'
+```
+
+A zero, or a count that disagrees with the branch, means the running
+system does not have the fix regardless of what `git log` says.
+
 ## Pre-1.0 history
 
 Pre-1.0 development happened on `main` without published images.
