@@ -16,3 +16,6 @@ instance_type = "t3a.xlarge"
 # on a second apply. Both records now resolve and ACM reports the certificate
 # ISSUED, so CloudFront can take the alias.
 dns_records_created = true
+
+# Published on ojuri.io so visitors can sign into the sandbox. Public by design.
+demo_user_password = "try-ojuri"
