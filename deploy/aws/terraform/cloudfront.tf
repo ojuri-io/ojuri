@@ -91,6 +91,14 @@ resource "aws_cloudfront_distribution" "main" {
     origin_id   = "ec2"
     domain_name = aws_eip.main.public_dns
 
+    # A stopped instance does not refuse connections, it swallows them, so
+    # CloudFront waits out the full timeout on every attempt. At the defaults
+    # (3 x 10s) a visitor stares at a blank tab for 30 seconds before the wake
+    # page appears. One short attempt is the right trade for an origin whose
+    # most common failure is "switched off" rather than "briefly busy".
+    connection_attempts = 1
+    connection_timeout  = 3
+
     custom_origin_config {
       http_port              = 80
       https_port             = 443
