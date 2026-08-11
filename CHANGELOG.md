@@ -53,6 +53,23 @@ adopters on the floating `:v1` tag receive them automatically.
   of the `onnx` / `onnxmltools` / `onnxconverter-common` pins that exist
   for XGBoost conversion; those are unchanged and
   `tests/test_onnx_conversion.py` passes against the new runtime.
+- **FIA chat answers bled into invented follow-up turns.** The follow-up
+  prompt was a plain `USER:/ASSISTANT:` transcript rather than Phi-3's chat
+  template, so the model never emitted `<|end|>` — and `<|end|>` was not in the
+  stop set anyway, since the tokenizer's configured `eos_token` is
+  `<|endoftext|>`. The model finished its answer, was not stopped, and spent
+  the remaining `max_new_tokens` writing `QUESTION:`/`ANSWER:` pairs the user
+  never asked, all returned and persisted as the assistant turn. Measured on a
+  live deployment: same question, same report, 248,237 ms with four invented
+  turns before, 66,960 ms and a clean answer after. Report generation shares
+  the stop-token fix; it never showed the artefact because the parser keeps the
+  first JSON object and discards what trails it.
+- **`/fia/` and `/mla/` were never stripped before proxying**
+  ([#123](https://github.com/ojuri-io/ojuri/issues/123)), so Sentinel's
+  investigation reports and retrain controls 404'd against the shipped stack.
+  nginx substitutes the location prefix only when `proxy_pass` names a literal
+  upstream; both routes use a variable so the resolver is consulted per
+  request, and in that form the trailing slash is inert.
 - **FIA silently degraded to rule-based reports on any CUDA host.**
   `phi3_generator` requested `attn_implementation="flash_attention_2"`
   whenever CUDA was present, but `flash-attn` is not a dependency.
@@ -62,17 +79,6 @@ adopters on the floating `:v1` tag receive them automatically.
   `flash_attn` is unavailable. The bug was invisible because every
   measured run had been on Apple Silicon MPS, which takes the `eager`
   branch.
-
-### Known issues
-
-- **`nginx/nginx.conf` does not strip the `/fia/` and `/mla/` prefixes**
-  ([#123](https://github.com/ojuri-io/ojuri/issues/123)), so Sentinel's
-  FIA report and MLA retrain calls 404 against the shipped stack. nginx
-  only substitutes the location prefix when `proxy_pass` names a literal
-  upstream, and both routes use a variable. The fix is proven in
-  `deploy/aws/nginx/nginx.conf` but deliberately not applied to the
-  shared config in this release — it changes the ingress path for every
-  adopter and wants review on its own merits.
 
 ## [1.4.0] - 2026-08-09
 
