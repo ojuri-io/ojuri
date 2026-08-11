@@ -91,6 +91,14 @@ resource "aws_cloudfront_distribution" "main" {
     origin_id   = "ec2"
     domain_name = aws_eip.main.public_dns
 
+    # A stopped instance does not refuse connections, it swallows them, so
+    # CloudFront waits out the full timeout on every attempt. At the defaults
+    # (3 x 10s) a visitor stares at a blank tab for 30 seconds before the wake
+    # page appears. One short attempt is the right trade for an origin whose
+    # most common failure is "switched off" rather than "briefly busy".
+    connection_attempts = 1
+    connection_timeout  = 3
+
     custom_origin_config {
       http_port              = 80
       https_port             = 443
@@ -199,6 +207,15 @@ resource "aws_ssm_parameter" "public_origin" {
   name  = "${local.ssm_prefix}/PUBLIC_ORIGIN"
   type  = "String"
   value = local.public_origin
+}
+
+# RDA takes a comma-separated allowlist and matches the Origin header exactly.
+# The front door is always present; anything else is opt-in via
+# extra_cors_origins, so cross-site access is a deliberate listed decision.
+resource "aws_ssm_parameter" "cors_origins" {
+  name  = "${local.ssm_prefix}/CORS_ORIGINS"
+  type  = "String"
+  value = join(",", concat([local.public_origin], var.extra_cors_origins))
 }
 
 # Read at every boot alongside PUBLIC_ORIGIN, so flipping the LLM on or off is a

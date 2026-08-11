@@ -76,6 +76,9 @@ ADMIN_SEED_PASSWORD=$(get ADMIN_SEED_PASSWORD)
 PUBLIC_ORIGIN=$(aws ssm get-parameter --region "$REGION" --name "$SSM_PREFIX/PUBLIC_ORIGIN" \
   --query Parameter.Value --output text 2>/dev/null || echo "")
 
+CORS_ORIGINS=$(aws ssm get-parameter --region "$REGION" --name "$SSM_PREFIX/CORS_ORIGINS" \
+  --query Parameter.Value --output text 2>/dev/null || echo "$PUBLIC_ORIGIN")
+
 FIA_RUNTIME=$(aws ssm get-parameter --region "$REGION" --name "$SSM_PREFIX/FIA_RUNTIME" \
   --query Parameter.Value --output text 2>/dev/null || echo '{}')
 FIA_DISABLE_LLM=$(echo "$FIA_RUNTIME" | jq -r '.disable_llm // "true"')
@@ -113,7 +116,7 @@ RDA_REQUIRE_API_KEY=true
 
 # Every request arrives through CloudFront, so the browser origin is the
 # distribution, never the instance.
-SENTINEL_CORS_ORIGINS=$PUBLIC_ORIGIN
+SENTINEL_CORS_ORIGINS=$CORS_ORIGINS
 
 # One replica: this box has 4 vCPU and the test environment has no need for
 # three. NGINX resolves the rda DNS name once at startup, so it re-resolves on

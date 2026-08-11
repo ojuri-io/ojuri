@@ -95,6 +95,17 @@ variable "nightly_stop_utc" {
   default     = "22:00"
 }
 
+variable "extra_cors_origins" {
+  description = <<-EOT
+    Additional browser origins allowed to call the API. The front door itself is
+    always included, so this is only needed for a site on a different host — the
+    marketing page's live API demo, for example. RDA matches the Origin header
+    exactly, so list every scheme/host visitors actually arrive on.
+  EOT
+  type        = list(string)
+  default     = []
+}
+
 variable "fia_llm_enabled" {
   description = <<-EOT
     Load the real Phi-3 model in FIA instead of the deterministic rule-based
