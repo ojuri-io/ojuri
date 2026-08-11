@@ -95,6 +95,23 @@ variable "nightly_stop_utc" {
   default     = "22:00"
 }
 
+variable "fia_llm_enabled" {
+  description = <<-EOT
+    Load the real Phi-3 model in FIA instead of the deterministic rule-based
+    path. Needs an instance with at least 32 GB: the weights alone are ~7.6 GB
+    in bfloat16 and ~15 GB in fp32, on top of ~8 GB for the rest of the stack.
+    Leave false on the default t3a.xlarge or the box will OOM.
+  EOT
+  type        = bool
+  default     = false
+}
+
+variable "fia_mem_limit" {
+  description = "Memory ceiling for the FIA container. Raise it alongside fia_llm_enabled."
+  type        = string
+  default     = "1536m"
+}
+
 variable "wake_reserved_concurrency" {
   description = <<-EOT
     Concurrency reserved for the wake Lambda. -1 leaves it unreserved, which is

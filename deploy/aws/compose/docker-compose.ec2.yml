@@ -68,19 +68,19 @@ services:
           memory: 2560M
     logging: *logging
 
-  # FIA_DISABLE_LLM=true is set in .env by the bootstrap, so this never loads
-  # Phi-3 and never needs the 16 GB the base file reserves for it. Raising this
-  # without moving to a GPU instance type will OOM the whole box.
+  # FIA_MEM_LIMIT and FIA_DISABLE_LLM both come from .env, written at boot from
+  # the fia_llm_enabled and fia_mem_limit variables. The default keeps Phi-3
+  # unloaded and the container small; raising the limit without also moving to a
+  # 32 GB instance will OOM the host, not just this container.
   fia:
     ports: !override
       - "127.0.0.1:9094:9094"
-    mem_limit: 1536m
+    mem_limit: ${FIA_MEM_LIMIT:-1536m}
     mem_reservation: 256m
     deploy:
       resources:
         limits:
-          cpus: "2"
-          memory: 1536M
+          memory: ${FIA_MEM_LIMIT:-1536m}
         reservations:
           memory: 256M
     logging: *logging

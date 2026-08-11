@@ -200,3 +200,15 @@ resource "aws_ssm_parameter" "public_origin" {
   type  = "String"
   value = local.public_origin
 }
+
+# Read at every boot alongside PUBLIC_ORIGIN, so flipping the LLM on or off is a
+# variable change and a restart rather than a rebuilt instance — cloud-init runs
+# once, and user-data edits do not reach a box that is already running.
+resource "aws_ssm_parameter" "fia_runtime" {
+  name = "${local.ssm_prefix}/FIA_RUNTIME"
+  type = "String"
+  value = jsonencode({
+    disable_llm = var.fia_llm_enabled ? "false" : "true"
+    mem_limit   = var.fia_mem_limit
+  })
+}

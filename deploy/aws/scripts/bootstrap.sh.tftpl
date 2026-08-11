@@ -76,6 +76,11 @@ ADMIN_SEED_PASSWORD=$(get ADMIN_SEED_PASSWORD)
 PUBLIC_ORIGIN=$(aws ssm get-parameter --region "$REGION" --name "$SSM_PREFIX/PUBLIC_ORIGIN" \
   --query Parameter.Value --output text 2>/dev/null || echo "")
 
+FIA_RUNTIME=$(aws ssm get-parameter --region "$REGION" --name "$SSM_PREFIX/FIA_RUNTIME" \
+  --query Parameter.Value --output text 2>/dev/null || echo '{}')
+FIA_DISABLE_LLM=$(echo "$FIA_RUNTIME" | jq -r '.disable_llm // "true"')
+FIA_MEM_LIMIT=$(echo "$FIA_RUNTIME" | jq -r '.mem_limit // "1536m"')
+
 umask 077
 cat > "$APP_DIR/.env" <<EOF
 OJURI_VERSION=$OJURI_VERSION
@@ -115,10 +120,13 @@ SENTINEL_CORS_ORIGINS=$PUBLIC_ORIGIN
 # every boot along with everything else.
 RDA_REPLICAS=1
 
-# Phi-3 needs ~15 GB resident in fp32 on CPU, which does not fit here. The
-# rule-based report path still exercises the Kafka consumer, the idempotency
-# guard, and the HTTP API. Flip to false only on a GPU instance type.
-FIA_DISABLE_LLM=true
+# Driven by the fia_llm_enabled variable via SSM. bfloat16 halves the resident
+# footprint against the fp32 the code picks by default on CPU, which is the
+# difference between fitting in 32 GB and not.
+FIA_DISABLE_LLM=$FIA_DISABLE_LLM
+FIA_MEM_LIMIT=$FIA_MEM_LIMIT
+FIA_LLM_DTYPE=bfloat16
+FIA_OMP_NUM_THREADS=6
 
 # MLA runs inside compose here, so the RDA health fan-out must probe the
 # container rather than host.docker.internal.
