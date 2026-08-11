@@ -7,6 +7,39 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.5.1] - 2026-08-11
+
+Bug fixes only. No API surface changes an integrator relies on, no migrations,
+no new `.env` variables to set.
+
+### Fixed
+
+- **API keys were never persisted.** Sentinel posted the expiry select's label
+  (`"30 days"`) where a timestamp was expected. `new Date()` produced an
+  Invalid Date, Postgres rejected the insert, and because the token is minted
+  *before* the insert the operator was shown a plausible `fdk_…` key that had
+  never been stored — every request with it then returned 401. The dashboard now
+  sends an ISO timestamp, and `expiresAt` is validated: a malformed value
+  returns 400 naming the field instead of a 500 with the failing SQL in the logs.
+- **nginx stopped reaching RDA after any restart or slow boot.** The upstream
+  resolved `rda:3000` once at startup, so nginx booting before RDA cached an
+  address that no longer existed. `/v1/*` then 502'd while `/` kept serving the
+  dashboard — the API looked broken while the UI looked fine. Now resolved per
+  request through the Docker resolver, as `/fia/` and `/mla/` already were.
+- **The login form blamed `AUTH_JWT_SECRET` for unrelated outages.** Any 503 was
+  reported as a missing secret. RDA does return 503 when the secret is absent,
+  but so does anything in front of it that is down, so a routing failure sent
+  operators to fix a correctly-set variable. It now distinguishes the two.
+- **The sandbox's auto-stop timers were never enabled.** They were armed after
+  the stack under `set -e`, so the first boot where the stack failed aborted the
+  bootstrap before reaching them, leaving an instance with no idle stop and no
+  nightly stop. Timers are now armed first, and a stack that will not start is
+  reported rather than fatal.
+- **A stack half-started when Kafka lost its health race.** Kafka not being
+  healthy when compose evaluated `depends_on` aborted RDA, PAA and nginx; Kafka
+  became healthy moments later but the oneshot unit never retried. Now retries
+  on failure, with a health-check grace period so the first attempt usually wins.
+
 ## [1.5.0] - 2026-08-11
 
 Ships a one-instance AWS deployment and fixes three defects found while
