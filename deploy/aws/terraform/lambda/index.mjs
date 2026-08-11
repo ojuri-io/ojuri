@@ -3,9 +3,22 @@ import { EC2Client, DescribeInstancesCommand, StartInstancesCommand } from "@aws
 const ec2 = new EC2Client({});
 const INSTANCE_ID = process.env.INSTANCE_ID;
 
-async function instanceState() {
+// LaunchTime is rewritten on every start, not just the original launch, so it
+// gives real elapsed time for this boot without the Lambda storing anything.
+async function instanceStatus() {
   const out = await ec2.send(new DescribeInstancesCommand({ InstanceIds: [INSTANCE_ID] }));
-  return out.Reservations?.[0]?.Instances?.[0]?.State?.Name ?? "unknown";
+  const inst = out.Reservations?.[0]?.Instances?.[0];
+  const state = inst?.State?.Name ?? "unknown";
+  const launched = inst?.LaunchTime ? new Date(inst.LaunchTime).getTime() : null;
+  const elapsed =
+    launched && (state === "running" || state === "pending")
+      ? Math.max(0, Math.round((Date.now() - launched) / 1000))
+      : 0;
+  return { state, elapsed };
+}
+
+async function instanceState() {
+  return (await instanceStatus()).state;
 }
 
 // This page is what a cross-origin caller receives when the box is asleep, and
@@ -13,6 +26,12 @@ async function instanceState() {
 // these the browser reports an opaque network failure and the caller cannot
 // tell "asleep" from "misconfigured". The body is a fixed error with no
 // credentials and no per-user data, so allowing any origin to read it is safe.
+// Observed on this stack: the instance reaches running in ~40s, then Kafka's
+// health check gates Postgres, migrations and the agents behind it. Treated as
+// an estimate the bar leans on, never as a promise — the bar only completes
+// when the origin actually answers.
+const BOOT_ESTIMATE_SECONDS = 180;
+
 const CORS = {
   "access-control-allow-origin": "*",
   "access-control-allow-methods": "GET, POST, OPTIONS",
@@ -81,6 +100,22 @@ function html(state) {
     margin-top: 1.5rem; font-family: "JetBrains Mono", "SF Mono", Menlo, monospace;
     font-size: 12.5px; color: var(--stone-500); font-variant-numeric: tabular-nums;
   }
+  .track {
+    margin-top: 1.5rem; height: 2px; background: var(--stone-800);
+    border-radius: 9999px; overflow: hidden; display: none;
+  }
+  .track.on { display: block; }
+  .bar {
+    height: 100%; width: 0%; background: var(--stone-400);
+    transition: width 900ms cubic-bezier(.4,0,.2,1);
+  }
+  .steps {
+    margin-top: .85rem; display: flex; gap: 1.25rem;
+    font-family: "JetBrains Mono", "SF Mono", Menlo, monospace;
+    font-size: 10.5px; letter-spacing: 0.05em; text-transform: uppercase;
+    color: var(--stone-600);
+  }
+  .steps span.on { color: var(--stone-300); }
   .rule { margin-top: 2.75rem; height: 1px; background: var(--stone-800); }
   .foot { margin-top: 1.25rem; font-size: 13px; color: var(--stone-600); }
   .foot a { color: var(--stone-400); text-decoration: none; border-bottom: 1px solid var(--stone-700); }
@@ -100,6 +135,10 @@ function html(state) {
   <h1>Asleep, and cheap to wake.</h1>
   <p>This environment stops itself when nobody is using it. Waking it takes about three minutes &mdash; Kafka and Postgres come up, migrations run, then the agents start.</p>
   <button id="wake"${booting ? " disabled" : ""}>Wake it up</button>
+  <div class="track" id="track"><div class="bar" id="bar"></div></div>
+  <div class="steps" id="steps">
+    <span id="s1">machine</span><span id="s2">services</span><span id="s3">ready</span>
+  </div>
   <div class="status" id="status">${booting ? '<span class="spinner"></span>starting&hellip;' : ""}</div>
   <div class="rule"></div>
   <p class="foot">Ojuri bears witness to every transaction. <a href="https://ojuri.io">ojuri.io</a> &middot; <a href="https://github.com/ojuri-io/ojuri">source</a></p>
@@ -107,37 +146,78 @@ function html(state) {
 <script>
   const btn = document.getElementById("wake");
   const status = document.getElementById("status");
+  const track = document.getElementById("track");
+  const bar = document.getElementById("bar");
+  const steps = [null, document.getElementById("s1"), document.getElementById("s2"), document.getElementById("s3")];
   const spinner = '<span class="spinner"></span>';
-  let polling = ${booting};
+  let timer = null;
+
+  function stage(n) {
+    for (let i = 1; i <= 3; i++) steps[i].classList.toggle("on", i <= n);
+  }
+
+  function show(pct, label) {
+    track.classList.add("on");
+    bar.style.width = Math.min(100, Math.max(0, pct)) + "%";
+    status.innerHTML = label;
+  }
 
   function poll() {
     fetch("/_wake/status", { cache: "no-store" })
       .then(r => r.json())
       .then(d => {
-        if (d.state === "running") {
-          status.innerHTML = spinner + "services starting&hellip;";
-          fetch("/", { method: "HEAD", cache: "no-store" })
-            .then(r => { if (r.ok) location.href = "/"; })
-            .catch(() => {});
-        } else {
-          status.innerHTML = spinner + d.state + "&hellip;";
+        const est = d.estimate || 180;
+        const el = d.elapsed || 0;
+        const mins = Math.floor(el / 60), secs = String(el % 60).padStart(2, "0");
+
+        if (d.state === "pending") {
+          stage(1);
+          return show(Math.min(20, (el / est) * 100), spinner + "starting the machine &middot; " + mins + ":" + secs);
         }
+        if (d.state !== "running") {
+          stage(0);
+          return show(0, spinner + d.state + "&hellip;");
+        }
+
+        stage(2);
+        // Capped below full: the bar is an estimate, and claiming completion
+        // before the origin answers would be the one thing it must not do.
+        const pct = Math.min(95, 20 + (el / est) * 75);
+        const over = el > est * 1.5;
+        show(pct, spinner + (over ? "taking longer than usual" : "bringing up services") + " &middot; " + mins + ":" + secs);
+
+        fetch("/", { method: "HEAD", cache: "no-store" })
+          .then(r => {
+            if (!r.ok) return;
+            stage(3);
+            show(100, "ready &mdash; opening&hellip;");
+            if (timer) clearInterval(timer);
+            setTimeout(() => { location.href = "/"; }, 600);
+          })
+          .catch(() => {});
       })
       .catch(() => {});
   }
 
+  function start() {
+    if (timer) return;
+    timer = setInterval(poll, 4000);
+    poll();
+  }
+
   btn.addEventListener("click", () => {
     btn.disabled = true;
-    status.innerHTML = spinner + "sending start request&hellip;";
+    stage(1);
+    show(4, spinner + "sending start request&hellip;");
     fetch("/_wake/start", { method: "POST" })
-      .then(() => { polling = true; setInterval(poll, 5000); poll(); })
+      .then(() => start())
       .catch(() => {
-        status.textContent = "could not start it — try again in a moment";
+        status.textContent = "could not start it \u2014 try again in a moment";
         btn.disabled = false;
       });
   });
 
-  if (polling) { setInterval(poll, 5000); poll(); }
+  if (${booting}) start();
 </script>
 </body>
 </html>`;
@@ -156,7 +236,7 @@ export const handler = async (event) => {
       return {
         statusCode: 200,
         headers: { ...CORS, "content-type": "application/json", "cache-control": "no-store" },
-        body: JSON.stringify({ state: await instanceState() }),
+        body: JSON.stringify({ ...(await instanceStatus()), estimate: BOOT_ESTIMATE_SECONDS }),
       };
     }
 

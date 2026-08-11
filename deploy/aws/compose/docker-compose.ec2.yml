@@ -97,7 +97,15 @@ services:
     mem_limit: 512m
     logging: *logging
 
+  # No start_period upstream, so health failures count from the first second and
+  # a cold-booting JVM is marked unhealthy before it has finished electing.
+  # Grace here, retry in the unit — the retry is what actually guarantees
+  # recovery; this just makes the first attempt usually win.
   kafka:
+    healthcheck:
+      start_period: 150s
+      interval: 15s
+      retries: 10
     ports: !override
       - "127.0.0.1:9092:9092"
       - "127.0.0.1:29092:29092"
