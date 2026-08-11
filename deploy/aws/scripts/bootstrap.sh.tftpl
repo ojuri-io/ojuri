@@ -282,8 +282,12 @@ sed -i 's/^apply_updates.*/apply_updates = yes/' /etc/dnf/automatic.conf
 systemctl enable --now dnf-automatic.timer
 
 systemctl daemon-reload
-systemctl enable --now ojuri.service
 
+# Cost control is armed before the stack, and never gated on it. These ran last
+# and under `set -e`, so the first boot where ojuri.service failed to start
+# aborted the script before either timer was enabled — leaving an instance with
+# no idle stop and no nightly stop, running until someone noticed. The thing
+# that limits spend must not depend on the thing most likely to break.
 if [ "$IDLE_STOP_MINUTES" -gt 0 ]; then
   systemctl enable --now ojuri-idle-stop.timer
 fi
@@ -291,5 +295,11 @@ fi
 if [ -n "$NIGHTLY_STOP_UTC" ]; then
   systemctl enable --now ojuri-nightly-stop.timer
 fi
+
+# A stack that fails to come up is a debuggable state, not a reason to abandon
+# the rest of the bootstrap.
+systemctl enable ojuri.service
+systemctl start ojuri.service || \
+  echo "[bootstrap] ojuri.service failed to start; timers are armed, investigate with journalctl -u ojuri"
 
 echo "[bootstrap] done"
