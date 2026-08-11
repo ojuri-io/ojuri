@@ -85,15 +85,7 @@ services:
           memory: 256M
     logging: *logging
 
-  # Built rather than pulled, purely to layer the onnxruntime fix onto the last
-  # published image. Revert to the plain GHCR image once a release carries it.
   mla:
-    build:
-      context: .
-      dockerfile: deploy/aws/compose/mla-onnxruntime-patch.Dockerfile
-      args:
-        OJURI_VERSION: ${OJURI_VERSION:-v1}
-    image: ojuri-mla-patched:${OJURI_VERSION:-v1}
     ports: !override
       - "127.0.0.1:9095:9095"
     mem_limit: 2560m
