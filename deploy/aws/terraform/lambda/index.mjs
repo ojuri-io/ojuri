@@ -8,6 +8,18 @@ async function instanceState() {
   return out.Reservations?.[0]?.Instances?.[0]?.State?.Name ?? "unknown";
 }
 
+// This page is what a cross-origin caller receives when the box is asleep, and
+// CloudFront serves it in place of whatever they actually requested. Without
+// these the browser reports an opaque network failure and the caller cannot
+// tell "asleep" from "misconfigured". The body is a fixed error with no
+// credentials and no per-user data, so allowing any origin to read it is safe.
+const CORS = {
+  "access-control-allow-origin": "*",
+  "access-control-allow-methods": "GET, POST, OPTIONS",
+  "access-control-allow-headers": "content-type, x-api-key, authorization, idempotency-key",
+  "access-control-max-age": "600",
+};
+
 function acceptsHtml(event) {
   const headers = event.headers ?? {};
   const accept = headers.accept ?? headers.Accept ?? "";
@@ -98,10 +110,14 @@ export const handler = async (event) => {
   const path = event.rawPath ?? "/";
 
   try {
+    if (method === "OPTIONS") {
+      return { statusCode: 204, headers: { ...CORS, "cache-control": "no-store" } };
+    }
+
     if (path.endsWith("/status")) {
       return {
         statusCode: 200,
-        headers: { "content-type": "application/json", "cache-control": "no-store" },
+        headers: { ...CORS, "content-type": "application/json", "cache-control": "no-store" },
         body: JSON.stringify({ state: await instanceState() }),
       };
     }
@@ -116,7 +132,7 @@ export const handler = async (event) => {
       await ec2.send(new StartInstancesCommand({ InstanceIds: [INSTANCE_ID] }));
       return {
         statusCode: 202,
-        headers: { "content-type": "application/json", "cache-control": "no-store" },
+        headers: { ...CORS, "content-type": "application/json", "cache-control": "no-store" },
         body: JSON.stringify({ state: "pending" }),
       };
     }
@@ -131,7 +147,7 @@ export const handler = async (event) => {
     if (!acceptsHtml(event)) {
       return {
         statusCode: 503,
-        headers: { "content-type": "application/json", "cache-control": "no-store" },
+        headers: { ...CORS, "content-type": "application/json", "cache-control": "no-store" },
         body: JSON.stringify({
           error: "service_unavailable",
           state,
