@@ -62,7 +62,7 @@ function Integrations({ toast, apiKeys, setApiKeys, webhooks, setWebhooks, deliv
         name: form.name,
         scope: form.scope,
         rateLimit: form.rateLimit,
-        expiresAt: form.expires === 'no expiry' ? undefined : form.expires,
+        expiresAt: expiryToIso(form.expires),
       });
       fullKey = res.token || res.apiKey || res.key;
       prefix = res.prefix || (fullKey ? fullKey.slice(0, fullKey.lastIndexOf('_') + 1) : '');
@@ -405,6 +405,17 @@ function IssueKeyModal({ onClose, onSubmit }) {
       </Field2>
     </Modal>
   );
+}
+
+// The select holds human labels; the API takes a timestamp. Sending the label
+// produced an Invalid Date server-side and a 500 with nothing persisted, so a
+// key appeared in the UI that had never been stored.
+const EXPIRY_DAYS = { '30 days': 30, '90 days': 90, '1 year': 365 };
+
+function expiryToIso(label) {
+  const days = EXPIRY_DAYS[label];
+  if (!days) return undefined;
+  return new Date(Date.now() + days * 86400000).toISOString();
 }
 
 function SubscribeWebhookModal({ onClose, onSubmit }) {
