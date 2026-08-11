@@ -35,8 +35,14 @@ function Login({ onSuccess }) {
       if (msg.includes('401') || /Invalid/i.test(msg)) {
         setError('Invalid username or password.');
       } else if (msg.includes('503')) {
+        // RDA returns 503 with AUTH_JWT_SECRET in the message when the secret is
+        // missing, but so does anything in front of it that is simply down.
+        // Blaming a correctly-set variable sends the operator to fix the wrong
+        // thing entirely.
         setError(
-          'Authentication is not configured on the server. Set AUTH_JWT_SECRET in the RDA .env and restart.'
+          /AUTH_JWT_SECRET/i.test(msg)
+            ? 'Authentication is not configured on the server. Set AUTH_JWT_SECRET in the RDA .env and restart.'
+            : 'The server is not answering. It may still be starting up — wait a moment and try again.'
         );
       } else if (msg.includes('Failed to fetch') || /NetworkError/i.test(msg)) {
         setError('Could not reach the RDA backend. Is it running on :3000?');
