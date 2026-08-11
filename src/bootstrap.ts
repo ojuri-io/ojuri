@@ -75,6 +75,15 @@ function registerCustomValidationRules() {
     "The :attribute field is not valid"
   );
 
+  // Without this an unparseable value reaches Postgres as
+  // "0NaN-NaN-NaNTNaN:NaN:NaN.NaN" and surfaces as a 500 with the failing SQL
+  // in the logs, rather than telling the caller which field was wrong.
+  Validator.register(
+    "isoDate",
+    (value) => !Number.isNaN(new Date(String(value)).getTime()),
+    "The :attribute field must be a valid ISO 8601 date"
+  );
+
   Validator.register(
     "uuid",
     (value) => uuidRegex.test(String(value)),
