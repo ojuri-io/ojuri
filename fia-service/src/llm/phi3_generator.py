@@ -201,6 +201,18 @@ class Phi3ReportGenerator:
     # ─────────────────────────────────────────────────────────
     # Internals
     # ─────────────────────────────────────────────────────────
+    # Phi-3 closes a chat turn with <|end|>, but its configured eos_token is
+    # <|endoftext|>. Without <|end|> in the stop set the model ends its answer,
+    # is not stopped, and spends the rest of max_new_tokens inventing the next
+    # turn — the cost is paid in full even when the answer was one paragraph.
+    def _stop_token_ids(self) -> List[int]:
+        tokenizer = self._pipeline.tokenizer
+        ids = [tokenizer.eos_token_id]
+        end_id = tokenizer.convert_tokens_to_ids("<|end|>")
+        if isinstance(end_id, int) and end_id != tokenizer.unk_token_id:
+            ids.append(end_id)
+        return [i for i in ids if isinstance(i, int)]
+
     def _run_pipeline(self, prompt: str) -> str:
         assert self._pipeline is not None
         out = self._pipeline(
@@ -209,6 +221,7 @@ class Phi3ReportGenerator:
             do_sample=self._config.LLM_TEMPERATURE > 0,
             temperature=max(self._config.LLM_TEMPERATURE, 1e-5),
             return_full_text=False,
+            eos_token_id=self._stop_token_ids(),
             pad_token_id=self._pipeline.tokenizer.eos_token_id,
         )
         if not out:
