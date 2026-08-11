@@ -17,7 +17,12 @@ onnx==1.13.0
 onnxmltools==1.10.0
 onnxconverter-common==1.12.0
 skl2onnx==1.15.0
-onnxruntime==1.16.3
+# The runtime moves independently of the converter pins above. 1.16.3's wheel
+# ships a native extension marked as requiring an executable stack, which
+# modern loaders refuse outright — the import fails and the service cannot
+# start. 1.19.2 drops that marker; tests/test_onnx_conversion.py passes against
+# it with the converter pins unchanged.
+onnxruntime==1.19.2
 
 # Model Registry — filesystem-backed. MinIO retired from the
 # self-hosted distribution; MLA writes `models/versions/<version>/`
