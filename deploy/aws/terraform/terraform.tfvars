@@ -1,9 +1,8 @@
 domain_name = "sandbox.ojuri.io"
 
-# The instance clones this ref to get its compose overlay and nginx config, so
-# it has to point at a ref that actually contains deploy/aws/. Switch back to
-# "main" once PR #120 merges.
-ojuri_ref = "deploy/aws-test-environment"
+# The instance clones this ref for its compose overlay and nginx config. It
+# tracked the feature branch until deploy/aws/ existed on main.
+ojuri_ref = "main"
 
 # Phi-3 was verified on m7i.2xlarge with fia_llm_enabled = true and
 # fia_mem_limit = "20g": 7.58 GB resident in bfloat16, ~135 s per report on CPU,
