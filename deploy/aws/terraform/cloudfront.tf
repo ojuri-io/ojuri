@@ -1,4 +1,5 @@
 locals {
+  tls_to_origin     = var.origin_domain != ""
   use_custom_domain = var.domain_name != ""
   manage_dns        = var.domain_name != "" && var.route53_zone_id != ""
 
@@ -88,8 +89,10 @@ resource "aws_cloudfront_distribution" "main" {
   # is what lets the instance sleep for weeks: a certbot certificate on the box
   # would expire while it was stopped, and renewal needs the box up.
   origin {
-    origin_id   = "ec2"
-    domain_name = aws_eip.main.public_dns
+    origin_id = "ec2"
+    # The EIP's amazonaws.com name cannot carry a certificate we control, so
+    # encrypting this hop requires an origin hostname that can.
+    domain_name = local.tls_to_origin ? var.origin_domain : aws_eip.main.public_dns
 
     # A stopped instance does not refuse connections, it swallows them, so
     # CloudFront waits out the full timeout on every attempt. At the defaults
@@ -102,7 +105,7 @@ resource "aws_cloudfront_distribution" "main" {
     custom_origin_config {
       http_port              = 80
       https_port             = 443
-      origin_protocol_policy = "http-only"
+      origin_protocol_policy = local.tls_to_origin ? "https-only" : "http-only"
       origin_ssl_protocols   = ["TLSv1.2"]
       origin_read_timeout    = 60
     }
@@ -212,6 +215,12 @@ resource "aws_ssm_parameter" "public_origin" {
 # Deliberately a plain String, not SecureString: this credential is printed on a
 # public web page, and storing it encrypted would imply a confidentiality it
 # does not have.
+resource "aws_ssm_parameter" "origin_domain" {
+  name  = "${local.ssm_prefix}/ORIGIN_DOMAIN"
+  type  = "String"
+  value = var.origin_domain
+}
+
 resource "aws_ssm_parameter" "demo_user" {
   name  = "${local.ssm_prefix}/DEMO_USER_PASSWORD"
   type  = "String"

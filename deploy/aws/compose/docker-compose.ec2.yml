@@ -32,8 +32,16 @@ x-logging: &logging
 
 services:
   nginx:
+    ports: !override
+      - "80:80"
+      - "443:443"
     volumes:
-      - ./deploy/aws/nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      # Written by ojuri-cert: the TLS config when a certificate exists, the
+      # plain one otherwise, so a failed renewal degrades instead of refusing
+      # to start.
+      - ./deploy/aws/nginx/nginx.active.conf:/etc/nginx/nginx.conf:ro
+      - /etc/letsencrypt:/etc/letsencrypt:ro
+      - /var/www/certbot:/var/www/certbot:ro
     depends_on:
       - rda
       - sentinel

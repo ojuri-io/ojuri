@@ -95,6 +95,22 @@ variable "nightly_stop_utc" {
   default     = "22:00"
 }
 
+variable "origin_domain" {
+  description = <<-EOT
+    Hostname pointing directly at the instance's Elastic IP, used to encrypt the
+    CloudFront-to-origin hop. Empty leaves that hop on HTTP, where an API key
+    crosses AWS's network in cleartext — acceptable for a throwaway sandbox,
+    not for real data.
+
+    CloudFront requires a certificate from a trusted CA on an HTTPS origin, so a
+    self-signed certificate will not do. Set this to a name you control (e.g.
+    origin.example.com), point an A record at the Elastic IP, and the instance
+    obtains a Let's Encrypt certificate for it on boot.
+  EOT
+  type        = string
+  default     = ""
+}
+
 variable "demo_user_password" {
   description = <<-EOT
     Password for the shared `demo` account, published on the marketing site so

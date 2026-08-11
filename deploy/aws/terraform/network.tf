@@ -81,6 +81,30 @@ resource "aws_vpc_security_group_ingress_rule" "from_cloudfront" {
   prefix_list_id    = data.aws_ec2_managed_prefix_list.cloudfront.id
 }
 
+# Reachable only from CloudFront, like port 80.
+resource "aws_vpc_security_group_ingress_rule" "https_from_cloudfront" {
+  count             = var.origin_domain != "" ? 1 : 0
+  security_group_id = aws_security_group.instance.id
+  description       = "HTTPS from CloudFront edge only"
+  ip_protocol       = "tcp"
+  from_port         = 443
+  to_port           = 443
+  prefix_list_id    = data.aws_ec2_managed_prefix_list.cloudfront.id
+}
+
+# ACME's http-01 challenge is validated from Let's Encrypt's servers, not through
+# CloudFront, so port 80 must answer the internet for renewal to work. nginx
+# serves nothing there but the challenge directory.
+resource "aws_vpc_security_group_ingress_rule" "acme" {
+  count             = var.origin_domain != "" ? 1 : 0
+  security_group_id = aws_security_group.instance.id
+  description       = "HTTP for ACME http-01 challenge only"
+  ip_protocol       = "tcp"
+  from_port         = 80
+  to_port           = 80
+  cidr_ipv4         = "0.0.0.0/0"
+}
+
 resource "aws_vpc_security_group_egress_rule" "all" {
   security_group_id = aws_security_group.instance.id
   description       = "Outbound for image pulls, SSM, and package updates"
