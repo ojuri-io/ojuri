@@ -76,6 +76,9 @@ ADMIN_SEED_PASSWORD=$(get ADMIN_SEED_PASSWORD)
 PUBLIC_ORIGIN=$(aws ssm get-parameter --region "$REGION" --name "$SSM_PREFIX/PUBLIC_ORIGIN" \
   --query Parameter.Value --output text 2>/dev/null || echo "")
 
+ORIGIN_DOMAIN=$(aws ssm get-parameter --region "$REGION" --name "$SSM_PREFIX/ORIGIN_DOMAIN" \
+  --query Parameter.Value --output text 2>/dev/null || echo "")
+
 DEMO_USER_PASSWORD=$(aws ssm get-parameter --region "$REGION" --name "$SSM_PREFIX/DEMO_USER_PASSWORD" \
   --query Parameter.Value --output text 2>/dev/null || echo "")
 
@@ -122,6 +125,7 @@ RDA_REQUIRE_API_KEY=true
 # Every request arrives through CloudFront, so the browser origin is the
 # distribution, never the instance.
 SENTINEL_CORS_ORIGINS=$CORS_ORIGINS
+ORIGIN_DOMAIN=$ORIGIN_DOMAIN
 
 # One replica: this box has 4 vCPU and the test environment has no need for
 # three. NGINX resolves the rda DNS name once at startup, so it re-resolves on
@@ -153,11 +157,43 @@ chmod 755 /usr/local/bin/ojuri-write-env
 # ─────────────────────────────────────────────────────────────────────
 # Stack lifecycle
 # ─────────────────────────────────────────────────────────────────────
+# Encrypts the CloudFront-to-origin hop. Runs before the stack because nginx
+# will not start against a certificate path that does not exist yet, and again
+# on every boot so a box that slept through its renewal window catches up.
+cat > /usr/local/bin/ojuri-cert <<'CERTSCRIPT'
+#!/usr/bin/env bash
+set -uo pipefail
+DOMAIN=$(grep '^ORIGIN_DOMAIN=' /opt/ojuri/.env | cut -d= -f2-)
+[ -z "$DOMAIN" ] && exit 0
+
+mkdir -p /var/www/certbot
+if ! command -v certbot >/dev/null 2>&1; then
+  dnf -y install certbot >/dev/null 2>&1 || { echo "certbot install failed"; exit 0; }
+fi
+
+# --webroot rather than --standalone: nginx owns port 80, and taking it down to
+# renew would drop the origin for the duration.
+certbot certonly --webroot -w /var/www/certbot -d "$DOMAIN" \
+  --non-interactive --agree-tos --register-unsafely-without-email \
+  --keep-until-expiring >/dev/null 2>&1
+
+if [ -f "/etc/letsencrypt/live/$DOMAIN/fullchain.pem" ]; then
+  sed "s/__ORIGIN_DOMAIN__/$DOMAIN/g" \
+    /opt/ojuri/deploy/aws/nginx/nginx-tls.conf.template > /opt/ojuri/deploy/aws/nginx/nginx.active.conf
+  echo "cert present for $DOMAIN; serving TLS"
+else
+  cp /opt/ojuri/deploy/aws/nginx/nginx.conf /opt/ojuri/deploy/aws/nginx/nginx.active.conf
+  echo "no cert for $DOMAIN; staying on HTTP"
+fi
+CERTSCRIPT
+chmod 755 /usr/local/bin/ojuri-cert
+
 cat > /usr/local/bin/ojuri-up <<'UPSCRIPT'
 #!/usr/bin/env bash
 set -euo pipefail
 cd /opt/ojuri
 ojuri-write-env
+ojuri-cert
 exec docker compose \
   -f docker-compose.yml \
   -f docker-compose.ghcr.yml \

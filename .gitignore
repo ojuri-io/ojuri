@@ -85,3 +85,6 @@ data/training-uploads/*.csv
 # and a maintainer can reproduce the environment without reconstructing it.
 !deploy/aws/terraform/terraform.tfvars
 crash.log
+
+# Generated at boot by ojuri-cert; TLS or plain depending on certificate state.
+deploy/aws/nginx/nginx.active.conf

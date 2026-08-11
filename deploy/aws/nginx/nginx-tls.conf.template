@@ -1,0 +1,169 @@
+worker_processes auto;
+error_log /var/log/nginx/error.log warn;
+pid /var/run/nginx.pid;
+
+events {
+    worker_connections 4096;
+    use epoll;
+    multi_accept on;
+}
+
+http {
+    include /etc/nginx/mime.types;
+    default_type application/json;
+
+    log_format main '$remote_addr - $remote_user [$time_local] "$request" '
+                    '$status $body_bytes_sent "$http_referer" '
+                    '"$http_user_agent" "$http_x_forwarded_for" '
+                    'rt=$request_time uct="$upstream_connect_time" '
+                    'uht="$upstream_header_time" urt="$upstream_response_time"';
+
+    access_log /var/log/nginx/access.log main;
+
+    sendfile on;
+    tcp_nopush on;
+    tcp_nodelay on;
+    keepalive_timeout 65;
+    keepalive_requests 1000;
+
+    gzip on;
+    gzip_vary on;
+    gzip_proxied any;
+    gzip_comp_level 6;
+    gzip_types application/json application/javascript text/plain text/css;
+
+    # Every request reaches this box from a CloudFront edge, so $binary_remote_addr
+    # is an edge IP shared by all viewers — keying the limit on it would throttle
+    # everyone together the moment one client got busy. X-Forwarded-For carries
+    # the real viewer address, and CloudFront overwrites any value a client tries
+    # to send, so it cannot be spoofed here.
+    limit_req_zone $http_x_forwarded_for zone=api_limit:10m rate=200r/s;
+
+    upstream rda_backend {
+        least_conn;
+        keepalive 32;
+        server rda:3000 max_fails=3 fail_timeout=30s;
+    }
+
+    resolver 127.0.0.11 valid=10s ipv6=off;
+
+    # Port 80 exists only so Let's Encrypt can complete http-01. It serves the
+    # challenge directory and redirects everything else — no application traffic
+    # is answered in the clear.
+    server {
+        listen 80;
+        server_name _;
+
+        location /.well-known/acme-challenge/ {
+            root /var/www/certbot;
+        }
+
+        location / {
+            return 301 https://$host$request_uri;
+        }
+    }
+
+    server {
+        listen 443 ssl;
+        http2 on;
+        server_name __ORIGIN_DOMAIN__;
+
+        ssl_certificate     /etc/letsencrypt/live/__ORIGIN_DOMAIN__/fullchain.pem;
+        ssl_certificate_key /etc/letsencrypt/live/__ORIGIN_DOMAIN__/privkey.pem;
+        ssl_protocols TLSv1.2 TLSv1.3;
+        ssl_prefer_server_ciphers off;
+        ssl_session_cache shared:SSL:10m;
+        ssl_session_timeout 1d;
+
+        client_max_body_size 64m;
+
+        location = /health {
+            proxy_pass http://rda_backend/livez;
+            access_log off;
+        }
+
+        location = /ready {
+            proxy_pass http://rda_backend/readyz;
+            access_log off;
+        }
+
+        location /v1/ {
+            limit_req zone=api_limit burst=100 nodelay;
+            proxy_pass http://rda_backend;
+            proxy_http_version 1.1;
+            proxy_set_header Connection "";
+            proxy_set_header Host $host;
+            proxy_set_header X-Real-IP $remote_addr;
+            proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+            proxy_set_header X-Forwarded-Proto https;
+        }
+
+        # Chunked training uploads stream straight through; buffering them would
+        # hold whole chunks in nginx before RDA ever sees them.
+        location /v1/admin/training/upload {
+            client_max_body_size 8m;
+            proxy_pass http://rda_backend;
+            proxy_http_version 1.1;
+            proxy_set_header Connection "";
+            proxy_set_header Host $host;
+            proxy_set_header X-Real-IP $remote_addr;
+            proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+            proxy_set_header X-Forwarded-Proto https;
+            proxy_request_buffering off;
+            proxy_connect_timeout 5s;
+            proxy_send_timeout 120s;
+            proxy_read_timeout 120s;
+        }
+
+        # Sentinel's "retrain now" and drift-config calls. MLA runs inside
+        # compose on this box, so this points at the service rather than the
+        # host.docker.internal the repo default assumes.
+        # The rewrite is load-bearing. nginx only substitutes the location prefix
+        # when proxy_pass names a literal upstream; with a variable it forwards
+        # the original URI untouched and the trailing slash does nothing, so
+        # /mla/livez arrives at MLA as /mla/livez and 404s.
+        location /mla/ {
+            set $mla_upstream mla;
+            rewrite ^/mla/(.*)$ /$1 break;
+            proxy_pass http://$mla_upstream:9095;
+            proxy_http_version 1.1;
+            proxy_set_header Connection "";
+            proxy_set_header Host $host;
+            proxy_set_header X-Forwarded-Proto https;
+            proxy_read_timeout 120s;
+        }
+
+        location /fia/ {
+            set $fia_upstream fia;
+            rewrite ^/fia/(.*)$ /$1 break;
+            proxy_pass http://$fia_upstream:9094;
+            proxy_http_version 1.1;
+            proxy_set_header Connection "";
+            proxy_set_header Host $host;
+            proxy_set_header X-Forwarded-Proto https;
+            proxy_read_timeout 300s;
+        }
+
+        # Sentinel is the default route. The dashboard is an SPA served at the
+        # root, so anything that is not an API prefix belongs to it.
+        location / {
+            set $sentinel_upstream sentinel;
+            proxy_pass http://$sentinel_upstream:80;
+            proxy_http_version 1.1;
+            proxy_set_header Connection "";
+            proxy_set_header Host $host;
+            proxy_set_header X-Forwarded-Proto https;
+        }
+
+        # Read by the host's idle-stop timer over the Docker bridge, which lands
+        # in 172.16.0.0/12. Never exposed publicly: CloudFront has no behaviour
+        # routing here and the security group admits nothing else.
+        location /nginx_status {
+            stub_status on;
+            allow 127.0.0.1;
+            allow 172.16.0.0/12;
+            deny all;
+            access_log off;
+        }
+    }
+}
