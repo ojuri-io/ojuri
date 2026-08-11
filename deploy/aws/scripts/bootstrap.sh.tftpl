@@ -76,6 +76,9 @@ ADMIN_SEED_PASSWORD=$(get ADMIN_SEED_PASSWORD)
 PUBLIC_ORIGIN=$(aws ssm get-parameter --region "$REGION" --name "$SSM_PREFIX/PUBLIC_ORIGIN" \
   --query Parameter.Value --output text 2>/dev/null || echo "")
 
+DEMO_USER_PASSWORD=$(aws ssm get-parameter --region "$REGION" --name "$SSM_PREFIX/DEMO_USER_PASSWORD" \
+  --query Parameter.Value --output text 2>/dev/null || echo "")
+
 CORS_ORIGINS=$(aws ssm get-parameter --region "$REGION" --name "$SSM_PREFIX/CORS_ORIGINS" \
   --query Parameter.Value --output text 2>/dev/null || echo "$PUBLIC_ORIGIN")
 
@@ -107,6 +110,8 @@ KAFKA_BROKERS=kafka:29092
 AUTH_JWT_SECRET=$JWT_SECRET
 MLA_SERVICE_TOKEN=$MLA_TOKEN
 ADMIN_SEED_PASSWORD=$ADMIN_SEED_PASSWORD
+DEMO_USER_PASSWORD=$DEMO_USER_PASSWORD
+SEED_DEMO_USER=$([ -n "$DEMO_USER_PASSWORD" ] && echo true || echo false)
 GRAFANA_USER=admin
 GRAFANA_PASSWORD=$GRAFANA_PASSWORD
 

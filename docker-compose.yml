@@ -451,6 +451,10 @@ services:
       # once. Supply one when the deployment needs the credential known ahead of
       # time rather than scraped from migration output.
       - ADMIN_SEED_PASSWORD=${ADMIN_SEED_PASSWORD:-}
+      # Seeds a shared, read-mostly `demo` account whose password is meant to be
+      # published. Only ever set this on a throwaway public sandbox.
+      - SEED_DEMO_USER=${SEED_DEMO_USER:-false}
+      - DEMO_USER_PASSWORD=${DEMO_USER_PASSWORD:-}
     # The runtime image ships only dist/ + node_modules — models/ is
     # mounted, exactly as on the RDA replicas. Without it the
     # 00_initial_model_version seed silently skips, leaving the model

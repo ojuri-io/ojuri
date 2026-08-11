@@ -7,6 +7,39 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Optional public-demo account (`SEED_DEMO_USER`, default off)** — seeds a
+  shared `demo` user on a read-mostly `DEMO` role so a throwaway sandbox can be
+  signed into by anyone, without handing out the super-admin credential. The
+  role carries reads plus `api_keys:issue` / `api_keys:revoke`, and
+  deliberately excludes everything that changes decisioning (`rules:update`,
+  `models:set_status`, `models:set_threshold`, `settings:write`,
+  `review_queue:override`) or identity (`users:*`, `roles:*`). Requires
+  `DEMO_USER_PASSWORD` to be set explicitly and refuses to run without it.
+  `mustChangePassword` is false by design: the credential is shared, and
+  forcing a rotation would let the first visitor lock out everyone after them.
+  **Never enable this on a real deployment** — a known-credential account on a
+  self-hosted fraud platform is a vulnerability, which is why it is opt-in
+  rather than seeded-then-disabled.
+- **`extra_cors_origins` for the AWS deployment** — additional browser origins
+  permitted to call the API, for a site hosted somewhere other than the front
+  door. The front door is always included; anything beyond it is a listed,
+  reviewable decision rather than a wildcard.
+
+### Fixed
+
+- **The wake page is no longer served to callers that wanted JSON.**
+  CloudFront's error configuration is distribution-wide, so a sleeping sandbox
+  answered an API call with an HTML page. It now content-negotiates on
+  `Accept`, and carries CORS headers so a cross-origin caller can read the
+  error at all rather than seeing an opaque network failure.
+- **A stopped instance no longer takes 30 seconds to report itself.**
+  CloudFront's default three attempts at ten seconds were spent in full,
+  because a stopped instance swallows connections rather than refusing them.
+  One attempt at three seconds.
+
+
 ## [1.5.0] - 2026-08-11
 
 Ships a one-instance AWS deployment and fixes three defects found while

@@ -95,6 +95,17 @@ variable "nightly_stop_utc" {
   default     = "22:00"
 }
 
+variable "demo_user_password" {
+  description = <<-EOT
+    Password for the shared `demo` account, published on the marketing site so
+    visitors can sign in and watch their own transaction reach the audit log.
+    Empty disables the account entirely. This value is public by design — never
+    reuse one that means anything elsewhere.
+  EOT
+  type        = string
+  default     = ""
+}
+
 variable "extra_cors_origins" {
   description = <<-EOT
     Additional browser origins allowed to call the API. The front door itself is

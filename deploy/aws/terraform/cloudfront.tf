@@ -209,6 +209,15 @@ resource "aws_ssm_parameter" "public_origin" {
   value = local.public_origin
 }
 
+# Deliberately a plain String, not SecureString: this credential is printed on a
+# public web page, and storing it encrypted would imply a confidentiality it
+# does not have.
+resource "aws_ssm_parameter" "demo_user" {
+  name  = "${local.ssm_prefix}/DEMO_USER_PASSWORD"
+  type  = "String"
+  value = var.demo_user_password
+}
+
 # RDA takes a comma-separated allowlist and matches the Origin header exactly.
 # The front door is always present; anything else is opt-in via
 # extra_cors_origins, so cross-site access is a deliberate listed decision.
