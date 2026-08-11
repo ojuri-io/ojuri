@@ -201,6 +201,15 @@ resource "aws_ssm_parameter" "public_origin" {
   value = local.public_origin
 }
 
+# RDA takes a comma-separated allowlist and matches the Origin header exactly.
+# The front door is always present; anything else is opt-in via
+# extra_cors_origins, so cross-site access is a deliberate listed decision.
+resource "aws_ssm_parameter" "cors_origins" {
+  name  = "${local.ssm_prefix}/CORS_ORIGINS"
+  type  = "String"
+  value = join(",", concat([local.public_origin], var.extra_cors_origins))
+}
+
 # Read at every boot alongside PUBLIC_ORIGIN, so flipping the LLM on or off is a
 # variable change and a restart rather than a rebuilt instance — cloud-init runs
 # once, and user-data edits do not reach a box that is already running.
