@@ -12,7 +12,7 @@ ojuri_ref = "main"
 # together, never the LLM flag alone: 16 GB OOMs the host, not the container.
 instance_type = "t3a.xlarge"
 
-# DNS is not in Route53, so route53_zone_id stays empty and the domain is
-# attached on a second apply. Flip dns_records_created to true once the two
-# records from `terraform output dns_records_to_create` resolve.
-dns_records_created = false
+# DNS is not in Route53, so route53_zone_id stays empty and the domain attaches
+# on a second apply. Both records now resolve and ACM reports the certificate
+# ISSUED, so CloudFront can take the alias.
+dns_records_created = true
