@@ -1,0 +1,135 @@
+# =============================================================================
+# Ojuri EC2 test-environment overlay
+# =============================================================================
+# Layered on top of docker-compose.yml and docker-compose.ghcr.yml. The instance
+# applies all three from /opt/ojuri via `ojuri-up`:
+#
+#   docker compose -f docker-compose.yml \
+#                  -f docker-compose.ghcr.yml \
+#                  -f deploy/aws/compose/docker-compose.ec2.yml \
+#                  --profile mla --profile fia --profile sentinel up -d
+#
+# Three things this overlay changes, all of which matter on a 4 vCPU / 16 GB box
+# reachable from the public internet:
+#
+#   1. Every port except nginx's 80 binds to 127.0.0.1. The security group
+#      already admits nothing but CloudFront, so this is the second lock: a
+#      security-group edit made in a hurry cannot expose Postgres, Kafka, Redis
+#      or Grafana to the internet, because they are not listening on a routable
+#      address in the first place.
+#   2. Real memory limits. The base file expresses most caps under
+#      `deploy.resources`, which docker compose honours only in Swarm mode, so
+#      on a plain `up` they are advisory text. `mem_limit` is the one that bites.
+#   3. Log rotation. An unbounded json-file driver fills a 60 GB root volume and
+#      takes Postgres down with it.
+# =============================================================================
+
+x-logging: &logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "3"
+
+services:
+  nginx:
+    volumes:
+      - ./deploy/aws/nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+    depends_on:
+      - rda
+      - sentinel
+    mem_limit: 192m
+    logging: *logging
+
+  sentinel:
+    ports: !override
+      - "127.0.0.1:8080:80"
+    mem_limit: 128m
+    logging: *logging
+
+  # The three services below carry a `deploy.resources` block in the base file.
+  # Compose refuses to start when `mem_limit` and `deploy.resources.limits.memory`
+  # disagree, so both have to be restated at the same value.
+  rda:
+    mem_limit: 2g
+    deploy:
+      resources:
+        limits:
+          memory: 2G
+    logging: *logging
+
+  paa-1:
+    ports: !override
+      - "127.0.0.1:9091:9090"
+    mem_limit: 2560m
+    deploy:
+      resources:
+        limits:
+          cpus: "2"
+          memory: 2560M
+    logging: *logging
+
+  # FIA_MEM_LIMIT and FIA_DISABLE_LLM both come from .env, written at boot from
+  # the fia_llm_enabled and fia_mem_limit variables. The default keeps Phi-3
+  # unloaded and the container small; raising the limit without also moving to a
+  # 32 GB instance will OOM the host, not just this container.
+  fia:
+    ports: !override
+      - "127.0.0.1:9094:9094"
+    mem_limit: ${FIA_MEM_LIMIT:-1536m}
+    mem_reservation: 256m
+    deploy:
+      resources:
+        limits:
+          memory: ${FIA_MEM_LIMIT:-1536m}
+        reservations:
+          memory: 256M
+    logging: *logging
+
+  # Built rather than pulled, purely to layer the onnxruntime fix onto the last
+  # published image. Revert to the plain GHCR image once a release carries it.
+  mla:
+    build:
+      context: .
+      dockerfile: deploy/aws/compose/mla-onnxruntime-patch.Dockerfile
+      args:
+        OJURI_VERSION: ${OJURI_VERSION:-v1}
+    image: ojuri-mla-patched:${OJURI_VERSION:-v1}
+    ports: !override
+      - "127.0.0.1:9095:9095"
+    mem_limit: 2560m
+    logging: *logging
+
+  redis:
+    ports: !override
+      - "127.0.0.1:6380:6379"
+    mem_limit: 512m
+    logging: *logging
+
+  kafka:
+    ports: !override
+      - "127.0.0.1:9092:9092"
+      - "127.0.0.1:29092:29092"
+    mem_limit: 1280m
+    logging: *logging
+
+  zookeeper:
+    mem_limit: 512m
+    logging: *logging
+
+  postgres:
+    ports: !override
+      - "127.0.0.1:5433:5432"
+    mem_limit: 1g
+    logging: *logging
+
+  prometheus:
+    ports: !override
+      - "127.0.0.1:9090:9090"
+    mem_limit: 512m
+    logging: *logging
+
+  grafana:
+    ports: !override
+      - "127.0.0.1:3001:3000"
+    mem_limit: 256m
+    logging: *logging

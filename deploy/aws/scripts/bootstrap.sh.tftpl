@@ -1,0 +1,287 @@
+#!/usr/bin/env bash
+# Cloud-init user-data. Runs once, on first boot. Everything that must happen on
+# every boot lives in ojuri.service instead.
+set -euo pipefail
+
+exec > >(tee /var/log/ojuri-bootstrap.log) 2>&1
+
+REGION="${region}"
+SSM_PREFIX="${ssm_prefix}"
+OJURI_REF="${ojuri_ref}"
+OJURI_VERSION="${ojuri_version}"
+IDLE_STOP_MINUTES="${idle_stop_minutes}"
+NIGHTLY_STOP_UTC="${nightly_stop_utc}"
+APP_DIR=/opt/ojuri
+
+echo "[bootstrap] waiting for network"
+for _ in $(seq 1 30); do
+  curl -fsS --max-time 5 https://api.ecr.us-east-1.amazonaws.com >/dev/null 2>&1 && break
+  sleep 5
+done
+
+echo "[bootstrap] installing packages"
+dnf -y update
+dnf -y install docker git jq
+
+# AL2023 ships the v2 CLI, but the minimal variants do not. Install it only if
+# it is genuinely absent so this survives an AMI swap.
+if ! command -v aws >/dev/null 2>&1; then
+  curl -fsSL "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o /tmp/awscliv2.zip
+  dnf -y install unzip
+  unzip -q /tmp/awscliv2.zip -d /tmp
+  /tmp/aws/install
+fi
+
+# AL2023 has no docker-compose-plugin package; fetch the v2 plugin binary into
+# the CLI plugin directory so `docker compose` works as a subcommand.
+COMPOSE_VERSION=v2.29.7
+install -d /usr/local/lib/docker/cli-plugins
+curl -fsSL \
+  "https://github.com/docker/compose/releases/download/$COMPOSE_VERSION/docker-compose-linux-x86_64" \
+  -o /usr/local/lib/docker/cli-plugins/docker-compose
+chmod +x /usr/local/lib/docker/cli-plugins/docker-compose
+
+systemctl enable --now docker
+
+echo "[bootstrap] cloning ojuri@$OJURI_REF"
+git clone --depth 1 --branch "$OJURI_REF" https://github.com/ojuri-io/ojuri.git "$APP_DIR"
+
+# ─────────────────────────────────────────────────────────────────────
+# Env assembly. Runs on every boot so a rotated secret or a rebuilt
+# CloudFront distribution is picked up without touching the instance.
+# ─────────────────────────────────────────────────────────────────────
+cat > /usr/local/bin/ojuri-write-env <<'ENVSCRIPT'
+#!/usr/bin/env bash
+set -euo pipefail
+
+REGION="__REGION__"
+SSM_PREFIX="__SSM_PREFIX__"
+OJURI_VERSION="__OJURI_VERSION__"
+APP_DIR=/opt/ojuri
+
+get() {
+  aws ssm get-parameter --region "$REGION" --name "$SSM_PREFIX/$1" \
+    --with-decryption --query Parameter.Value --output text
+}
+
+JWT_SECRET=$(get AUTH_JWT_SECRET)
+MLA_TOKEN=$(get MLA_SERVICE_TOKEN)
+PG_PASSWORD=$(get POSTGRES_PASSWORD)
+GRAFANA_PASSWORD=$(get GRAFANA_PASSWORD)
+ADMIN_SEED_PASSWORD=$(get ADMIN_SEED_PASSWORD)
+
+# Written by Terraform after CloudFront exists. On the very first boot the
+# distribution may still be deploying, so an empty value is tolerated and the
+# next boot fills it in.
+PUBLIC_ORIGIN=$(aws ssm get-parameter --region "$REGION" --name "$SSM_PREFIX/PUBLIC_ORIGIN" \
+  --query Parameter.Value --output text 2>/dev/null || echo "")
+
+FIA_RUNTIME=$(aws ssm get-parameter --region "$REGION" --name "$SSM_PREFIX/FIA_RUNTIME" \
+  --query Parameter.Value --output text 2>/dev/null || echo '{}')
+FIA_DISABLE_LLM=$(echo "$FIA_RUNTIME" | jq -r '.disable_llm // "true"')
+FIA_MEM_LIMIT=$(echo "$FIA_RUNTIME" | jq -r '.mem_limit // "1536m"')
+
+umask 077
+cat > "$APP_DIR/.env" <<EOF
+OJURI_VERSION=$OJURI_VERSION
+NODE_ENV=production
+LOG_LEVEL=info
+
+DB_HOST=postgres
+DB_PORT=5432
+DB_DATABASE=fraud_db
+DB_USERNAME=postgres
+DB_PASSWORD=$PG_PASSWORD
+POSTGRES_USER=postgres
+POSTGRES_PASSWORD=$PG_PASSWORD
+POSTGRES_DB=fraud_db
+
+REDIS_HOST=redis
+REDIS_PORT=6379
+
+KAFKA_BROKERS=kafka:29092
+
+AUTH_JWT_SECRET=$JWT_SECRET
+MLA_SERVICE_TOKEN=$MLA_TOKEN
+ADMIN_SEED_PASSWORD=$ADMIN_SEED_PASSWORD
+GRAFANA_USER=admin
+GRAFANA_PASSWORD=$GRAFANA_PASSWORD
+
+# Predict requires an API key. Leaving it open would put an unauthenticated
+# scoring endpoint on the public internet.
+RDA_REQUIRE_API_KEY=true
+
+# Every request arrives through CloudFront, so the browser origin is the
+# distribution, never the instance.
+SENTINEL_CORS_ORIGINS=$PUBLIC_ORIGIN
+
+# One replica: this box has 4 vCPU and the test environment has no need for
+# three. NGINX resolves the rda DNS name once at startup, so it re-resolves on
+# every boot along with everything else.
+RDA_REPLICAS=1
+
+# Driven by the fia_llm_enabled variable via SSM. bfloat16 halves the resident
+# footprint against the fp32 the code picks by default on CPU, which is the
+# difference between fitting in 32 GB and not.
+FIA_DISABLE_LLM=$FIA_DISABLE_LLM
+FIA_MEM_LIMIT=$FIA_MEM_LIMIT
+FIA_LLM_DTYPE=bfloat16
+FIA_OMP_NUM_THREADS=6
+
+# MLA runs inside compose here, so the RDA health fan-out must probe the
+# container rather than host.docker.internal.
+MLA_HEALTH_URL=http://mla:9095
+EOF
+chmod 600 "$APP_DIR/.env"
+ENVSCRIPT
+
+sed -i \
+  -e "s|__REGION__|$REGION|" \
+  -e "s|__SSM_PREFIX__|$SSM_PREFIX|" \
+  -e "s|__OJURI_VERSION__|$OJURI_VERSION|" \
+  /usr/local/bin/ojuri-write-env
+chmod 755 /usr/local/bin/ojuri-write-env
+
+# ─────────────────────────────────────────────────────────────────────
+# Stack lifecycle
+# ─────────────────────────────────────────────────────────────────────
+cat > /usr/local/bin/ojuri-up <<'UPSCRIPT'
+#!/usr/bin/env bash
+set -euo pipefail
+cd /opt/ojuri
+ojuri-write-env
+exec docker compose \
+  -f docker-compose.yml \
+  -f docker-compose.ghcr.yml \
+  -f deploy/aws/compose/docker-compose.ec2.yml \
+  --profile mla --profile fia --profile sentinel \
+  up -d --remove-orphans
+UPSCRIPT
+chmod 755 /usr/local/bin/ojuri-up
+
+cat > /etc/systemd/system/ojuri.service <<'UNIT'
+[Unit]
+Description=Ojuri stack
+After=docker.service network-online.target
+Requires=docker.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+TimeoutStartSec=900
+ExecStart=/usr/local/bin/ojuri-up
+
+[Install]
+WantedBy=multi-user.target
+UNIT
+
+# ─────────────────────────────────────────────────────────────────────
+# Auto-stop. `shutdown -h now` stops rather than terminates the instance
+# because instance_initiated_shutdown_behavior is set to "stop", which is
+# also why neither timer needs any AWS permission.
+# ─────────────────────────────────────────────────────────────────────
+cat > /usr/local/bin/ojuri-idle-check <<'IDLESCRIPT'
+#!/usr/bin/env bash
+set -euo pipefail
+
+IDLE_MINUTES=__IDLE_MINUTES__
+STATE=/var/lib/ojuri/idle-state
+mkdir -p "$(dirname "$STATE")"
+
+total=$(curl -fsS --max-time 5 http://127.0.0.1/nginx_status 2>/dev/null | awk 'NR==3 {print $3}') || exit 0
+[ -n "$total" ] || exit 0
+
+now=$(date +%s)
+if [ -f "$STATE" ]; then
+  read -r last_total last_active < "$STATE"
+else
+  last_total=-1
+  last_active=$now
+fi
+
+# This probe is itself a request through nginx, so the counter advances by one
+# on every sample even when nobody is using the box. A delta of 1 or less is
+# therefore what "no traffic" looks like, not a delta of 0.
+if [ "$last_total" -lt 0 ] || [ $((total - last_total)) -gt 1 ]; then
+  last_active=$now
+fi
+
+echo "$total $last_active" > "$STATE"
+
+if [ $(( (now - last_active) / 60 )) -ge "$IDLE_MINUTES" ]; then
+  logger -t ojuri-idle "idle for $IDLE_MINUTES min, stopping instance"
+  systemctl poweroff
+fi
+IDLESCRIPT
+
+sed -i "s|__IDLE_MINUTES__|$IDLE_STOP_MINUTES|" /usr/local/bin/ojuri-idle-check
+chmod 755 /usr/local/bin/ojuri-idle-check
+
+if [ "$IDLE_STOP_MINUTES" -gt 0 ]; then
+  cat > /etc/systemd/system/ojuri-idle-stop.service <<'UNIT'
+[Unit]
+Description=Stop the instance after a period with no traffic
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/ojuri-idle-check
+UNIT
+
+  cat > /etc/systemd/system/ojuri-idle-stop.timer <<'UNIT'
+[Unit]
+Description=Idle check every 5 minutes
+
+[Timer]
+OnBootSec=15min
+OnUnitActiveSec=5min
+
+[Install]
+WantedBy=timers.target
+UNIT
+fi
+
+if [ -n "$NIGHTLY_STOP_UTC" ]; then
+  cat > /etc/systemd/system/ojuri-nightly-stop.service <<'UNIT'
+[Unit]
+Description=Unconditional nightly stop
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/systemctl poweroff
+UNIT
+
+  cat > /etc/systemd/system/ojuri-nightly-stop.timer <<UNIT
+[Unit]
+Description=Nightly stop backstop
+
+[Timer]
+OnCalendar=*-*-* $NIGHTLY_STOP_UTC:00
+Persistent=false
+
+[Install]
+WantedBy=timers.target
+UNIT
+fi
+
+timedatectl set-timezone UTC
+
+# Unattended security patching. A box that sleeps for weeks wakes up behind on
+# CVEs; dnf-automatic closes that window without anyone logging in.
+dnf -y install dnf-automatic
+sed -i 's/^upgrade_type.*/upgrade_type = security/' /etc/dnf/automatic.conf
+sed -i 's/^apply_updates.*/apply_updates = yes/' /etc/dnf/automatic.conf
+systemctl enable --now dnf-automatic.timer
+
+systemctl daemon-reload
+systemctl enable --now ojuri.service
+
+if [ "$IDLE_STOP_MINUTES" -gt 0 ]; then
+  systemctl enable --now ojuri-idle-stop.timer
+fi
+
+if [ -n "$NIGHTLY_STOP_UTC" ]; then
+  systemctl enable --now ojuri-nightly-stop.timer
+fi
+
+echo "[bootstrap] done"

@@ -40,3 +40,7 @@ services:
   mla:
     build: !reset null
     image: ghcr.io/ojuri-io/mla:${OJURI_VERSION:-v1}
+
+  sentinel:
+    build: !reset null
+    image: ghcr.io/ojuri-io/sentinel:${OJURI_VERSION:-v1}

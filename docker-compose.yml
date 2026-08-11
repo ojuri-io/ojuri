@@ -22,6 +22,30 @@ services:
       retries: 3
 
   # ============================================
+  # Sentinel (operator dashboard)
+  # ============================================
+  # Static SPA behind its own nginx. Gated behind a profile so a plain
+  # `docker compose up` is unchanged: the repo's default `nginx.conf`
+  # routes `/` to RDA, and adopters fronting Sentinel with their own
+  # ingress do not want a second copy of it running here. Opt in with
+  # `--profile sentinel`, and pair it with a config that routes `/` to
+  # this service — see `deploy/aws/nginx/nginx.conf` for a worked one.
+  sentinel:
+    profiles: ["sentinel"]
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    networks:
+      - ojuri-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost/"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+  # ============================================
   # RDA Service Replicas (Real-Time Detection Agent)
   # ============================================
   # Scale with RDA_REPLICAS (default 3). NGINX resolves the `rda` DNS
@@ -65,6 +89,9 @@ services:
       - AUTH_JWT_SECRET=${AUTH_JWT_SECRET}
       - AUTH_JWT_TTL_SECONDS=${AUTH_JWT_TTL_SECONDS:-28800}
       - RDA_REQUIRE_API_KEY=${RDA_REQUIRE_API_KEY:-false}
+      # Without this the boot-time production guard sees no allowed origin and
+      # refuses to start, so NODE_ENV=production was unrunnable from this file.
+      - SENTINEL_CORS_ORIGINS=${SENTINEL_CORS_ORIGINS:-}
       - MLA_SERVICE_TOKEN=${MLA_SERVICE_TOKEN:-}
       - DB_HOST=postgres
       - DB_PORT=5432
@@ -420,6 +447,10 @@ services:
       # demo props that dominate real traffic). Set true for the demo
       # dataset walkthrough. See docs/RULES.md.
       - SEED_DEMO_RULES_ACTIVE=${SEED_DEMO_RULES_ACTIVE:-false}
+      # Unset means the seed migration generates a random password and prints it
+      # once. Supply one when the deployment needs the credential known ahead of
+      # time rather than scraped from migration output.
+      - ADMIN_SEED_PASSWORD=${ADMIN_SEED_PASSWORD:-}
     # The runtime image ships only dist/ + node_modules — models/ is
     # mounted, exactly as on the RDA replicas. Without it the
     # 00_initial_model_version seed silently skips, leaving the model

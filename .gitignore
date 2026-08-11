@@ -71,3 +71,17 @@ Thumbs.db
 reports/
 data/training-uploads/chunks/
 data/training-uploads/*.csv
+
+# Terraform (deploy/aws). State files hold every generated secret in plaintext —
+# they must never be committed. The provider lock file is intentionally tracked.
+**/.terraform/
+**/.terraform-build/
+*.tfstate
+*.tfstate.*
+*.tfvars
+!*.tfvars.example
+# The sandbox config is hostname + flags with no secrets in it — every
+# credential this deployment uses is generated into SSM — so it is tracked,
+# and a maintainer can reproduce the environment without reconstructing it.
+!deploy/aws/terraform/terraform.tfvars
+crash.log

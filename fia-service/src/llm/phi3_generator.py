@@ -101,10 +101,7 @@ class Phi3ReportGenerator:
                 self._model_id, trust_remote_code=trust_remote
             )
 
-            # Phi-3 ships flash-attention kernels that only run on CUDA. MPS
-            # and CPU need attn_implementation="eager" or model loading errors
-            # with "FlashAttention2 has been toggled on, but it cannot be used".
-            attn_impl = "flash_attention_2" if device == "cuda" else "eager"
+            attn_impl = self._resolve_attn_impl(device)
             model = AutoModelForCausalLM.from_pretrained(
                 self._model_id,
                 torch_dtype=dtype,
@@ -132,6 +129,21 @@ class Phi3ReportGenerator:
                 self._fallback_only = True
             else:
                 raise
+
+    # Phi-3's flash-attention kernels only run on CUDA, and only when flash_attn
+    # is importable. Requesting them without the package raises inside
+    # transformers, which the caller's fallback turns into rule-based reports —
+    # so an unsatisfiable request here costs GPU money and silently returns the
+    # output the GPU was meant to replace.
+    def _resolve_attn_impl(self, device: str) -> str:
+        if device != "cuda":
+            return "eager"
+        try:
+            import flash_attn  # noqa: F401
+        except ImportError:
+            logger.info("flash_attn not installed; using eager attention on CUDA")
+            return "eager"
+        return "flash_attention_2"
 
     def _resolve_device(self, torch) -> str:
         configured = (self._config.LLM_DEVICE or "auto").lower()
