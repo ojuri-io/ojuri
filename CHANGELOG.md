@@ -7,6 +7,79 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.5.0] - 2026-08-11
+
+Ships a one-instance AWS deployment and fixes three defects found while
+standing it up — two of which made services unrunnable rather than
+merely awkward. The MLA and FIA fixes change the published images, so
+adopters on the floating `:v1` tag receive them automatically.
+
+### Added
+
+- **AWS test environment (`deploy/aws/`)** — Terraform for a single EC2
+  instance running the whole stack behind CloudFront with AWS-managed
+  TLS, plus a runbook aimed at operators who are not DevOps engineers.
+  Ingress is limited to CloudFront's origin-facing prefix list, shell
+  access is SSM Session Manager (no port 22, no key pair), data stores
+  bind to loopback, IMDSv2 is required with a hop limit of 1 so no
+  container can reach the instance role, and every secret is generated
+  into SSM Parameter Store rather than living in the repo. The instance
+  stops itself when idle and can be woken from a public button, which
+  keeps a continuously-available environment at roughly a third of the
+  cost of leaving it running.
+- **`sentinel` service in `docker-compose.yml`**, behind a `sentinel`
+  profile. The image was already published but had no compose service
+  and no ingress route, so the dashboard could not be served from the
+  shipped stack. A plain `docker compose up` is unchanged.
+- **`ADMIN_SEED_PASSWORD` passed through to `db-migrate`**, so the seed
+  migration's existing support for a supplied password can actually be
+  used. Unset still generates a random one and prints it once.
+
+### Fixed
+
+- **RDA could not boot with `NODE_ENV=production` from the shipped
+  compose file** ([#121](https://github.com/ojuri-io/ojuri/issues/121)).
+  `SENTINEL_CORS_ORIGINS` was never passed into the container, and the
+  production guard treats its absence as fatal — so the default
+  configuration crash-looped on *"Refusing to boot with unsafe
+  defaults"*. Setting it in `.env` did not help: `.env` populates
+  Compose's interpolation scope, and a variable only reaches a container
+  if the service's `environment:` block names it.
+- **MLA crash-looped on modern kernels**
+  ([#122](https://github.com/ojuri-io/ojuri/issues/122)).
+  `onnxruntime==1.16.3` ships a native extension marked as requiring an
+  executable stack, which current loaders refuse — the import failed
+  before the service started. Now `1.19.2`. The runtime is independent
+  of the `onnx` / `onnxmltools` / `onnxconverter-common` pins that exist
+  for XGBoost conversion; those are unchanged and
+  `tests/test_onnx_conversion.py` passes against the new runtime.
+- **FIA chat answers bled into invented follow-up turns.** The follow-up
+  prompt was a plain `USER:/ASSISTANT:` transcript rather than Phi-3's chat
+  template, so the model never emitted `<|end|>` — and `<|end|>` was not in the
+  stop set anyway, since the tokenizer's configured `eos_token` is
+  `<|endoftext|>`. The model finished its answer, was not stopped, and spent
+  the remaining `max_new_tokens` writing `QUESTION:`/`ANSWER:` pairs the user
+  never asked, all returned and persisted as the assistant turn. Measured on a
+  live deployment: same question, same report, 248,237 ms with four invented
+  turns before, 66,960 ms and a clean answer after. Report generation shares
+  the stop-token fix; it never showed the artefact because the parser keeps the
+  first JSON object and discards what trails it.
+- **`/fia/` and `/mla/` were never stripped before proxying**
+  ([#123](https://github.com/ojuri-io/ojuri/issues/123)), so Sentinel's
+  investigation reports and retrain controls 404'd against the shipped stack.
+  nginx substitutes the location prefix only when `proxy_pass` names a literal
+  upstream; both routes use a variable so the resolver is consulted per
+  request, and in that form the trailing slash is inert.
+- **FIA silently degraded to rule-based reports on any CUDA host.**
+  `phi3_generator` requested `attn_implementation="flash_attention_2"`
+  whenever CUDA was present, but `flash-attn` is not a dependency.
+  transformers raised, the fallback caught it, and the only outward sign
+  was `llmModelVersion` ending in `-fallback` — on a GPU rented
+  specifically to avoid that. It now falls back to `eager` when
+  `flash_attn` is unavailable. The bug was invisible because every
+  measured run had been on Apple Silicon MPS, which takes the `eager`
+  branch.
+
 ## [1.4.0] - 2026-08-09
 
 This release remediates a full line-by-line architecture review — 45
