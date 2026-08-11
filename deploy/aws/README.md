@@ -271,31 +271,45 @@ consumer, the per-partition offset commits, the idempotency guard and the HTTP
 API all run exactly as they do in production. What you do not get is Phi-3's
 narrative text.
 
-Phi-3-mini needs ~15 GB resident in fp32 on CPU, which does not fit alongside
-the rest of the stack on a 16 GB instance. To test it for real, move to a GPU
-instance for the session:
+### Turning it on
 
-```bash
-make down
-# set instance_type = "g4dn.2xlarge" in terraform.tfvars
-make deploy
-make up
+The model does not fit on the default instance, so the instance type and the
+LLM switch move together — three variables, never the flag alone:
+
+```hcl
+instance_type   = "m7i.2xlarge"   # 8 vCPU / 32 GB
+fia_llm_enabled = true
+fia_mem_limit   = "20g"
 ```
 
-Then set `FIA_DISABLE_LLM=false` and restart FIA. Both instance families are
-Nitro, so the same disk boots on either — no rebuild, no data migration. Switch
-back the same way when you are done; a GPU instance is roughly $0.75/hour.
+Then `make deploy` and restart the stack. First boot downloads ~7.2 GB of
+weights into the `fia-hf-cache` volume, where they survive later restarts.
 
-**Two things to fix before you do this.** The GPU path does not work as shipped:
+**Verified on exactly that configuration:** 7.58 GB resident, ~135 s per report,
+`llmModelVersion` reporting `microsoft/Phi-3-mini-4k-instruct` with no
+`-fallback` suffix. The bootstrap sets `FIA_LLM_DTYPE=bfloat16` deliberately —
+the code defaults to fp32 on CPU, which needs ~15 GB and would not fit.
 
-1. `fia-service/src/llm/phi3_generator.py` requests
-   `attn_implementation="flash_attention_2"` whenever CUDA is present, but
-   `flash-attn` is not in `fia-service/requirements.txt`. The load raises,
-   `FIA_FALLBACK_ON_LLM_FAILURE` catches it, and FIA quietly serves rule-based
-   reports — the exact thing the GPU was rented to avoid. Check `llm_model` on
-   `/fia/stats`: a value ending in `-fallback` means this happened.
-2. The `fia` service has no GPU passthrough in `docker-compose.yml`, and the
-   host needs `nvidia-container-toolkit`.
+Change all three back when you are done. **`instance_type` survives a stop**, so
+a box left resized wakes up resized — and the wake button would restart the
+larger, more expensive instance for whoever pressed it.
+
+### If you use a GPU instead
+
+`g4dn.2xlarge` brings reports down to roughly 10–20 s for about $0.75/hour. Two
+things still need doing that the CPU path does not:
+
+1. The `fia` service has no GPU passthrough in `docker-compose.yml`, and the
+   host needs `nvidia-container-toolkit`. Amazon Linux 2023 driver setup is
+   fiddly; budget time for it.
+2. Leave `FIA_LLM_DTYPE` unset on a T4. It is a Turing card with no usable
+   bf16 support, and the code's `auto` path correctly picks fp16 there.
+
+The `flash_attention_2` trap is fixed — `phi3_generator` now falls back to
+`eager` when `flash_attn` is not installed, rather than raising and silently
+degrading to rule-based reports on a GPU you are paying for. `llm_model` on
+`/fia/stats` remains the check: a `-fallback` suffix means the model never
+loaded.
 
 ---
 
