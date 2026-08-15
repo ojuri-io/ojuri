@@ -223,6 +223,7 @@ function Login({ onSuccess }) {
                   href={demoAccount.credentialsUrl}
                   target="_blank"
                   rel="noopener noreferrer"
+                  style={{ color: 'inherit', fontWeight: 'inherit', textDecoration: 'underline' }}
                 >
                   alongside the sandbox link
                 </a>
