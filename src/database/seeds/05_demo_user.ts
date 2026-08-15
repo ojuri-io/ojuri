@@ -1,6 +1,11 @@
 import { Knex } from "knex";
 import bcrypt from "bcrypt";
 import { DB_TABLES } from "../../shared/enums/db-tables.enum";
+import {
+  DEMO_PERMISSIONS,
+  DEMO_ROLE_NAME,
+  DEMO_USERNAME,
+} from "../../shared/authz/demo-account";
 
 /**
  * Public-demo identity for a throwaway sandbox — a shared account whose
@@ -12,36 +17,14 @@ import { DB_TABLES } from "../../shared/enums/db-tables.enum";
  * vulnerability, not a convenience, which is why this is opt-in rather than
  * seeded-then-disabled.
  *
- * The role is read-mostly by construction. It deliberately excludes everything
- * that changes how decisions are made — rules:update, models:set_status,
- * models:set_threshold, settings:write, review_queue:override — and everything
- * that touches identity: users:*, roles:*. A visitor can observe the system and
- * call the API. They cannot alter what the next visitor sees.
+ * The role is read-mostly by construction — see `demo-account.ts`, which also
+ * carries the username the sign-in route reports back to the dashboard.
  *
  * Idempotent on username and role name; re-running does not duplicate rows and
  * does not reset a password an operator has changed.
  */
 
-const DEMO_ROLE = "DEMO";
-const DEMO_USERNAME = "demo";
 const BCRYPT_ROUNDS = 12;
-
-const DEMO_PERMISSIONS = [
-  "audit:read",
-  "metrics:read",
-  "review_queue:read",
-  "reports:read",
-  "reports:request",
-  "reports:message",
-  "rules:read",
-  "models:read",
-  "training:read",
-  "saved_reports:read",
-  "settings:read",
-  "api_keys:read",
-  "api_keys:issue",
-  "api_keys:revoke",
-];
 
 export async function seed(knex: Knex): Promise<void> {
   if ((process.env.SEED_DEMO_USER ?? "").toLowerCase() !== "true") return;
@@ -56,13 +39,13 @@ export async function seed(knex: Knex): Promise<void> {
 
   const now = new Date();
 
-  const existingRole = await knex(DB_TABLES.ROLES).where({ name: DEMO_ROLE }).first();
+  const existingRole = await knex(DB_TABLES.ROLES).where({ name: DEMO_ROLE_NAME }).first();
   const roleId = existingRole
     ? existingRole.id
     : (
         await knex(DB_TABLES.ROLES)
           .insert({
-            name: DEMO_ROLE,
+            name: DEMO_ROLE_NAME,
             description: "Read-mostly public demo access. Cannot alter decisioning or identity.",
             permissions: DEMO_PERMISSIONS,
             isSystem: false,
@@ -107,7 +90,7 @@ export async function seed(knex: Knex): Promise<void> {
   });
 
   /* eslint-disable no-console */
-  console.log(`\n  Demo user seeded: ${DEMO_USERNAME} (role ${DEMO_ROLE})`);
+  console.log(`\n  Demo user seeded: ${DEMO_USERNAME} (role ${DEMO_ROLE_NAME})`);
   console.log("  Shared, read-mostly, and intended to be public.\n");
   /* eslint-enable no-console */
 }

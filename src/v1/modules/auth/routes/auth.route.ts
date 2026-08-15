@@ -26,6 +26,22 @@ const authRoute: FastifyPluginAsync = async (fastify) => {
     handler: authController.login,
   });
 
+  // Unauthenticated by necessity — the sign-in page reads it before anyone has
+  // a token. It answers one question: is there a public demo account on this
+  // deployment. On a self-hosted install the answer is always null.
+  fastify.route({
+    method: "GET",
+    url: "/auth/sign-in-options",
+    preHandler: [
+      ipRateLimit({
+        envKey: "AUTH_SIGN_IN_OPTIONS_RATE_LIMIT_PER_MINUTE",
+        ratePerMinute: 60,
+        routeLabel: "auth.sign-in-options",
+      }),
+    ],
+    handler: authController.signInOptions,
+  });
+
   fastify.route({
     method: "POST",
     url: "/auth/logout",

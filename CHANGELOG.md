@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **The sign-in page adapts to a public sandbox.** New unauthenticated
+  `GET /v1/auth/sign-in-options` reports whether this deployment seeded the
+  shared `demo` account. Where it did, the form prefills `demo` and explains
+  that the account is shared and its password published; everywhere else the
+  page is unchanged, keeping the `admin` prefill and the first-run
+  `npm run db:migrate` instructions. The answer comes from the `users` table
+  rather than from `SEED_DEMO_USER`, so a migration that ran before the
+  variable was set cannot point visitors at an account that does not exist.
+  The password is never returned. Optional `DEMO_CREDENTIALS_URL` adds a link
+  to wherever it is published.
+
 ## [1.5.1] - 2026-08-11
 
 Bug fixes only. No API surface changes an integrator relies on, no migrations,

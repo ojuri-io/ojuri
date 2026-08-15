@@ -80,6 +80,14 @@ export const login = ({ username, password, tenantId }) =>
     body: JSON.stringify({ username, password, tenantId }),
   }).then(unwrap);
 
+// Whether this deployment publishes a shared demo account. Null on every
+// self-hosted install, so the sign-in page falls back to first-run guidance.
+export const signInOptions = () =>
+  safe(
+    () => fetch('/v1/auth/sign-in-options').then(unwrap),
+    () => ({ demoAccount: null })
+  );
+
 export const logout = () =>
   fetch('/v1/auth/logout', { method: 'POST', headers: adminHeaders({ body: false }) }).then(unwrap);
 
