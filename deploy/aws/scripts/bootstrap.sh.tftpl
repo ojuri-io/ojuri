@@ -162,14 +162,76 @@ cat > /usr/local/bin/ojuri-up <<'UPSCRIPT'
 set -euo pipefail
 cd /opt/ojuri
 ojuri-write-env
-exec docker compose \
-  -f docker-compose.yml \
-  -f docker-compose.ghcr.yml \
-  -f deploy/aws/compose/docker-compose.ec2.yml \
-  --profile mla --profile fia --profile sentinel \
-  up -d --remove-orphans
+
+COMPOSE=(docker compose
+  -f docker-compose.yml
+  -f docker-compose.ghcr.yml
+  -f deploy/aws/compose/docker-compose.ec2.yml
+  --profile mla --profile fia --profile sentinel)
+
+"$${COMPOSE[@]}" up -d --remove-orphans
+
+# Never fatal: a stale edge cache is a nuisance, a stack that refuses to start
+# because CloudFront was unreachable is an outage.
+ojuri-invalidate-cdn "$("$${COMPOSE[@]}" ps -q sentinel | head -1)" || true
 UPSCRIPT
 chmod 755 /usr/local/bin/ojuri-up
+
+# Sentinel is a hashed-bundle SPA behind CloudFront. A new image writes a new
+# index.html pointing at a new bundle, but the edge keeps serving the old
+# index.html until its TTL lapses — so visitors load the previous bundle while
+# every check an operator runs looks correct. Worse, `curl -H 'Cache-Control:
+# no-cache'` forces a revalidation and returns the new page, so the obvious
+# verification says the deploy worked while browsers still see the old one.
+#
+# Keyed on the image the sentinel container is actually running, not on the
+# tag: `:v1` floats, so the tag is identical across releases while the image
+# beneath it is not. A boot that changed nothing therefore costs no
+# invalidation, which matters because the wake button can boot this box many
+# times a day and invalidation paths are metered.
+cat > /usr/local/bin/ojuri-invalidate-cdn <<'CDNSCRIPT'
+#!/usr/bin/env bash
+set -euo pipefail
+
+REGION="__REGION__"
+SSM_PREFIX="__SSM_PREFIX__"
+MARKER=/var/lib/ojuri/sentinel-image
+
+CID="$${1:-}"
+if [ -z "$CID" ]; then
+  echo "[cdn] sentinel container not found; skipping invalidation"
+  exit 0
+fi
+
+DIST=$(aws ssm get-parameter --region "$REGION" \
+  --name "$SSM_PREFIX/CLOUDFRONT_DISTRIBUTION_ID" \
+  --query Parameter.Value --output text 2>/dev/null || echo "")
+if [ -z "$DIST" ]; then
+  echo "[cdn] no distribution id in SSM; skipping invalidation"
+  exit 0
+fi
+
+IMAGE=$(docker inspect --format '{{.Image}}' "$CID")
+install -d /var/lib/ojuri
+
+if [ -f "$MARKER" ] && [ "$(cat "$MARKER")" = "$IMAGE" ]; then
+  echo "[cdn] sentinel image unchanged; no invalidation"
+  exit 0
+fi
+
+echo "[cdn] sentinel image changed; invalidating $DIST"
+aws cloudfront create-invalidation --distribution-id "$DIST" \
+  --paths '/' '/index.html' '/assets/*' \
+  --query 'Invalidation.Id' --output text
+
+echo "$IMAGE" > "$MARKER"
+CDNSCRIPT
+
+sed -i \
+  -e "s|__REGION__|$REGION|" \
+  -e "s|__SSM_PREFIX__|$SSM_PREFIX|" \
+  /usr/local/bin/ojuri-invalidate-cdn
+chmod 755 /usr/local/bin/ojuri-invalidate-cdn
 
 cat > /etc/systemd/system/ojuri.service <<'UNIT'
 [Unit]

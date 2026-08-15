@@ -142,6 +142,27 @@ docker run --rm --entrypoint ls ghcr.io/ojuri-io/rda:v1 \
 A zero, or a count that disagrees with the branch, means the running
 system does not have the fix regardless of what `git log` says.
 
+There is a second copy of this trap in front of the first. Sentinel is
+a hashed-bundle SPA, so a new image writes a new `index.html` pointing
+at a new bundle — and a CDN keeps serving the old `index.html` until
+its TTL lapses. Visitors then load the previous bundle from a stack
+that is genuinely up to date.
+
+What makes it costly is that the obvious check hides it:
+
+```bash
+# Lies. -H forces a revalidation, so this returns the new page while
+# every browser still gets the cached one.
+curl -s -H 'Cache-Control: no-cache' https://your-host/ | grep -o 'index-[^.]*\.js'
+
+# Truthful — the request a visitor actually makes.
+curl -s https://your-host/ | grep -o 'index-[^.]*\.js'
+```
+
+Compare that against the bundle the container holds. On the AWS
+deployment `ojuri-up` invalidates automatically when the Sentinel image
+changes; anywhere else, invalidate as part of the release.
+
 ## Pre-1.0 history
 
 Pre-1.0 development happened on `main` without published images.

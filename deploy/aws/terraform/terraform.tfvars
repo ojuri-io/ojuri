@@ -23,3 +23,7 @@ extra_cors_origins = ["https://ojuri.io", "https://www.ojuri.io"]
 
 # Published on ojuri.io so visitors can sign into the sandbox. Public by design.
 demo_user_password = "try-ojuri"
+
+# Where that password is published. The sign-in page links to it so a visitor
+# who lands on the dashboard first has somewhere to go.
+demo_credentials_url = "https://ojuri.io/#sandbox"

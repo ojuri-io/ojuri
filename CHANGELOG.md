@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **Deploys served a stale dashboard until the CDN cache lapsed.** Sentinel is
+  a hashed-bundle SPA: a new image writes a new `index.html`, but CloudFront
+  kept handing visitors the cached one, pointing at the previous bundle. The
+  stack was current and every artefact check passed — only the browser was
+  behind. `ojuri-up` now invalidates the distribution, keyed on the image the
+  sentinel container is actually running rather than on the floating `:v1` tag,
+  so a boot that changed nothing costs no invalidation. `VERSIONING.md` records
+  why `curl -H 'Cache-Control: no-cache'` is the wrong way to check for it.
+
 ## [1.6.0] - 2026-08-15
 
 Additive only. One new unauthenticated endpoint, two new optional `.env`
