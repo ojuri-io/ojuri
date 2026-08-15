@@ -218,6 +218,36 @@ resource "aws_ssm_parameter" "demo_user" {
   value = var.demo_user_password
 }
 
+# Read by ojuri-invalidate-cdn after a deploy. The instance cannot discover the
+# distribution any other way — it has no cloudfront:List* permission.
+resource "aws_ssm_parameter" "cloudfront_distribution_id" {
+  name  = "${local.ssm_prefix}/CLOUDFRONT_DISTRIBUTION_ID"
+  type  = "String"
+  value = aws_cloudfront_distribution.main.id
+}
+
+# Declared here rather than beside the role in instance.tf on purpose. The
+# distribution's origin is the instance's EIP, so a policy on the role that
+# named the distribution would close the loop role -> distribution -> eip ->
+# instance -> role and fail at graph construction. Attaching a policy to an
+# existing role adds no such edge.
+#
+# CreateInvalidation only discards cached copies; it cannot change behaviours,
+# origins, or certificates, and the instance holds no other CloudFront verb.
+resource "aws_iam_role_policy" "invalidate_cdn" {
+  name = "invalidate-ojuri-cdn"
+  role = aws_iam_role.instance.id
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Effect   = "Allow"
+      Action   = ["cloudfront:CreateInvalidation"]
+      Resource = aws_cloudfront_distribution.main.arn
+    }]
+  })
+}
+
 # Where the demo password is published. The sign-in page links to it, so the
 # visitor who lands on the dashboard first still has somewhere to go. SSM
 # rejects an empty value, hence the count rather than a "" default.
