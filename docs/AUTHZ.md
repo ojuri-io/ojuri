@@ -83,6 +83,43 @@ curl http://localhost:3000/v1/auth/me -H "authorization: Bearer …"
 `POST /v1/auth/logout` is a no-op on the server side (JWTs are
 stateless); clients should discard the token.
 
+## Public demo account
+
+Public sandbox deployments can seed a shared, read-mostly `demo`
+account whose password is meant to be published. It is opt-in and off
+by default — a known-credential account on a self-hosted fraud platform
+is a vulnerability, not a convenience.
+
+```env
+SEED_DEMO_USER=true
+DEMO_USER_PASSWORD=<published alongside your sandbox link>
+DEMO_CREDENTIALS_URL=https://example.com/#sandbox   # optional
+```
+
+The `DEMO` role is defined in `src/shared/authz/demo-account.ts`. It
+grants reads plus `api_keys:issue` / `api_keys:revoke` and the report
+endpoints, and deliberately excludes everything that changes how
+decisions are made (`rules:update`, `models:set_status`,
+`models:set_threshold`, `settings:write`, `review_queue:override`) and
+everything touching identity (`users:*`, `roles:*`).
+
+The sign-in page adapts to it:
+
+```bash
+curl http://localhost:3000/v1/auth/sign-in-options
+# { "demoAccount": { "username": "demo", "credentialsUrl": "…" } }
+# { "demoAccount": null }   ← every deployment without the seed
+```
+
+This is the only unauthenticated endpoint that confirms a username
+exists, and it is scoped to the one account published on purpose. The
+answer comes from the `users` table rather than from `SEED_DEMO_USER`,
+because a migration run before the variable was set exits 0 having
+created nothing — the env var records an intent, the row records a
+fact. It is cached for 60 s and rate-limited per IP
+(`AUTH_SIGN_IN_OPTIONS_RATE_LIMIT_PER_MINUTE`, default 60). Never
+returns the password.
+
 ## Permission catalogue
 
 Lives in code at `src/shared/authz/permissions.ts`. The full list is

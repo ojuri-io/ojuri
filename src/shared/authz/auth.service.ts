@@ -6,7 +6,13 @@ import UserRepo from "./repositories/user.repo";
 import { createServiceLogger } from "@shared/utils/logger/service-logger";
 import { ALL_PERMISSIONS } from "./permissions";
 import { evaluatePassword } from "./password-policy";
-import { GrantsCacheEntry, LiveGrants } from "./auth.types";
+import { DEMO_USERNAME } from "./demo-account";
+import {
+  GrantsCacheEntry,
+  LiveGrants,
+  SignInOptions,
+  SignInOptionsCacheEntry,
+} from "./auth.types";
 
 const log = createServiceLogger("AuthService");
 
@@ -14,6 +20,21 @@ const DEFAULT_TTL_SECONDS = 60 * 60 * 8;
 const BCRYPT_ROUNDS = 12;
 const GRANTS_CACHE_TTL_MS = 30_000;
 const GRANTS_CACHE_CAP = 10_000;
+const SIGN_IN_OPTIONS_CACHE_TTL_MS = 60_000;
+
+// Rendered as a link on the sign-in page, so anything but http(s) is dropped:
+// the value is operator-set, but an unauthenticated endpoint should not be able
+// to hand a browser a `javascript:` href under any configuration.
+function demoCredentialsUrl(): string | null {
+  const raw = (process.env.DEMO_CREDENTIALS_URL ?? "").trim();
+  if (!raw) return null;
+  try {
+    const url = new URL(raw);
+    return url.protocol === "https:" || url.protocol === "http:" ? url.toString() : null;
+  } catch {
+    return null;
+  }
+}
 
 // Constant-time login: compare against this hash on the unknown-user
 // branch so response latency doesn't leak whether the username exists.
@@ -61,8 +82,39 @@ export class WeakPasswordError extends Error {
 @singleton()
 class AuthService {
   private grantsCache = new Map<string, GrantsCacheEntry>();
+  private signInOptionsCache: SignInOptionsCacheEntry | null = null;
 
   constructor(private readonly users: UserRepo) {}
+
+  /**
+   * What an unauthenticated visitor needs to know before they can sign in.
+   *
+   * Answered from the database rather than from `SEED_DEMO_USER`, because the
+   * env var records an intent and the row records a fact — a migration run
+   * before the var was set exits 0 having created nothing, and an env-based
+   * answer would then point visitors at an account that does not exist.
+   *
+   * This is the one place that confirms a username exists to an anonymous
+   * caller. It is scoped to the single account whose credentials are published
+   * on purpose; every other user stays behind the constant-time login path.
+   */
+  async signInOptions(): Promise<SignInOptions> {
+    const now = Date.now();
+    if (this.signInOptionsCache && this.signInOptionsCache.expiresAt > now) {
+      return this.signInOptionsCache.options;
+    }
+
+    const demo = await this.users.findByUsername("default", DEMO_USERNAME);
+    const options: SignInOptions = {
+      demoAccount:
+        demo && demo.isActive
+          ? { username: DEMO_USERNAME, credentialsUrl: demoCredentialsUrl() }
+          : null,
+    };
+
+    this.signInOptionsCache = { options, expiresAt: now + SIGN_IN_OPTIONS_CACHE_TTL_MS };
+    return options;
+  }
 
   async login(input: { tenantId?: string; username: string; password: string }): Promise<LoginResult> {
     const tenantId = input.tenantId ?? "default";

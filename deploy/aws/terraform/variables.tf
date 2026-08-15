@@ -106,6 +106,16 @@ variable "demo_user_password" {
   default     = ""
 }
 
+variable "demo_credentials_url" {
+  description = <<-EOT
+    Public page where the demo password is published. The sign-in page renders
+    it as a link when the demo account exists. Leave empty and the page still
+    names the account, it just does not point anywhere.
+  EOT
+  type        = string
+  default     = ""
+}
+
 variable "extra_cors_origins" {
   description = <<-EOT
     Additional browser origins allowed to call the API. The front door itself is

@@ -218,6 +218,17 @@ resource "aws_ssm_parameter" "demo_user" {
   value = var.demo_user_password
 }
 
+# Where the demo password is published. The sign-in page links to it, so the
+# visitor who lands on the dashboard first still has somewhere to go. SSM
+# rejects an empty value, hence the count rather than a "" default.
+resource "aws_ssm_parameter" "demo_credentials_url" {
+  count = var.demo_credentials_url == "" ? 0 : 1
+
+  name  = "${local.ssm_prefix}/DEMO_CREDENTIALS_URL"
+  type  = "String"
+  value = var.demo_credentials_url
+}
+
 # RDA takes a comma-separated allowlist and matches the Origin header exactly.
 # The front door is always present; anything else is opt-in via
 # extra_cors_origins, so cross-site access is a deliberate listed decision.

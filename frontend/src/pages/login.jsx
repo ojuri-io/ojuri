@@ -2,17 +2,36 @@
 // Posts to POST /v1/auth/login on the RDA backend, stores the JWT,
 // then signals the app shell to swap in the dashboard.
 
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Ti } from '../components/shell.jsx';
 import { Monogram } from '../components/monogram.jsx';
 import { PasswordInput } from '../components/password-input.jsx';
-import { login as apiLogin } from '../api/client.js';
+import { login as apiLogin, signInOptions } from '../api/client.js';
 
 function Login({ onSuccess }) {
   const [username, setUsername] = useState('admin');
   const [password, setPassword] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
+  const [demoAccount, setDemoAccount] = useState(null);
+  // A ref, not state: the lookup below resolves after mount and would otherwise
+  // read whatever `edited` was captured at mount and overwrite live typing.
+  const edited = useRef(false);
+
+  // A deployment that publishes a shared demo account wants visitors in that
+  // account, not in `admin` — nobody arriving at a public sandbox has the
+  // first-run password, and the shell commands below it are unrunnable there.
+  useEffect(() => {
+    let live = true;
+    signInOptions().then((opts) => {
+      if (!live || !opts?.demoAccount) return;
+      setDemoAccount(opts.demoAccount);
+      if (!edited.current) setUsername(opts.demoAccount.username);
+    });
+    return () => {
+      live = false;
+    };
+  }, []);
 
   const submit = async (e) => {
     e?.preventDefault();
@@ -139,7 +158,10 @@ function Login({ onSuccess }) {
           autoCorrect="off"
           spellCheck={false}
           value={username}
-          onChange={(e) => setUsername(e.target.value.toLowerCase())}
+          onChange={(e) => {
+            edited.current = true;
+            setUsername(e.target.value.toLowerCase());
+          }}
           style={{ width: '100%', marginBottom: 12 }}
         />
 
@@ -188,12 +210,38 @@ function Login({ onSuccess }) {
             fontSize: 10,
             color: 'var(--color-text-tertiary)',
             textAlign: 'center',
+            lineHeight: 1.6,
           }}
         >
-          First-run password is printed once by{' '}
-          <code className="mono">npm run db:migrate</code>. Lost it?
-          <br />
-          Run <code className="mono">npm run reset:admin</code> from the repo root.
+          {demoAccount ? (
+            <>
+              Public sandbox. Sign in as{' '}
+              <code className="mono">{demoAccount.username}</code> — the password is
+              published{' '}
+              {demoAccount.credentialsUrl ? (
+                <a
+                  href={demoAccount.credentialsUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                >
+                  alongside the sandbox link
+                </a>
+              ) : (
+                'alongside the sandbox link'
+              )}
+              .
+              <br />
+              The account is shared and read-mostly; what you do here is visible to
+              the next visitor.
+            </>
+          ) : (
+            <>
+              First-run password is printed once by{' '}
+              <code className="mono">npm run db:migrate</code>. Lost it?
+              <br />
+              Run <code className="mono">npm run reset:admin</code> from the repo root.
+            </>
+          )}
         </p>
       </form>
     </div>

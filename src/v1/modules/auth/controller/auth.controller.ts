@@ -39,6 +39,10 @@ class AuthController {
     }
   };
 
+  signInOptions = async (_req: FastifyRequest, res: FastifyReply) => {
+    return res.send(SuccessResponse("Sign-in options", await this.authService.signInOptions()));
+  };
+
   // Stateless JWT — logout is a client-side concern (drop the token).
   // The endpoint exists so dashboards can call it without a 404 and so
   // we have a clean hook if we ever introduce a server-side revocation
