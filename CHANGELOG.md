@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.6.0] - 2026-08-15
+
+Additive only. One new unauthenticated endpoint, two new optional `.env`
+variables that default to off, no migrations, no schema changes.
+
 ### Added
 
 - **The sign-in page adapts to a public sandbox.** New unauthenticated
