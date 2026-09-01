@@ -1,5 +1,6 @@
 import Credentials from "../credentials.js";
 import Transport from "../http/transport.js";
+import { encodePathSegment } from "../http/path-segment.js";
 import { RequestOptions } from "../client.types.js";
 import {
   CreateReportInput,
@@ -38,7 +39,7 @@ class ReportsResource {
   async get(reportId: string, options: RequestOptions = {}): Promise<InvestigationReport> {
     const response = await this.transport.request<InvestigationReport>({
       method: "GET",
-      path: `/v1/reports/${encodeURIComponent(reportId)}`,
+      path: `/v1/reports/${encodePathSegment("reportId", reportId)}`,
       headers: this.credentials.bearerHeaders(options.tenantId),
       signal: options.signal,
       timeoutMs: options.timeoutMs,
@@ -71,7 +72,7 @@ class ReportsResource {
   ): Promise<MessageResult> {
     const response = await this.transport.request<MessageResult>({
       method: "POST",
-      path: `/v1/reports/${encodeURIComponent(reportId)}/messages`,
+      path: `/v1/reports/${encodePathSegment("reportId", reportId)}/messages`,
       body: { content },
       headers: this.credentials.bearerHeaders(options.tenantId),
       signal: options.signal,

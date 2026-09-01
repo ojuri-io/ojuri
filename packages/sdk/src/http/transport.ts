@@ -1,7 +1,13 @@
 import OjuriApiError from "../errors/api.error.js";
 import OjuriNetworkError from "../errors/network.error.js";
 import OjuriTimeoutError from "../errors/timeout.error.js";
-import { backoffDelayMs, isRetryable, retryAfterSecondsOf, sleep } from "./retry.js";
+import {
+  backoffDelayMs,
+  isRetryable,
+  parseRetryAfter,
+  retryAfterSecondsOf,
+  sleep,
+} from "./retry.js";
 import { QueryValue, RequestSpec, TransportConfig, TransportResponse } from "./transport.types.js";
 
 class Transport {
@@ -14,13 +20,18 @@ class Transport {
       } catch (err) {
         if (attempt >= this.config.maxRetries || !isRetryable(err)) throw err;
         await sleep(
-          backoffDelayMs(attempt, this.config.retryBaseDelayMs, retryAfterSecondsOf(err))
+          backoffDelayMs(attempt, this.config.retryBaseDelayMs, retryAfterSecondsOf(err)),
+          spec.signal
         );
       }
     }
   }
 
   private async attempt<T>(spec: RequestSpec): Promise<TransportResponse<T>> {
+    // A signal that fired before this attempt was scheduled never emits an
+    // "abort" event, so the listener below would miss it entirely.
+    if (spec.signal?.aborted) throw spec.signal.reason;
+
     const timeoutMs = spec.timeoutMs ?? this.config.timeoutMs;
     const controller = new AbortController();
     let timedOut = false;
@@ -92,19 +103,11 @@ function toApiError(response: Response, body: unknown): OjuriApiError {
     status: response.status,
     errors: errorsFrom(body),
     correlationId: response.headers.get("X-Correlation-ID"),
-    retryAfterSeconds: retryAfterOf(response),
+    retryAfterSeconds: parseRetryAfter(response.headers.get("Retry-After")),
     body,
   });
 }
 
-// A missing header must stay null: `Number(null)` is 0, and a 0 here would
-// mark every 4xx as server-scheduled and therefore retryable.
-function retryAfterOf(response: Response): number | null {
-  const raw = response.headers.get("Retry-After");
-  if (raw === null) return null;
-  const seconds = Number(raw);
-  return Number.isFinite(seconds) ? seconds : null;
-}
 
 // RDA wraps failures as `{ status: false, message, errors }`; FIA answers
 // with `{ error }`. Both reach adopters through this SDK.

@@ -73,12 +73,19 @@ landing as a fresh transaction. Pass your own with
 `autoIdempotencyKey: false`.
 
 Retries cover `408`, `429`, `502`, `503`, `504`, network failures, timeouts,
-and any response carrying `Retry-After` (which is how RDA marks an
-Idempotency-Key still in flight). Backoff is exponential with full jitter,
-capped at 20 s; a `Retry-After` value wins over the computed delay.
+and any 4xx carrying `Retry-After` (which is how RDA marks an Idempotency-Key
+still in flight). Both `Retry-After` forms are read — delay-seconds and
+HTTP-date — and a negative or past value clamps to zero. Backoff is otherwise
+exponential with full jitter, capped at 20 s.
 
-`500` is deliberately not retried — the server handled the request and failed
-inside it, so a blind retry can duplicate effects the client cannot see.
+`500` is never retried, even with a `Retry-After` header: the server handled
+the request and failed inside it, so a blind retry can duplicate effects the
+client cannot see.
+
+Pass an `AbortSignal` to cancel. A signal that is already aborted stops the
+call before it is sent, and aborting during a backoff wait ends the retry loop
+immediately rather than waiting it out. Cancellation surfaces as the runtime's
+own `AbortError`, not an `OjuriError`.
 
 ## Errors
 
@@ -89,7 +96,7 @@ Every failure is an `OjuriError` subclass:
 | `OjuriApiError` | Non-2xx response. Carries `status`, `errors[]`, `correlationId`, `retryAfterSeconds`, `body`. |
 | `OjuriTimeoutError` | The per-request timeout elapsed. |
 | `OjuriNetworkError` | The request never reached the server. |
-| `OjuriValidationError` | Client-side input rejected before sending. |
+| `OjuriValidationError` | Client-side input rejected before sending — a `transaction_id` outside 10-255 characters, an over-long `idempotencyKey`, or an empty/dot-only path id. |
 | `OjuriConfigurationError` | Missing credential or `fiaUrl`. |
 
 ```ts
@@ -148,6 +155,12 @@ app.post("/hooks/ojuri", express.raw({ type: "application/json" }), (req, res) =
 ```
 
 Deliveries older than 300 s are rejected; widen with `toleranceSeconds`.
+
+## Credentials
+
+The API key and JWT are held in private class fields and omitted from
+`JSON.stringify`, `console.log`, and `util.inspect`, so a client caught by a
+logger or crash reporter does not put them in cleartext.
 
 ## Enums
 

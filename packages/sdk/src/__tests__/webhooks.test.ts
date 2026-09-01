@@ -77,6 +77,44 @@ describe("verifyWebhookSignature", () => {
     }
   );
 
+  it.each([
+    ["a float timestamp", (h: string) => h.replace(/t=(\d+)/, "t=$1.5")],
+    ["a negative timestamp", () => "t=-1,v1=" + "a".repeat(64)],
+    ["an Infinity timestamp", () => "t=Infinity,v1=" + "a".repeat(64)],
+    ["a hex-length signature that is not hex", (h: string) => h.replace(/v1=.*/, "v1=" + "z".repeat(64))],
+    ["an odd-length signature", (h: string) => h.replace(/v1=.*/, "v1=abc")],
+    ["a v0-only header", (h: string) => h.replace("v1=", "v0=")],
+  ])("rejects %s without throwing", (_label, mutate) => {
+    const header = mutate(sign(BODY, now()));
+    expect(() =>
+      verifyWebhookSignature({ secret: SECRET, signatureHeader: header, rawBody: BODY })
+    ).not.toThrow();
+    expect(verifyWebhookSignature({ secret: SECRET, signatureHeader: header, rawBody: BODY })).toBe(
+      false
+    );
+  });
+
+  it("ignores extra segments and takes the first value for a duplicated key", () => {
+    const header = `${sign(BODY, now())},junk=1`;
+    expect(verifyWebhookSignature({ secret: SECRET, signatureHeader: header, rawBody: BODY })).toBe(
+      true
+    );
+  });
+
+  it("accepts a future-dated delivery inside the clock-skew window", () => {
+    const header = sign(BODY, now() + 60);
+    expect(verifyWebhookSignature({ secret: SECRET, signatureHeader: header, rawBody: BODY })).toBe(
+      true
+    );
+  });
+
+  it("rejects a future-dated delivery beyond the window", () => {
+    const header = sign(BODY, now() + 301);
+    expect(verifyWebhookSignature({ secret: SECRET, signatureHeader: header, rawBody: BODY })).toBe(
+      false
+    );
+  });
+
   it("parses a well-formed header", () => {
     expect(parseWebhookSignature("t=1715000000,v1=abcd")).toEqual({
       timestamp: 1715000000,

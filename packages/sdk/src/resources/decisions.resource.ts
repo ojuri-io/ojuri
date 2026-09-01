@@ -1,6 +1,7 @@
 import Credentials from "../credentials.js";
 import Transport from "../http/transport.js";
 import { unwrapEnvelope } from "../http/envelope.js";
+import { encodePathSegment } from "../http/path-segment.js";
 import { RequestOptions } from "../client.types.js";
 import {
   DecisionAuditRow,
@@ -17,7 +18,8 @@ class DecisionsResource {
   ) {}
 
   async get(transactionId: string, options: RequestOptions = {}): Promise<DecisionAuditRow> {
-    return this.read<DecisionAuditRow>(`/v1/decisions/${encodeURIComponent(transactionId)}`, {}, options);
+    const segment = encodePathSegment("transactionId", transactionId);
+    return this.read<DecisionAuditRow>(`/v1/decisions/${segment}`, {}, options);
   }
 
   async recent(
@@ -37,8 +39,9 @@ class DecisionsResource {
     query: { limit?: number } = {},
     options: RequestOptions = {}
   ): Promise<DecisionAuditRow[]> {
+    const segment = encodePathSegment("auditId", auditId);
     return this.read<DecisionAuditRow[]>(
-      `/v1/decisions/${encodeURIComponent(auditId)}/similar`,
+      `/v1/decisions/${segment}/similar`,
       { limit: query.limit },
       options
     );
@@ -62,7 +65,7 @@ class DecisionsResource {
   ): Promise<DecisionAuditRow> {
     const response = await this.transport.request<unknown>({
       method: "POST",
-      path: `/v1/decisions/${encodeURIComponent(auditId)}/override`,
+      path: `/v1/decisions/${encodePathSegment("auditId", auditId)}/override`,
       body: input,
       headers: this.credentials.bearerHeaders(options.tenantId),
       signal: options.signal,
