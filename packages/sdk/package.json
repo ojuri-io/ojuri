@@ -1,0 +1,59 @@
+{
+  "name": "@ojuri/sdk",
+  "version": "0.1.0",
+  "description": "Typed client for the Ojuri fraud-detection API — predict, decisions, investigation reports, and webhook signature verification. Zero runtime dependencies.",
+  "author": "Ayodeji Abodunrin <https://ayodejiabodunrin.com/>",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/ojuri-io/ojuri.git",
+    "directory": "packages/sdk"
+  },
+  "bugs": {
+    "url": "https://github.com/ojuri-io/ojuri/issues"
+  },
+  "homepage": "https://github.com/ojuri-io/ojuri/tree/main/packages/sdk#readme",
+  "keywords": [
+    "ojuri",
+    "fraud-detection",
+    "sdk",
+    "client",
+    "fintech",
+    "risk-scoring"
+  ],
+  "main": "./dist/cjs/index.js",
+  "module": "./dist/esm/index.js",
+  "types": "./dist/esm/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/esm/index.d.ts",
+      "import": "./dist/esm/index.js",
+      "require": "./dist/cjs/index.js"
+    },
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "dist",
+    "src",
+    "README.md",
+    "LICENSE"
+  ],
+  "engines": {
+    "node": ">=18"
+  },
+  "sideEffects": false,
+  "scripts": {
+    "prebuild": "rm -rf dist",
+    "build": "tsc -p tsconfig.build.json && tsc -p tsconfig.cjs.json && node scripts/write-module-type.mjs",
+    "lint": "tsc -p tsconfig.json --noEmit",
+    "test": "jest --passWithNoTests",
+    "prepublishOnly": "npm run lint && npm test && npm run build"
+  },
+  "devDependencies": {
+    "@types/jest": "^30.0.0",
+    "@types/node": "^20.19.9",
+    "jest": "^30.2.0",
+    "ts-jest": "^29.4.6",
+    "typescript": "^5.9.3"
+  }
+}
