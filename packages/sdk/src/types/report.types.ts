@@ -13,23 +13,44 @@ export interface CreateReportInput {
   timestamp?: number;
 }
 
+// FIA selects quoted column names, so persisted rows come back camelCase even
+// though the request bodies it accepts are snake_case.
 export interface ConversationTurn {
+  id: string;
+  turn_index: number;
   role: "user" | "assistant";
   content: string;
-  llm_model_version?: string;
-  latency_ms?: number;
+  llmModelVersion: string | null;
+  latency_ms: number | null;
+  created_at: string;
 }
 
-export interface InvestigationReport {
-  report_id: string;
-  transaction_id: string;
+export interface InvestigationReportSummary {
+  id: string;
+  transactionId: string;
+  senderId: string;
+  amount: string | number;
+  transactionType: `${TransactionType}` | null;
   verdict: string;
-  narrative: string;
-  recommended_action: string;
-  key_indicators: unknown;
+  recommendedAction: string;
+  agentConfidence: number | null;
   status: `${ReportStatus}`;
-  conversation?: ConversationTurn[];
-  [key: string]: unknown;
+  createdAt: string;
+}
+
+export interface InvestigationReport extends InvestigationReportSummary {
+  receiverId: string | null;
+  mlFraudProbability: number | null;
+  mlDecision: `${Decision}` | null;
+  narrative: string;
+  keyIndicators: unknown;
+  featuresSnapshot: Record<string, number> | null;
+  llmModelVersion: string | null;
+  promptTemplateVersion: string | null;
+  generationLatencyMs: number | null;
+  reviewedBy: string | null;
+  reviewedAt: string | null;
+  conversation: ConversationTurn[];
 }
 
 export interface CreateReportResult {
@@ -38,10 +59,19 @@ export interface CreateReportResult {
   created: boolean;
 }
 
+// The messages endpoint builds its own payload rather than returning persisted
+// rows, so these turns are snake_case throughout, unlike ConversationTurn.
+export interface MessageTurn {
+  role: "user" | "assistant";
+  content: string;
+  llm_model_version?: string;
+  latency_ms?: number;
+}
+
 export interface MessageResult {
   report_id: string;
-  user_turn: ConversationTurn;
-  assistant_turn: ConversationTurn;
+  user_turn: MessageTurn;
+  assistant_turn: MessageTurn;
 }
 
 export interface ListReportsQuery {
@@ -53,7 +83,7 @@ export interface ListReportsQuery {
 }
 
 export interface ReportsPage {
-  reports: InvestigationReport[];
+  reports: InvestigationReportSummary[];
   total: number;
   limit: number;
   offset: number;

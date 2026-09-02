@@ -5,8 +5,8 @@ import OjuriValidationError from "../errors/validation.error.js";
 const DOT_ONLY = /^\.+$/;
 
 export function encodePathSegment(field: string, value: string): string {
-  if (value.length === 0) {
-    throw new OjuriValidationError(field, `${field} must not be empty`);
+  if (typeof value !== "string" || value.length === 0) {
+    throw new OjuriValidationError(field, `${field} must be a non-empty string`);
   }
   if (DOT_ONLY.test(value)) {
     throw new OjuriValidationError(field, `${field} must not be "${value}"`);

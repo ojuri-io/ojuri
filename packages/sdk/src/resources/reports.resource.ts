@@ -29,6 +29,9 @@ class ReportsResource {
       method: "POST",
       path: "/v1/reports",
       body: input,
+      // ON CONFLICT ("transactionId") DO NOTHING makes a replay return the
+      // existing report rather than generating a second one.
+      retryable: true,
       headers: this.credentials.bearerHeaders(options.tenantId),
       signal: options.signal,
       timeoutMs: options.timeoutMs ?? LLM_TIMEOUT_MS,
@@ -74,6 +77,7 @@ class ReportsResource {
       method: "POST",
       path: `/v1/reports/${encodePathSegment("reportId", reportId)}/messages`,
       body: { content },
+      retryable: false,
       headers: this.credentials.bearerHeaders(options.tenantId),
       signal: options.signal,
       timeoutMs: options.timeoutMs ?? LLM_TIMEOUT_MS,

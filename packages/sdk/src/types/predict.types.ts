@@ -1,6 +1,7 @@
 import { CustomerType } from "../enums/customer-type.enum.js";
 import { Decision } from "../enums/decision.enum.js";
 import { DecisionSource } from "../enums/decision-source.enum.js";
+import { ReasonBasis } from "../enums/reason-basis.enum.js";
 import { RuleStage } from "../enums/rule-stage.enum.js";
 import { TransactionType } from "../enums/transaction-type.enum.js";
 
@@ -72,6 +73,7 @@ export interface ReasonCode {
   description: string;
   contribution: number;
   value: number;
+  basis: `${ReasonBasis}`;
 }
 
 export interface PredictRuleHit {

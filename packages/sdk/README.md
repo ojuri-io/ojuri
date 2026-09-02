@@ -72,15 +72,27 @@ landing as a fresh transaction. Pass your own with
 `predict(request, { idempotencyKey })`, or turn generation off with
 `autoIdempotencyKey: false`.
 
-Retries cover `408`, `429`, `502`, `503`, `504`, network failures, timeouts,
-and any 4xx carrying `Retry-After` (which is how RDA marks an Idempotency-Key
-still in flight). Both `Retry-After` forms are read — delay-seconds and
+Only reads and idempotent writes are retried. `predict` qualifies while it
+carries an Idempotency-Key; `login`, `decisions.override`, and
+`reports.message` are never replayed, because a duplicate override fires a
+second webhook and a second ground-truth label, and a duplicate message
+appends another LLM turn. `reports.create` is retried — the server's
+`ON CONFLICT ("transactionId") DO NOTHING` makes a replay return the existing
+report.
+
+Retryable failures are `408`, `429`, `502`, `503`, `504`, network failures,
+timeouts, and any 4xx carrying `Retry-After` (which is how RDA marks an
+Idempotency-Key still in flight). Both `Retry-After` forms are read — delay-seconds and
 HTTP-date — and a negative or past value clamps to zero. Backoff is otherwise
 exponential with full jitter, capped at 20 s.
 
 `500` is never retried, even with a `Retry-After` header: the server handled
 the request and failed inside it, so a blind retry can duplicate effects the
 client cannot see.
+
+`deadlineMs` caps total wall-clock time per call including every retry and
+backoff, defaulting to `timeoutMs * (maxRetries + 1)`. Without it a client
+reading as "10 seconds" can block far longer once backoff is counted.
 
 Pass an `AbortSignal` to cancel. A signal that is already aborted stops the
 call before it is sent, and aborting during a backoff wait ends the retry loop
@@ -89,7 +101,9 @@ own `AbortError`, not an `OjuriError`.
 
 ## Errors
 
-Every failure is an `OjuriError` subclass:
+Every failure the SDK raises is an `OjuriError` subclass. Cancellation is the
+one exception — an aborted call rejects with the runtime's own `AbortError`,
+as `fetch` does:
 
 | Class | Raised when |
 |---|---|
@@ -97,7 +111,12 @@ Every failure is an `OjuriError` subclass:
 | `OjuriTimeoutError` | The per-request timeout elapsed. |
 | `OjuriNetworkError` | The request never reached the server. |
 | `OjuriValidationError` | Client-side input rejected before sending — a `transaction_id` outside 10-255 characters, an over-long `idempotencyKey`, or an empty/dot-only path id. |
-| `OjuriConfigurationError` | Missing credential or `fiaUrl`. |
+| `OjuriResponseError` | The server answered with something unusable — a non-JSON 200, a decision with no `decision`, a login with no token. |
+| `OjuriConfigurationError` | Missing credential, or a `baseUrl`/`fiaUrl` that is not an absolute http(s) URL. |
+
+Use the static predicates rather than `instanceof`. Publishing both ESM and
+CJS means an app can load two copies of this package, and `instanceof` fails
+across them:
 
 ```ts
 import { OjuriApiError } from "@ojuri/sdk";
@@ -105,7 +124,7 @@ import { OjuriApiError } from "@ojuri/sdk";
 try {
   await ojuri.predict(request);
 } catch (err) {
-  if (err instanceof OjuriApiError && err.status === 409) {
+  if (OjuriApiError.isOjuriApiError(err) && err.status === 409) {
     // transaction_id already processed for this tenant
   }
   throw err;
@@ -124,13 +143,19 @@ await ojuri.decisions.override(auditId, { decision: "ACCEPT", reason: "verified 
 
 ## Investigation reports (FIA)
 
-Requires `fiaUrl`. Report generation runs an LLM, so these calls default to a
-180 s timeout rather than the client's normal one.
+`ojuri.reports` is present only when `fiaUrl` is configured, so it is typed
+optional. Report generation runs an LLM, so these calls default to a 180 s
+timeout unless you set `timeoutMs` explicitly.
+
+Persisted report rows come back camelCase (FIA selects quoted column names),
+while the request bodies it accepts are snake_case. `list()` returns the
+narrower `InvestigationReportSummary` — it does not select `narrative` or
+`keyIndicators`.
 
 ```ts
-const { report, created } = await ojuri.reports.create({ transaction_id: "txn-1" });
-const answer = await ojuri.reports.message(report.report_id, "What would change the verdict?");
-await ojuri.reports.list({ status: "GENERATED", limit: 50 });
+const { report, created } = await ojuri.reports!.create({ transaction_id: "txn-1" });
+const answer = await ojuri.reports!.message(report.id, "What would change the verdict?");
+await ojuri.reports!.list({ status: "GENERATED", limit: 50 });
 ```
 
 `created` is `false` when an existing report was returned — the endpoint is
@@ -165,7 +190,8 @@ logger or crash reporter does not put them in cleartext.
 ## Enums
 
 `Decision`, `DecisionSource`, `TransactionType`, `CustomerType`, `RuleStage`,
-`ReportStatus`, `ReviewOrder`, and `WebhookEvent` are exported as string enums.
+`RuleAction`, `ReasonBasis`, `ReportStatus`, `ReviewOrder`, and `WebhookEvent`
+are exported as string enums.
 Request and response fields accept plain strings too, so importing them is
 optional.
 
@@ -177,3 +203,7 @@ npm run lint     # tsc --noEmit
 npm test         # jest
 npm run build    # dual ESM + CJS build into dist/
 ```
+
+Response types are hand-copied from the server. `test/contracts/sdk-types.contract.test.ts`
+in the repo root compares them field by field and fails the **server's** CI on
+drift in either direction.

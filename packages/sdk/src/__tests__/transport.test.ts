@@ -107,11 +107,18 @@ describe("transport", () => {
     );
   });
 
-  it("raises a configuration error when reports are used without fiaUrl", () => {
+  it("omits the reports resource when fiaUrl is unset", () => {
     const client = new OjuriClient({ baseUrl: "https://rda.example.com", jwt: "j" });
 
-    expect(() => client.reports).toThrow(OjuriConfigurationError);
+    expect(client.reports).toBeUndefined();
   });
+
+  it.each([["rda.example.com"], ["ftp://rda.example.com"], [""]])(
+    "refuses the baseUrl %p",
+    (baseUrl) => {
+      expect(() => new OjuriClient({ baseUrl })).toThrow(OjuriConfigurationError);
+    }
+  );
 });
 
 describe("retry policy", () => {

@@ -16,6 +16,10 @@ class OjuriApiError extends OjuriError {
     this.retryAfterSeconds = details.retryAfterSeconds ?? null;
     this.body = details.body ?? null;
   }
+
+  static isOjuriApiError(err: unknown): err is OjuriApiError {
+    return OjuriError.isOjuriError(err) && err.name === "OjuriApiError";
+  }
 }
 
 export default OjuriApiError;

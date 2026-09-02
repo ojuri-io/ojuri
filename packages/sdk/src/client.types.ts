@@ -9,6 +9,8 @@ export interface OjuriClientOptions {
   jwt?: string;
   tenantId?: string;
   timeoutMs?: number;
+  /** Total wall-clock budget per call including retries. Defaults to `timeoutMs * (maxRetries + 1)`. */
+  deadlineMs?: number;
   maxRetries?: number;
   retryBaseDelayMs?: number;
   /** Attach a generated Idempotency-Key to every predict call. Default true. */

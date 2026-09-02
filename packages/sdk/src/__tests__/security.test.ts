@@ -8,6 +8,8 @@ import { stubFetch } from "./test-fetch.js";
 const API_KEY = "fdk_live_SECRETVALUE";
 const JWT = "eyJ.SECRETJWT.sig";
 
+const DECISION = { transaction_id: "txn-0000000001", decision: "ACCEPT", fraud: false };
+
 const REQUEST: PredictRequest = {
   transaction_id: "txn-0000000001",
   sender_id: "acct-123",
@@ -42,7 +44,7 @@ describe("credential exposure", () => {
   });
 
   it("still sends the credentials it is hiding", async () => {
-    const stub = stubFetch([{ body: { transaction_id: "t" } }]);
+    const stub = stubFetch([{ body: DECISION }]);
     const sending = new OjuriClient({
       baseUrl: "https://rda.example.com",
       apiKey: API_KEY,
@@ -124,7 +126,7 @@ describe("Retry-After parsing", () => {
         body: { status: false, message: "in flight" },
         headers: { "Retry-After": new Date(Date.now() - 1000).toUTCString() },
       },
-      { body: { transaction_id: "t" } },
+      { body: DECISION },
     ]);
     const client = new OjuriClient({
       baseUrl: "https://rda.example.com",
@@ -166,8 +168,8 @@ describe("path segment validation", () => {
     await expect(sdk.decisions.override(id, { decision: "ACCEPT" })).rejects.toBeInstanceOf(
       OjuriValidationError
     );
-    await expect(sdk.reports.get(id)).rejects.toBeInstanceOf(OjuriValidationError);
-    await expect(sdk.reports.message(id, "hi")).rejects.toBeInstanceOf(OjuriValidationError);
+    await expect(sdk.reports!.get(id)).rejects.toBeInstanceOf(OjuriValidationError);
+    await expect(sdk.reports!.message(id, "hi")).rejects.toBeInstanceOf(OjuriValidationError);
     expect(stub.calls).toHaveLength(0);
   });
 

@@ -3,6 +3,7 @@ import OjuriNetworkError from "../errors/network.error.js";
 import OjuriTimeoutError from "../errors/timeout.error.js";
 
 const MAX_BACKOFF_MS = 20_000;
+const MAX_RETRY_AFTER_SECONDS = 86_400;
 
 const RETRYABLE_STATUSES = new Set([408, 429, 502, 503, 504]);
 
@@ -23,12 +24,18 @@ export function parseRetryAfter(raw: string | null, now: number = Date.now()): n
   if (raw === null) return null;
 
   const seconds = Number(raw);
-  if (Number.isFinite(seconds)) return Math.max(0, seconds);
+  if (Number.isFinite(seconds)) return clamp(seconds);
 
   // RFC 9110 also allows an HTTP-date, which a proxy in front of RDA may emit.
   const deadline = Date.parse(raw);
   if (Number.isNaN(deadline)) return null;
-  return Math.max(0, (deadline - now) / 1000);
+  return clamp((deadline - now) / 1000);
+}
+
+// The value is surfaced on OjuriApiError, so keep it sane for callers that
+// schedule their own retry from it rather than relying on ours.
+function clamp(seconds: number): number {
+  return Math.min(Math.max(0, seconds), MAX_RETRY_AFTER_SECONDS);
 }
 
 export function retryAfterSecondsOf(err: unknown): number | null {

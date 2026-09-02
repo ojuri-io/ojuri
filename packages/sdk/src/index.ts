@@ -5,12 +5,15 @@ export { default as OjuriError } from "./errors/ojuri.error.js";
 export { default as OjuriApiError } from "./errors/api.error.js";
 export { default as OjuriConfigurationError } from "./errors/configuration.error.js";
 export { default as OjuriNetworkError } from "./errors/network.error.js";
+export { default as OjuriResponseError } from "./errors/response.error.js";
 export { default as OjuriTimeoutError } from "./errors/timeout.error.js";
 export { default as OjuriValidationError } from "./errors/validation.error.js";
 
 export { CustomerType } from "./enums/customer-type.enum.js";
 export { Decision } from "./enums/decision.enum.js";
 export { DecisionSource } from "./enums/decision-source.enum.js";
+export { ReasonBasis } from "./enums/reason-basis.enum.js";
+export { RuleAction } from "./enums/rule-action.enum.js";
 export { ReportStatus } from "./enums/report-status.enum.js";
 export { ReviewOrder } from "./enums/review-order.enum.js";
 export { RuleStage } from "./enums/rule-stage.enum.js";
@@ -44,8 +47,10 @@ export type {
   CreateReportInput,
   CreateReportResult,
   InvestigationReport,
+  InvestigationReportSummary,
   ListReportsQuery,
   MessageResult,
+  MessageTurn,
   ReportsPage,
 } from "./types/report.types.js";
 export type {

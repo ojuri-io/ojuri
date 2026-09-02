@@ -67,6 +67,7 @@ class DecisionsResource {
       method: "POST",
       path: `/v1/decisions/${encodePathSegment("auditId", auditId)}/override`,
       body: input,
+      retryable: false,
       headers: this.credentials.bearerHeaders(options.tenantId),
       signal: options.signal,
       timeoutMs: options.timeoutMs,

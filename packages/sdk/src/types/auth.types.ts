@@ -1,6 +1,7 @@
 export interface LoginInput {
   username: string;
   password: string;
+  tenantId?: string;
 }
 
 export interface LoginResult {
