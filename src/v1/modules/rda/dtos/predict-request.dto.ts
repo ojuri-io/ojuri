@@ -1,3 +1,5 @@
+import { ReasonBasis } from "@shared/onnx/reason-codes.types";
+
 /**
  * Device fingerprint information
  */
@@ -10,8 +12,8 @@ export interface DeviceFingerprint {
 /**
  * Predict request DTO.
  *
- * The "core 8" fields (transaction_id … timestamp) are required and
- * have been since v1. Everything below them is optional context that
+ * The six core fields (transaction_id through timestamp) are required
+ * and have been since v1. Everything below them is optional context that
  * the feature catalogue (`models/feature-catalog.v1.json`) consumes
  * when present. Adopters with a richer payload populate the optional
  * block; minimal integrations leave them out and the catalogue falls
@@ -81,6 +83,19 @@ export interface PredictRequestDto {
   recipient_fi?: string;
 
   device_fingerprint?: DeviceFingerprint;
+
+  // ── Adopter overflow ──────────────────────────────────────────
+  // Any extra adopter-defined fields, passed through to PAA and the
+  // audit row unchanged and read by the custom-feature hook on both
+  // sides. Untyped by design: the whole point is that adopters put
+  // their own shapes here without touching the catalogue.
+  //
+  // `TransactionEventFactory` already reads this off the request, but
+  // has to launder it through a double cast because the field was never
+  // declared. Declaring it makes that cast redundant (a tidy-up left for
+  // a separate change) and, more to the point, means a client generated
+  // from this DTO carries the field at all.
+  request_context?: Record<string, unknown>;
 }
 
 export interface ReasonCodeDto {
@@ -88,6 +103,17 @@ export interface ReasonCodeDto {
   description: string;
   contribution: number;
   value: number;
+  /**
+   * Whether the magnitude came from the deployed model's gain
+   * importances (MODEL_WEIGHTED) or from a hand-set constant
+   * (HEURISTIC), so an investigator knows which they are reading.
+   *
+   * This has always been on the wire: `explain()` sets it and the
+   * response factory passes the reason codes straight through. It was
+   * simply missing from the declared type, so a client generated from
+   * this DTO would have dropped a field the API documents and returns.
+   */
+  basis: ReasonBasis;
 }
 
 /**
