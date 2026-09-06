@@ -112,12 +112,18 @@ describe("argument handling", () => {
     expect(err).not.toBe("");
   });
 
-  it("advertises the commands that exist and no others", () => {
+  it("advertises every command it implements", () => {
     const { out } = capture(["--help"]);
-    expect(out).toContain("ojuri validate");
-    expect(out).toContain("ojuri render");
-    expect(out).not.toContain("ojuri up");
-    expect(out).not.toContain("ojuri doctor");
+    for (const command of ["init", "up", "down", "status", "doctor", "validate", "render"]) {
+      expect(out).toContain(`ojuri ${command}`);
+    }
+  });
+
+  it("advertises nothing it does not implement", () => {
+    const { out } = capture(["--help"]);
+    for (const absent of ["ojuri deploy", "ojuri logs", "ojuri upgrade"]) {
+      expect(out).not.toContain(absent);
+    }
   });
 });
 

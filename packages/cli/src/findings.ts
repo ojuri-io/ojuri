@@ -57,7 +57,9 @@ export function formatHuman(manifestPath: string, findings: Finding[]): string {
   for (const f of ordered) {
     const label = f.severity === "error" ? "error  " : "warning";
     const where = f.path === "" ? "" : `  ${f.path}`;
-    lines.push(`  ${label}${where}`);
+    // A finding about the file as a whole has no path, and a header of
+    // "error" followed by trailing spaces reads as a rendering bug.
+    lines.push(`  ${label}${where}`.trimEnd());
     lines.push(`    ${f.message}`);
     if (f.detail) {
       for (const line of wrap(f.detail, 72)) lines.push(`    ${line}`);

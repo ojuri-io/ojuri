@@ -9,6 +9,7 @@
   "files": [
     "dist",
     "schema",
+    "templates",
     "README.md"
   ],
   "author": "Ayodeji Abodunrin <https://ayodejiabodunrin.com/>",

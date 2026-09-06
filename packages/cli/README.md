@@ -4,7 +4,8 @@ The `ojuri` command. Reads the deployment manifest at `ojuri.yaml` and,
 in later phases, renders it into a `.env` fragment and a Docker Compose
 overlay and drives the stack.
 
-Right now it does two things: `ojuri validate` and `ojuri render`.
+Seven commands: `init`, `doctor`, `up`, `status`, `down`, plus the
+`validate` and `render` they are built on.
 
 ## Install
 
@@ -142,3 +143,105 @@ no Docker daemon, so the job runs in seconds.
 production guard and `render` writes it into the stack. If the two ever
 computed it differently, validate would pass a manifest that renders to
 a stack RDA refuses to boot. `test/render.spec.ts` pins them together.
+
+## `ojuri init`
+
+Writes `ojuri.yaml` and a `.env`, and refuses to overwrite either.
+
+The `.env` is a copy of `.env.example` with the development defaults
+replaced by generated secrets: `AUTH_JWT_SECRET`, `POSTGRES_PASSWORD`
+and `ADMIN_SEED_PASSWORD`. Pass `--keep-dev-defaults` to copy it
+verbatim instead.
+
+Two things about that are worth knowing.
+
+`POSTGRES_PASSWORD`, `DB_PASSWORD` and the password inside `DB_URL` all
+move together. The container takes the first; host-side tooling reads
+the other two. Changing one alone leaves a checkout where the stack
+starts and `npm run db:migrate` cannot authenticate against it.
+
+`ADMIN_SEED_PASSWORD` only takes effect on a **fresh database**. The
+admin user is created inside a migration, so on a database where that
+migration has already run the value is inert and the existing admin is
+untouched. `npm run reset:admin` is the way in there.
+
+`MLA_SERVICE_TOKEN` also ships a development default and is left alone
+deliberately: hardening it is a separate change.
+
+## `ojuri up [path]`
+
+Validates, renders, starts the stack, waits for `db-migrate` to exit
+cleanly and for RDA to answer `/ready` through NGINX, then prints the
+predict URL, a runnable `curl` with a fresh UUID, and the admin
+credentials situation.
+
+```bash
+ojuri up              # pull the published images
+ojuri up --build      # build from source
+ojuri up --yes        # skip the confirmations
+```
+
+It stops before starting anything if `postgres.mode` is `external`,
+unless given `--yes`. `db-migrate` runs `seed:run` on every boot, and
+against your own database that is a write to data this command does not
+own.
+
+### What it can tell you about the admin password
+
+The admin user is created by a migration, which prints a banner only
+when it generated the password itself. Three cases, three answers:
+
+| Migration logs | What `up` says |
+|---|---|
+| Carries the seed banner | The generated password, quoted from the logs. It is not recoverable later. |
+| Knex reports "Already up to date" | The database already existed; the admin is unchanged. |
+| Migrations ran, `ADMIN_SEED_PASSWORD` set | The password is that value, if this run created the database. |
+
+Guessing wrong here sends someone hunting for a password that was never
+printed, so the fourth case says plainly that it cannot tell.
+
+### Why it does not issue the first API key
+
+`POST /v1/admin/api-keys` sits behind `denyIfPasswordRotation`, and the
+seeded admin carries `mustChangePassword=true`, so the bootstrap
+credential gets a 423 from every admin endpoint until the password is
+rotated. Rotating it here would mean this command inventing a password
+and consuming a deliberate security gate, so when
+`auth.require_api_key` is true it prints the two steps instead.
+
+## `ojuri status [path]`
+
+Container state from `docker compose ps`, then a readiness probe per
+enabled service.
+
+Probes go through NGINX first, `/ready` for RDA and the proxied `/fia/`
+and `/mla/` prefixes for those, falling back to the direct host ports.
+That is the same both-ways approach `scripts/demo-traffic.mjs` already
+takes, and it finds a service run natively alongside a Compose stack.
+
+`RDA_HEALTH_URL` and friends override the list, but only when actually
+set. They are commented out in `.env.example` and describe host-side
+runs, so treating a comment as configuration would point every probe at
+a port nothing is listening on.
+
+## `ojuri down [path]`
+
+Stops the stack. `--volumes` also deletes its data, which needs `--yes`:
+that is the Postgres data, the Redis snapshot, the Kafka log, the
+Grafana dashboards, and the FIA model cache, a 7.6 GB download to
+rebuild.
+
+## `ojuri doctor [path]`
+
+Read-only host check, with no side effects beyond briefly binding the
+ports it tests.
+
+- Docker 20.10+ and Compose 2.24+. The Compose floor is real: the
+  rendered overlay uses `!reset` and `!override`.
+- Every host port the manifest's stack will publish, and only those. An
+  external datastore needs none, a scaled FIA gives its port up, and
+  observability off frees 9090 and 3001.
+- External datastores actually accept a connection.
+- With FIA enabled, whether the host has the RAM and disk, scaled by
+  replica count. Always a warning, never an error: `FIA_DISABLE_LLM`
+  exists and the operator may know something the check does not.

@@ -1,0 +1,77 @@
+# yaml-language-server: $schema=https://ojuri.io/schema/ojuri.v1.json
+#
+# Ojuri deployment manifest.
+#
+# This file describes the stack that `docker compose up -d` produces
+# today, field for field. Rendering it is a no-op, which is the point:
+# nothing here changes behaviour until you change a value.
+#
+# It is a layer over .env, not a replacement. `ojuri render` turns it
+# into a .env fragment plus a Compose overlay; adopters who never touch
+# it carry on with the README quick start unchanged.
+#
+# Check it with `ojuri validate`.
+
+version: 1
+
+# Image tag written to OJURI_VERSION. `v1` floats and picks up patches
+# and minors. Pin strictly (v1.6.0) for regulated deployments; see
+# VERSIONING.md.
+release: v1
+
+datastores:
+  # `bundled` runs the container the compose file ships. `external`
+  # drops it and points the services at your own, which needs the
+  # connection fields filled in.
+  postgres:
+    mode: bundled
+  redis:
+    mode: bundled
+  kafka:
+    mode: bundled
+
+services:
+  # Written to RDA_REPLICAS, which stays the only way to scale RDA.
+  # NGINX resolves the replica addresses once at startup, so `ojuri up`
+  # restarts it after a change.
+  rda:
+    replicas: 3
+
+  # PAA is a singleton and validate refuses anything above 1. The
+  # transaction graph lives in process memory, so a second copy would
+  # see half of it. The compose service is named `paa-1`.
+  paa:
+    replicas: 1
+
+  # Off by default, exactly as the `mla` and `fia` compose profiles are.
+  mla:
+    enabled: false
+    replicas: 1
+
+  # FIA pulls roughly 7.6 GB of model weights on first start and wants
+  # 16 GB of RAM. Read the warning `ojuri validate` prints before
+  # turning it on.
+  fia:
+    enabled: false
+    replicas: 1
+
+  # The operator dashboard. Served through NGINX on network.http_port
+  # when enabled; it publishes no host port of its own.
+  sentinel:
+    enabled: false
+
+auth:
+  # False is the shipped default so a fresh checkout works with no
+  # setup. Turn it on before the stack is reachable by anything other
+  # than you.
+  require_api_key: false
+  jwt_secret: ${AUTH_JWT_SECRET}
+
+network:
+  http_port: 80
+  public_url: http://localhost
+
+observability:
+  # Prometheus and Grafana. They carry no compose profile, so turning
+  # this off removes the services in the rendered overlay.
+  enabled: true
