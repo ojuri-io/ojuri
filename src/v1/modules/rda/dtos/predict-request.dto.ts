@@ -83,6 +83,12 @@ export interface PredictRequestDto {
   recipient_fi?: string;
 
   device_fingerprint?: DeviceFingerprint;
+
+  // Untyped by design: the whole point is that adopters put their own
+  // shapes here without touching the catalogue. Passed through to PAA and
+  // the audit row unchanged, and read by the custom-feature hook on both
+  // sides, so it reaches training as well as scoring.
+  request_context?: Record<string, unknown>;
 }
 
 export interface ReasonCodeDto {

@@ -66,6 +66,10 @@ export interface PredictRequest {
   recipient_fi?: string;
 
   device_fingerprint?: DeviceFingerprint;
+
+  /** Adopter-defined overflow, passed through to PAA, the audit row, and the
+   *  custom-feature hook on both the scoring and training sides. */
+  request_context?: Record<string, unknown>;
 }
 
 export interface ReasonCode {
