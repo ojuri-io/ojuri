@@ -669,3 +669,85 @@ actually does, so it is recorded here and applied rather than escalated.
 Docker and Compose minimums for `ojuri doctor`, from `README.md:74`:
 **Docker 20.10+ and Compose 2.24+**. The 2.24 floor is real, not
 advisory: `docker-compose.ghcr.yml` needs `!reset`.
+
+---
+
+## Addendum: Compose merge behaviour, verified by probe
+
+Established after the notes above were first written, while checking
+what this environment could actually run. `docker compose config`
+resolves, merges and validates a project **without a Docker daemon**, so
+every claim here was checked against the real Compose binary (v5.1.1)
+rather than reasoned about. The daemon itself is unavailable in this
+environment, so nothing below involves starting a container.
+
+### Dropping a bundled datastore needs `!override` on `depends_on`, not only `!reset`
+
+`!reset null` does remove a service, but the merged project then fails
+validation, because the services that depended on it still name it:
+
+```
+$ docker compose -f docker-compose.yml -f drop-postgres.yml config
+service "rda" depends on undefined service "postgres": invalid compose project
+```
+
+`rda`, `paa-1`, `db-migrate`, `fia` and `mla` all declare
+`depends_on: postgres` (section 2). Compose's `!override` replaces a
+mapping wholesale rather than merging into it, so the fix is to restate
+each dependant's **surviving** edges:
+
+```yaml
+services:
+  postgres: !reset null
+  db-migrate:
+    depends_on: !override {}
+  rda:
+    depends_on: !override
+      redis: { condition: service_healthy }
+      kafka: { condition: service_healthy }
+      db-migrate: { condition: service_completed_successfully }
+```
+
+Verified: that overlay yields a nine-service project with no `postgres`,
+`db-migrate` retained, and `DB_HOST` pointing at the external host.
+
+This is why `packages/cli/src/render/compose-base.ts` carries a
+`BASE_DEPENDS_ON` table, and why `test/compose-base.spec.ts` pins it
+against the real compose file: a new `depends_on` edge added to
+`docker-compose.yml` without updating the table would render a project
+Compose refuses.
+
+### Other merge facts the renderer relies on
+
+| Behaviour | Result |
+|---|---|
+| `services: {}` as a whole overlay | Accepted. The no-op overlay parses and changes nothing. |
+| An overlay of comments only, no `services` key | Also accepted. |
+| `ports: !reset null` | Removes the published ports. This is how a scaled FIA gives up its fixed `9094:9094`. |
+| `volumes: !override [...]` on `nginx` | Replaces the config bind mount cleanly, leaving one mount rather than two conflicting ones at the same target. |
+| `environment:` map form overriding the base file's list form | Merges per key. `DB_HOST` can be overridden while `DB_PASSWORD` from the base file survives. |
+| Repeated `--env-file` | Last wins. `--env-file .env --env-file .ojuri/.env.rendered` lets the rendered file override only the fields the manifest controls. |
+
+### The default manifest renders to a genuine no-op
+
+Confirmed by byte-comparing the resolved configs, not by inspection:
+
+```
+docker compose --env-file .env -f docker-compose.yml -f docker-compose.ghcr.yml config
+```
+
+against the same command with `--env-file .ojuri/.env.rendered` and
+`-f .ojuri/docker-compose.override.ojuri.yml` added. The two outputs are
+identical, 367 lines each. `.github/workflows/ci.yml` runs this
+comparison so it stays true.
+
+### What this environment cannot check
+
+There is no Docker daemon and no `nginx` binary, so nothing here has
+been started and `nginx/nginx.sentinel.conf` has not been through
+`nginx -t`. The nginx service's own compose healthcheck is `nginx -t`,
+so a syntax error would surface the first time the `sentinel` profile is
+started. `packages/cli/test/nginx-sentinel.spec.ts` checks the file
+structurally in the meantime: brace balance, every route the default
+config serves, and byte-identity with `nginx/nginx.conf` up to the
+routing change.

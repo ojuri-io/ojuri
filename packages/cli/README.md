@@ -4,7 +4,7 @@ The `ojuri` command. Reads the deployment manifest at `ojuri.yaml` and,
 in later phases, renders it into a `.env` fragment and a Docker Compose
 overlay and drives the stack.
 
-Right now it does one thing: `ojuri validate`.
+Right now it does two things: `ojuri validate` and `ojuri render`.
 
 ## Install
 
@@ -77,3 +77,68 @@ back for ts-jest.
 repo root against the `default.yaml` fixture and against the values in
 `docker-compose.yml`. If you change the default stack, that spec is
 where it will complain.
+
+## `ojuri render [path]`
+
+Turns the manifest into two files under `.ojuri/`, and prints the exact
+Compose command that uses them.
+
+```bash
+ojuri render                    # write .ojuri/
+ojuri render --print-command    # print the command, write nothing
+ojuri render --build            # command for building from source
+ojuri render --out-dir build/   # somewhere other than .ojuri/
+```
+
+It validates first and refuses to render a manifest with errors:
+a rendered stack built on a broken manifest is worse than no stack,
+because it looks like it worked. Warnings do not block.
+
+### What it writes
+
+`.env.rendered` holds the variables Compose substitutes that the
+manifest controls: `OJURI_VERSION`, `RDA_REPLICAS`,
+`RDA_REQUIRE_API_KEY`, `SENTINEL_CORS_ORIGINS`, and `MLA_HEALTH_URL`
+when MLA is enabled. Your own `.env` is not touched. Compose reads
+repeated `--env-file` in order with the last winning, so the printed
+command passes yours first and this one second.
+
+`docker-compose.override.ojuri.yml` carries only what the manifest
+changes:
+
+- **External datastores.** The bundled service is removed with `!reset`,
+  and every dependant's `depends_on` is rebuilt with `!override`, which
+  replaces the map rather than merging into it. Without that second
+  step Compose rejects the project: `service "rda" depends on undefined
+  service "postgres"`. The connection details are then written per
+  service, because `docker-compose.yml` hardcodes `postgres`, `redis`
+  and `kafka:29092` as literals that nothing in `.env` can redirect.
+- **Observability off.** Prometheus and Grafana carry no Compose
+  profile, so they are removed rather than withheld.
+- **Replicas.** RDA scales through `RDA_REPLICAS` and nothing else. The
+  others get `deploy.replicas`, and a service with a fixed host port
+  loses it above one replica, since 9094 cannot be published twice.
+- **Sentinel.** The shipped `nginx.conf` routes `/` to RDA, so enabling
+  the profile alone starts a container nothing reaches. The nginx config
+  bind mount is repointed at `nginx/nginx.sentinel.conf`, which is the
+  same file with `/` going to Sentinel and an explicit `/v1/` carrying
+  the API routes that used to fall through.
+
+### The no-op property
+
+Rendering the committed `ojuri.yaml` produces an empty overlay and an
+`.env.rendered` whose values match `.env.example` exactly. The resolved
+Compose project is then byte-identical to the README quick start's.
+
+That is the whole point of the manifest, so it is enforced rather than
+asserted: `.github/workflows/ci.yml` renders the default manifest and
+diffs `docker compose config` both ways. `docker compose config` needs
+no Docker daemon, so the job runs in seconds.
+
+### One function, two commands
+
+`SENTINEL_CORS_ORIGINS` is derived by `derivedCorsOrigins()` in
+`src/manifest/cors.ts`. `validate` checks that value against RDA's
+production guard and `render` writes it into the stack. If the two ever
+computed it differently, validate would pass a manifest that renders to
+a stack RDA refuses to boot. `test/render.spec.ts` pins them together.

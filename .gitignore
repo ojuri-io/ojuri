@@ -85,3 +85,7 @@ data/training-uploads/*.csv
 # and a maintainer can reproduce the environment without reconstructing it.
 !deploy/aws/terraform/terraform.tfvars
 crash.log
+
+# Rendered by `ojuri render`. Generated from ojuri.yaml on every run, so
+# it is never the source of truth and never worth committing.
+.ojuri/

@@ -99,6 +99,75 @@ jobs:
           echo "All files parse."
 
   # ─────────────────────────────────────────────────────────────────
+  # The manifest has to describe the shipped stack exactly, or adopters
+  # who never write one get a different stack from the README's. This
+  # renders the committed ojuri.yaml and byte-compares the Compose
+  # project it produces against the one the README quick start produces.
+  # Any drift between docker-compose.yml and ojuri.yaml fails here.
+  #
+  # `docker compose config` resolves and validates without a daemon, so
+  # this job needs no containers and runs in seconds.
+  # ─────────────────────────────────────────────────────────────────
+  render-is-a-no-op:
+    name: default manifest renders to a no-op
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: packages/cli/package-lock.json
+
+      - name: Build the CLI
+        working-directory: packages/cli
+        run: |
+          npm ci
+          npm run build
+
+      - name: Render the committed manifest
+        run: |
+          cp .env.example .env
+          node packages/cli/dist/index.js render ojuri.yaml --out-dir .ojuri
+
+      - name: The rendered overlay must be empty
+        run: |
+          if grep -qE '^\s+[a-z0-9-]+:' .ojuri/docker-compose.override.ojuri.yml; then
+            echo "::error::The default manifest rendered a non-empty overlay."
+            cat .ojuri/docker-compose.override.ojuri.yml
+            exit 1
+          fi
+
+      - name: The rendered env must match .env.example on every field it sets
+        run: |
+          fail=0
+          while IFS='=' read -r key value; do
+            case "$key" in ''|\#*) continue ;; esac
+            expected=$(grep -E "^$key=" .env.example | head -1 | cut -d= -f2-)
+            if [ "$value" != "$expected" ]; then
+              echo "::error::$key is '$value' in .env.rendered but '$expected' in .env.example"
+              fail=1
+            fi
+          done < .ojuri/.env.rendered
+          exit $fail
+
+      - name: The resolved Compose project must be identical either way
+        run: |
+          docker compose --env-file .env \
+            -f docker-compose.yml -f docker-compose.ghcr.yml \
+            config > /tmp/baseline.yml
+          docker compose --env-file .env --env-file .ojuri/.env.rendered \
+            -f docker-compose.yml -f docker-compose.ghcr.yml \
+            -f .ojuri/docker-compose.override.ojuri.yml \
+            config > /tmp/rendered.yml
+          if ! diff -u /tmp/baseline.yml /tmp/rendered.yml; then
+            echo "::error::Rendering the default manifest changed the stack."
+            exit 1
+          fi
+          echo "Identical: rendering the default manifest is a no-op."
+
+  # ─────────────────────────────────────────────────────────────────
   # Docker stack smoke. Builds the images and brings the full
   # compose stack up (FIA gated out by its profile, MLA host-only
   # by design). Then verifies the endpoints a brand-new adopter

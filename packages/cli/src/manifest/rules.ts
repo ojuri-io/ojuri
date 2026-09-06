@@ -1,5 +1,6 @@
 import { warning, error, type Finding } from "../findings";
 import { hasUnresolvedReference, lookup, type EnvSource } from "./env";
+import { derivedCorsOrigins } from "./cors";
 import { effective, type Manifest } from "./types";
 
 /**
@@ -20,11 +21,6 @@ export function applyRules(manifest: Manifest, env: EnvSource): Finding[] {
     ...externalDatastoreReferences(cfg),
     ...sentinelWithoutFia(cfg),
   ];
-}
-
-/** The CORS allowlist `ojuri render` will write into SENTINEL_CORS_ORIGINS. */
-export function derivedCorsOrigins(publicUrl: string): string {
-  return publicUrl;
 }
 
 type Config = ReturnType<typeof effective>;
