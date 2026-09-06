@@ -1,0 +1,223 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://ojuri.io/schema/ojuri.v1.json",
+  "title": "Ojuri deployment manifest",
+  "description": "Declarative description of an Ojuri stack. A layer over .env and docker-compose.yml: `ojuri render` turns this into a .env fragment plus a Compose overlay. Adopters who never write one of these see no change.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["version"],
+  "properties": {
+    "version": {
+      "const": 1,
+      "description": "Manifest schema version. Only 1 exists."
+    },
+    "release": {
+      "type": "string",
+      "pattern": "^v(0|[1-9][0-9]*)(\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)(-[0-9A-Za-z.-]+)?)?$",
+      "description": "Image tag, written to OJURI_VERSION. `v1` floats and picks up patches and minors; `v1.6.0` pins strictly. See VERSIONING.md."
+    },
+    "datastores": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "postgres": { "$ref": "#/$defs/postgres" },
+        "redis": { "$ref": "#/$defs/redis" },
+        "kafka": { "$ref": "#/$defs/kafka" }
+      }
+    },
+    "services": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "rda": {
+          "$ref": "#/$defs/requiredService",
+          "description": "Real-Time Detection Agent. Required. `replicas` is written to RDA_REPLICAS, which stays the only mechanism for scaling RDA."
+        },
+        "paa": {
+          "$ref": "#/$defs/requiredService",
+          "description": "Pattern Analysis Agent. Required, and a singleton: the transaction graph lives in process memory. Compose service name is `paa-1`."
+        },
+        "mla": {
+          "$ref": "#/$defs/optionalService",
+          "description": "Model Learning Agent. `enabled: true` activates the `mla` Compose profile."
+        },
+        "fia": {
+          "$ref": "#/$defs/optionalService",
+          "description": "Fraud Investigation Agent. `enabled: true` activates the `fia` Compose profile and pulls roughly 7.6 GB of model weights on first start."
+        },
+        "sentinel": {
+          "$ref": "#/$defs/toggleService",
+          "description": "Operator dashboard. `enabled: true` activates the `sentinel` Compose profile. Served through NGINX on `network.http_port`; it publishes no host port of its own."
+        }
+      }
+    },
+    "auth": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "require_api_key": {
+          "type": "boolean",
+          "description": "Written to RDA_REQUIRE_API_KEY. When false, POST /v1/predict accepts any caller that can reach it."
+        },
+        "jwt_secret": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Written to AUTH_JWT_SECRET. Usually a ${AUTH_JWT_SECRET} reference resolved from .env. RDA refuses to boot in production on the shipped development default."
+        }
+      }
+    },
+    "network": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "http_port": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 65535,
+          "description": "Host port NGINX publishes. Everything reaches the stack through it: /v1/ to RDA, /fia/ to FIA, /mla/ to MLA, and / to Sentinel when that is enabled."
+        },
+        "public_url": {
+          "type": "string",
+          "pattern": "^https?://[^\\s]+$",
+          "description": "The origin callers use. Written into SENTINEL_CORS_ORIGINS and used in the examples `ojuri up` prints. A trailing slash is stripped."
+        }
+      }
+    },
+    "observability": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "enabled": {
+          "type": "boolean",
+          "description": "Prometheus and Grafana. These carry no Compose profile, so disabling them removes the services in the rendered overlay."
+        }
+      }
+    }
+  },
+  "$defs": {
+    "replicas": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 32
+    },
+    "image": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Override the image for this service instead of the ghcr.io/ojuri-io one derived from `release`."
+    },
+    "resources": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Compose resource limits, in Compose's own string form.",
+      "properties": {
+        "cpu": {
+          "type": "string",
+          "pattern": "^[0-9]+(\\.[0-9]+)?$",
+          "description": "CPU limit, e.g. \"2\" or \"0.5\"."
+        },
+        "memory": {
+          "type": "string",
+          "pattern": "^[0-9]+(\\.[0-9]+)?([kmgKMG][bB]?)?$",
+          "description": "Memory limit, e.g. \"4G\" or \"512M\"."
+        }
+      }
+    },
+    "requiredService": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "replicas": { "$ref": "#/$defs/replicas" },
+        "image": { "$ref": "#/$defs/image" },
+        "resources": { "$ref": "#/$defs/resources" }
+      }
+    },
+    "optionalService": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "enabled": { "type": "boolean" },
+        "replicas": { "$ref": "#/$defs/replicas" },
+        "image": { "$ref": "#/$defs/image" },
+        "resources": { "$ref": "#/$defs/resources" }
+      }
+    },
+    "toggleService": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "enabled": { "type": "boolean" },
+        "image": { "$ref": "#/$defs/image" },
+        "resources": { "$ref": "#/$defs/resources" }
+      }
+    },
+    "postgres": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["mode"],
+      "properties": {
+        "mode": { "enum": ["bundled", "external"] },
+        "url": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Full connection URL, e.g. postgresql://user:pass@host:5432/fraud_db. Required when external."
+        }
+      },
+      "allOf": [
+        {
+          "if": { "properties": { "mode": { "const": "external" } }, "required": ["mode"] },
+          "then": { "required": ["url"] }
+        },
+        {
+          "if": { "properties": { "mode": { "const": "bundled" } }, "required": ["mode"] },
+          "then": { "properties": { "url": false } }
+        }
+      ]
+    },
+    "redis": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["mode"],
+      "properties": {
+        "mode": { "enum": ["bundled", "external"] },
+        "host": { "type": "string", "minLength": 1, "description": "Required when external." },
+        "port": { "type": "integer", "minimum": 1, "maximum": 65535 },
+        "password": { "type": "string" }
+      },
+      "allOf": [
+        {
+          "if": { "properties": { "mode": { "const": "external" } }, "required": ["mode"] },
+          "then": { "required": ["host"] }
+        },
+        {
+          "if": { "properties": { "mode": { "const": "bundled" } }, "required": ["mode"] },
+          "then": {
+            "properties": { "host": false, "port": false, "password": false }
+          }
+        }
+      ]
+    },
+    "kafka": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["mode"],
+      "properties": {
+        "mode": { "enum": ["bundled", "external"] },
+        "brokers": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Comma-separated broker list, e.g. broker-1:9092,broker-2:9092. Required when external."
+        }
+      },
+      "allOf": [
+        {
+          "if": { "properties": { "mode": { "const": "external" } }, "required": ["mode"] },
+          "then": { "required": ["brokers"] }
+        },
+        {
+          "if": { "properties": { "mode": { "const": "bundled" } }, "required": ["mode"] },
+          "then": { "properties": { "brokers": false } }
+        }
+      ]
+    }
+  }
+}

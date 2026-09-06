@@ -21,7 +21,17 @@ module.exports = {
   rootDir: './',
   // Frontend has its own Vitest runner under `frontend/`. Skip those
   // specs so Jest doesn't try to parse JSX/ESM modules it can't load.
-  testPathIgnorePatterns: ['/node_modules/', '/frontend/', '/paa-service/', '/mla-service/', '/fia-service/'],
+  // `packages/` holds the CLI and the client SDKs, each with its own
+  // Jest config and tsconfig. Without this the root runner would try to
+  // compile their specs against the root tsconfig and fail.
+  testPathIgnorePatterns: [
+    '/node_modules/',
+    '/frontend/',
+    '/paa-service/',
+    '/mla-service/',
+    '/fia-service/',
+    '/packages/',
+  ],
   testEnvironment: 'node',
   transform: {
     '^.+\\.(ts|tsx)$': 'ts-jest',

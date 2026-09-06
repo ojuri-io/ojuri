@@ -1,0 +1,5 @@
+version: 1
+datastores:
+  postgres:
+    mode: bundled
+    url: postgresql://ojuri@db.internal:5432/fraud_db

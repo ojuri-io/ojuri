@@ -91,6 +91,8 @@ jobs:
             dir: paa-service
           - workspace: frontend
             dir: frontend
+          - workspace: packages/cli
+            dir: packages/cli
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4

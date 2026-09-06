@@ -1,0 +1,5 @@
+version: 1
+datastores:
+  postgres:
+    mode: external
+    url: postgresql://ojuri:hunter2@db.internal:5432/fraud_db

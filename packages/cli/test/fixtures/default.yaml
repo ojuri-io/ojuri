@@ -1,0 +1,32 @@
+# Mirrors the committed ojuri.yaml at the repo root. A drift test pins
+# the two together so this fixture cannot quietly fall behind.
+version: 1
+release: v1
+datastores:
+  postgres:
+    mode: bundled
+  redis:
+    mode: bundled
+  kafka:
+    mode: bundled
+services:
+  rda:
+    replicas: 3
+  paa:
+    replicas: 1
+  mla:
+    enabled: false
+    replicas: 1
+  fia:
+    enabled: false
+    replicas: 1
+  sentinel:
+    enabled: false
+auth:
+  require_api_key: false
+  jwt_secret: ${AUTH_JWT_SECRET}
+network:
+  http_port: 80
+  public_url: http://localhost
+observability:
+  enabled: true

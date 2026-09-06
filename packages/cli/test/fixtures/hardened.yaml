@@ -1,0 +1,9 @@
+# Passes the production guard: keys required, a real secret, a public
+# origin that is not localhost.
+version: 1
+release: v1.6.0
+auth:
+  require_api_key: true
+  jwt_secret: a-real-secret-of-at-least-thirty-two-characters
+network:
+  public_url: https://sentinel.example.com

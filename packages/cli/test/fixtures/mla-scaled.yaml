@@ -1,0 +1,5 @@
+version: 1
+services:
+  mla:
+    enabled: true
+    replicas: 2

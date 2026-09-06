@@ -7,5 +7,6 @@ paa-service
 mla-service
 fia-service
 frontend
+packages
 scripts
 test/**/*.spec.ts

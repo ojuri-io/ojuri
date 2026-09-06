@@ -40,6 +40,11 @@ jobs:
             lint: "npm run lint"
             test: "npm test"
             build: "npm run build"
+          - workspace: packages/cli
+            dir: packages/cli
+            lint: "npm run lint"
+            test: "npm test"
+            build: "npm run build"
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
