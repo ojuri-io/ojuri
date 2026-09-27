@@ -154,10 +154,22 @@ function toApiError(response: Response, body: unknown): OjuriApiError {
 
 // Adopters attach these to Sentry; an outage should not pin megabytes per error.
 function truncate(body: unknown): unknown {
-  if (typeof body === "string" && body.length > MAX_RETAINED_BODY_CHARS) {
-    return `${body.slice(0, MAX_RETAINED_BODY_CHARS)}…`;
+  if (typeof body === "string") {
+    return body.length > MAX_RETAINED_BODY_CHARS
+      ? `${body.slice(0, MAX_RETAINED_BODY_CHARS)}…`
+      : body;
   }
-  return body;
+  const serialized = safeStringify(body);
+  if (serialized === null || serialized.length <= MAX_RETAINED_BODY_CHARS) return body;
+  return `${serialized.slice(0, MAX_RETAINED_BODY_CHARS)}…`;
+}
+
+function safeStringify(body: unknown): string | null {
+  try {
+    return JSON.stringify(body) ?? null;
+  } catch {
+    return null;
+  }
 }
 
 // RDA wraps failures as `{ status: false, message, errors }`; FIA answers

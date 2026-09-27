@@ -48,7 +48,10 @@ export function backoffDelayMs(
   retryAfterSeconds: number | null,
   random: () => number = Math.random
 ): number {
-  if (retryAfterSeconds !== null) return Math.min(retryAfterSeconds * 1000, MAX_BACKOFF_MS);
+  // Not capped: the transport refuses to sleep past its deadline, so honouring
+  // the server's figure is what makes an over-long directive give up instead of
+  // retrying earlier than instructed.
+  if (retryAfterSeconds !== null) return retryAfterSeconds * 1000;
   const ceiling = Math.min(baseDelayMs * 2 ** attempt, MAX_BACKOFF_MS);
   return Math.round(random() * ceiling);
 }

@@ -1,7 +1,7 @@
 {
   "name": "@ojuri/sdk",
   "version": "0.1.0",
-  "description": "Typed client for the Ojuri fraud-detection API — predict, decisions, investigation reports, and webhook signature verification. Zero runtime dependencies.",
+  "description": "Typed client for the Ojuri fraud-detection API \u2014 predict, decisions, investigation reports, and webhook signature verification. Zero runtime dependencies.",
   "author": "Ayodeji Abodunrin <https://ayodejiabodunrin.com/>",
   "license": "MIT",
   "repository": {
@@ -51,13 +51,16 @@
   "scripts": {
     "prebuild": "rm -rf dist",
     "build": "tsc -p tsconfig.build.json && tsc -p tsconfig.cjs.json && node scripts/write-module-type.mjs",
-    "lint": "tsc -p tsconfig.json --noEmit",
+    "lint": "eslint --ext .ts src && tsc -p tsconfig.json --noEmit",
     "test": "jest --passWithNoTests",
     "prepublishOnly": "npm run lint && npm test && npm run build"
   },
   "devDependencies": {
     "@types/jest": "^30.0.0",
     "@types/node": "^20.19.9",
+    "@typescript-eslint/eslint-plugin": "^7.18.0",
+    "@typescript-eslint/parser": "^7.18.0",
+    "eslint": "^8.57.1",
     "jest": "^30.2.0",
     "ts-jest": "^29.4.6",
     "typescript": "^5.9.3"
