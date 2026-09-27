@@ -324,6 +324,14 @@ jobs:
   # Publish @ojuri/sdk to npm. Separate from the image matrix because
   # it is the only artefact adopters install rather than run, and it
   # must not gate the Docker release if npm is down.
+  #
+  # Its version is NOT aligned to the release tag. The five services
+  # version in lockstep because they share Kafka topics, a Postgres
+  # schema and a Redis hash; a client library shares none of that, and a
+  # version that moved because the server released tells an adopter
+  # nothing about whether upgrading matters. packages/sdk/package.json
+  # is the source of truth, and a tag that does not bump it republishes
+  # nothing.
   # ─────────────────────────────────────────────────────────────────
   publish-sdk:
     name: publish @ojuri/sdk
@@ -349,12 +357,6 @@ jobs:
       - name: Install
         working-directory: packages/sdk
         run: npm ci
-      - name: Align the package version with the release tag
-        working-directory: packages/sdk
-        run: |
-          VERSION="${{ needs.resolve-version.outputs.version }}"
-          npm version "${VERSION#v}" --no-git-tag-version --allow-same-version
-          node -e "const v=require('./package.json').version,f=require('fs'),p='src/version.ts';f.writeFileSync(p,'export const SDK_VERSION = \"'+v+'\";\n')"
       - name: Verify
         working-directory: packages/sdk
         run: npm run lint && npm test && npm run build

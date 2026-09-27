@@ -7,7 +7,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.7.0] - 2026-09-28
+
+Additive only. Two new publishable packages, a new optional manifest, no
+migrations and no schema changes. Every existing install path is unchanged.
+
 ### Added
+
+- **A one-command install, as an additional option.** `npx @ojuri/cli@1.7.0 up`
+  brings the stack up on a machine with Docker and Node 20 and **no clone**:
+  it writes `ojuri.yaml` and a `.env` with fresh secrets, unpacks the compose
+  file and the assets it bind-mounts, pulls the images, waits for the
+  migration and for RDA to answer `/ready`, then prints a runnable `curl` and
+  the admin password. Neither existing flow changes: `cp .env.example .env`
+  plus the two-file Compose invocation, and the build-from-source path, work
+  exactly as documented.
+
+  The new `ojuri.yaml` manifest is a layer over `.env`, not a replacement, and
+  rendering the committed default produces a byte-identical Compose project to
+  the one you get today, which CI asserts. It adds `ojuri init`, `up`, `down`,
+  `status`, `doctor` and `render`, a JSON Schema, and validation that refuses
+  what the architecture cannot do: `paa.replicas` above 1 is an error, because
+  a second copy sees half the transaction graph and silently stops catching
+  rings that span both.
+
+  `mla`, `fia` and `sentinel` ship disabled, so a default install starts what
+  it starts today. FIA stays off because it downloads roughly 7.6 GB of model
+  weights on first start.
 
 - **`@ojuri/sdk`, a typed client for the predict path.** Adopters calling
   `POST /v1/predict` no longer hand-roll `fetch`: `packages/sdk` ships a
