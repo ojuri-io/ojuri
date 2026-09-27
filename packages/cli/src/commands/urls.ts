@@ -32,6 +32,20 @@ export function baseUrl(cfg: EffectiveConfig): string {
   return stripTrailingSlash(url.toString());
 }
 
+/**
+ * Grafana is published straight onto the host rather than proxied, so it takes
+ * public_url's hostname and scheme but its own port. Hardcoding localhost sent
+ * an operator on a remote box to their own machine.
+ */
+const GRAFANA_HOST_PORT = 3001;
+
+function grafanaUrl(cfg: EffectiveConfig): string {
+  const url = new URL(cfg.publicUrl);
+  url.port = String(GRAFANA_HOST_PORT);
+  url.pathname = "/";
+  return stripTrailingSlash(url.toString());
+}
+
 function isDefaultPort(protocol: string, port: number): boolean {
   return (protocol === "http:" && port === 80) || (protocol === "https:" && port === 443);
 }
@@ -88,6 +102,6 @@ export function summaryUrls(cfg: EffectiveConfig): {
   // Sentinel is served through NGINX at the root, not on a host port of
   // its own; 3001 is Grafana's.
   if (cfg.sentinel.enabled) urls.sentinel = base;
-  if (cfg.observabilityEnabled) urls.grafana = "http://localhost:3001";
+  if (cfg.observabilityEnabled) urls.grafana = grafanaUrl(cfg);
   return urls;
 }

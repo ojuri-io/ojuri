@@ -448,3 +448,108 @@ jobs:
       - name: Teardown
         if: always()
         run: docker compose down -v
+
+  # ─────────────────────────────────────────────────────────────────
+  # The one-command install, proved rather than asserted.
+  #
+  # Every unit test in packages/cli injects Exec, so none of them runs
+  # a real `docker compose`, and one builds a temp directory with no
+  # compose file in it and still passes. What is left unverified is the
+  # only claim an adopter cares about: that the published tarball alone,
+  # with no checkout anywhere, reaches a working predict endpoint.
+  #
+  # This runs from /tmp so the stack cannot be found by walking up, which
+  # means a regression that reintroduces the clone dependency fails here
+  # rather than in someone's first five minutes with the product.
+  # ─────────────────────────────────────────────────────────────────
+  one-command-install:
+    name: install from the tarball with no checkout
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: packages/cli/package-lock.json
+
+      - name: Pack the CLI
+        working-directory: packages/cli
+        run: |
+          npm ci
+          npm pack --pack-destination /tmp
+          ls -la /tmp/ojuri-cli-*.tgz
+
+      - name: The tarball must carry the stack it needs
+        run: |
+          set -e
+          missing=0
+          for path in docker-compose.yml docker-compose.ghcr.yml .env.example \
+                      nginx/nginx.conf prometheus/prometheus.yml \
+                      models/fraud_model.onnx models/feature-catalog.v1.json; do
+            if ! tar -tzf /tmp/ojuri-cli-*.tgz | grep -q "package/stack/$path$"; then
+              echo "::error::stack/$path is not in the tarball"
+              missing=1
+            fi
+          done
+          exit $missing
+
+      - name: Install it somewhere with no repository above it
+        run: |
+          set -e
+          mkdir -p /tmp/adopter
+          cd /tmp/adopter
+          npm init -y >/dev/null
+          npm install /tmp/ojuri-cli-*.tgz
+          # Nothing may be reachable by walking up from here.
+          test ! -e /tmp/docker-compose.yml
+          test ! -e /docker-compose.yml
+
+      - name: One command
+        working-directory: /tmp/adopter
+        run: npx ojuri up 2>&1 | tee /tmp/up.log
+
+      - name: It must have used the bundled stack, not a checkout
+        run: |
+          set -e
+          test -f /tmp/adopter/.ojuri/stack/docker-compose.yml
+          test -f /tmp/adopter/.ojuri/stack/models/fraud_model.onnx
+          test -f /tmp/adopter/ojuri.yaml
+          test -f /tmp/adopter/.env
+          grep -q 'ADMIN_SEED_PASSWORD=' /tmp/adopter/.env
+
+      - name: Predict must answer
+        run: |
+          set -e
+          body=$(curl -fsS -X POST http://localhost/v1/predict \
+            -H 'Content-Type: application/json' \
+            -d "{\"transaction_id\":\"ci-$(date +%s)-oneshot\",\"sender_id\":\"acct-1\",\"receiver_id\":\"acct-2\",\"amount\":50000,\"transaction_type\":\"TRANSFER\",\"timestamp\":$(date +%s)000}")
+          echo "$body"
+          echo "$body" | grep -qE '"decision":"(ACCEPT|DECLINE|REVIEW)"'
+
+      - name: status and down must address what up started
+        working-directory: /tmp/adopter
+        run: |
+          set -e
+          npx ojuri status
+          npx ojuri down
+          # `down` found the project only if nothing is left running.
+          test -z "$(docker ps -q)"
+
+      - name: Dump logs on failure
+        if: failure()
+        working-directory: /tmp/adopter
+        run: |
+          cat /tmp/up.log || true
+          docker ps -a || true
+          for svc in nginx rda db-migrate postgres; do
+            echo "::group::$svc"
+            docker logs "$(docker ps -aqf name=$svc | head -1)" --tail 60 2>&1 || true
+            echo "::endgroup::"
+          done
+
+      - name: Teardown
+        if: always()
+        working-directory: /tmp/adopter
+        run: npx ojuri down --volumes --yes || docker system prune -af --volumes || true

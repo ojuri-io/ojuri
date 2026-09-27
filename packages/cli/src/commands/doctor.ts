@@ -167,7 +167,7 @@ function fiaFindings(cfg: EffectiveConfig, deps: DoctorDeps): Finding[] {
   if (!cfg.fia.enabled) return [];
   const findings: Finding[] = [];
 
-  const totalRam = (deps.totalMemoryBytes ?? totalmem)();
+  const totalRam = dockerMemoryBytes(deps) ?? (deps.totalMemoryBytes ?? totalmem)();
   const ramGb = totalRam / 1024 ** 3;
   const neededRam = FIA_RAM_GB * cfg.fia.replicas;
   if (ramGb < neededRam) {
@@ -186,20 +186,38 @@ function fiaFindings(cfg: EffectiveConfig, deps: DoctorDeps): Finding[] {
     );
   }
 
+  // The weights land in the fia-hf-cache volume, which lives in Docker's
+  // storage, not the project directory. On macOS and Windows those are
+  // different filesystems, so measuring the host here would pass a machine
+  // that cannot hold them.
   const free = (deps.freeDiskBytes ?? statfs)(process.cwd());
-  if (free !== null && free / 1024 ** 3 < FIA_DISK_GB) {
-    findings.push(
-      warning(
-        "fia-disk",
-        "services.fia",
-        `FIA needs about ${FIA_DISK_GB} GB free and this host has ${(free / 1024 ** 3).toFixed(1)} GB.`,
-        "The Phi-3 weights are roughly 7.6 GB, downloaded on first start into " +
-          "the fia-hf-cache volume."
-      )
-    );
-  }
+  const hostShort = free !== null && free / 1024 ** 3 < FIA_DISK_GB;
+  findings.push(
+    warning(
+      "fia-disk",
+      "services.fia",
+      `FIA needs about ${FIA_DISK_GB} GB in Docker's storage, which this command cannot measure from the host.`,
+      hostShort
+        ? `This host has ${(free / 1024 ** 3).toFixed(1)} GB free, which is already short of it. ` +
+          "Check Docker's own figure with `docker system df` before starting FIA."
+        : "Check it with `docker system df`. The Phi-3 weights are roughly 7.6 GB, " +
+          "downloaded on first start into the fia-hf-cache volume."
+    )
+  );
 
   return findings;
+}
+
+/**
+ * Docker Desktop runs a VM with its own memory allocation, and it is that
+ * allocation which has to satisfy FIA's 16g limit, not the physical host.
+ */
+function dockerMemoryBytes(deps: DoctorDeps): number | null {
+  if (deps.totalMemoryBytes) return null;
+  const result = deps.exec.run(["docker", "info", "--format", "{{.MemTotal}}"]);
+  if (result.status !== 0) return null;
+  const parsed = Number.parseInt(result.stdout.trim(), 10);
+  return Number.isNaN(parsed) || parsed <= 0 ? null : parsed;
 }
 
 /** Binds the port briefly. Free means nothing was listening. */

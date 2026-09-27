@@ -5,6 +5,10 @@ import { loadManifest } from "../manifest/load";
 import { applyRules } from "../manifest/rules";
 import { validateAgainstSchema } from "../manifest/schema";
 import { composeCommand, formatCommand, type CommandOptions } from "./command";
+import { locateStack } from "../stack/locate";
+import { materialiseStack } from "../stack/materialise";
+import { PACKAGE_DIR } from "../stack/package-dir";
+import { resolveStack } from "../stack/resolve";
 import { ENV_FILENAME, OVERLAY_FILENAME } from "./compose-base";
 import { renderEnvFile } from "./env-file";
 import { isNoOp, renderOverlay } from "./overlay";
@@ -72,10 +76,18 @@ export function render(manifestPath: string, options: RenderOptions = {}): Rende
   const overlayContent = renderOverlay(plan);
 
   const projectDir = dirname(loaded.path);
+  if (!options.dryRun) {
+    const source = locateStack(PACKAGE_DIR, projectDir);
+    if (source) materialiseStack(source, join(resolve(projectDir, outDir), "stack"));
+  }
+
+  const stack = resolveStack(projectDir, outDir);
   const commandOptions: CommandOptions = {
     build: options.build === true,
     outDir,
     envFile: ".env",
+    stackDir: stack?.stackDir,
+    projectName: stack?.projectName,
     args: ["up", "-d"],
   };
   const command = formatCommand(composeCommand(plan, commandOptions));

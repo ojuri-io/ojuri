@@ -2,18 +2,15 @@ import { randomUUID } from "node:crypto";
 import { existsSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import type { Exec, Probe } from "../exec";
-import { lookup } from "../manifest/env";
+import { lookup, type EnvSource } from "../manifest/env";
 import { loadDotenv } from "../manifest/env";
 import type { EffectiveConfig } from "../manifest/types";
 import { render, type RenderResult } from "../render";
 import type { CommandOptions } from "../render/command";
-import { SERVICE } from "../render/compose-base";
+import { ENV_FILENAME, SERVICE } from "../render/compose-base";
 import { adminOutcome, migrateOutcome, parsePs, runCompose, type AdminOutcome } from "./stack";
-import { summaryUrls } from "./urls";
+import { baseUrl, probeTargets, summaryUrls } from "./urls";
 import { init } from "./init";
-import { locateStack } from "../stack/locate";
-import { materialiseStack } from "../stack/materialise";
-import { PACKAGE_DIR } from "../stack/package-dir";
 import { resolveStack } from "../stack/resolve";
 
 export interface UpDeps {
@@ -49,6 +46,11 @@ export async function up(
   options: UpOptions,
   deps: UpDeps
 ): Promise<UpResult> {
+  const outDir = options.outDir ?? ".ojuri";
+  const previousReplicas = previousRdaReplicas(
+    join(dirname(resolve(manifestPath)), outDir, ENV_FILENAME)
+  );
+
   const bootstrap = options.noBootstrap === true ? null : bootstrapIfAbsent(manifestPath);
   if (bootstrap && !bootstrap.ok) {
     return { ok: false, lines: [], errors: bootstrap.errors, render: render(manifestPath, {}) };
@@ -86,9 +88,8 @@ export async function up(
     };
   }
 
-  const outDir = options.outDir ?? ".ojuri";
-  const source = locateStack(PACKAGE_DIR, projectDir);
-  if (!source) {
+  const resolved = resolveStack(projectDir, outDir);
+  if (!resolved) {
     return {
       ok: false,
       render: rendered,
@@ -97,17 +98,6 @@ export async function up(
         "Could not find docker-compose.yml, and this package carries no bundled stack.",
         "Reinstall @ojuri/cli, or run from a checkout.",
       ],
-    };
-  }
-
-  materialiseStack(source, join(projectDir, outDir, "stack"));
-  const resolved = resolveStack(projectDir, outDir);
-  if (!resolved) {
-    return {
-      ok: false,
-      render: rendered,
-      lines: [],
-      errors: ["Could not resolve the stack directory after materialising it."],
     };
   }
 
@@ -147,7 +137,12 @@ export async function up(
     };
   }
 
-  const ready = await waitForReady(cfg, options, deps);
+  const env = {
+    dotenv: loadDotenv(`${projectDir}/.env`),
+    process: options.processEnv ?? process.env,
+  };
+
+  const ready = await waitForReady(cfg, env, options, deps);
   if (!ready) {
     return {
       ok: false,
@@ -160,15 +155,30 @@ export async function up(
     };
   }
 
-  const dotenv = loadDotenv(`${projectDir}/.env`);
-  const env = { dotenv, process: options.processEnv ?? process.env };
   const logs = composeLogs(deps.exec, rendered.plan, commandOptions, projectDir);
   const admin = bootstrap?.adminPassword
     ? ({ kind: "bootstrapped", password: bootstrap.adminPassword } as const)
     : adminOutcome(logs, lookup(env, "ADMIN_SEED_PASSWORD"));
 
+  const nginxLines =
+    previousReplicas !== null && previousReplicas !== cfg.rda.replicas
+      ? restartNginx(
+          deps.exec,
+          rendered.plan,
+          commandOptions,
+          projectDir,
+          previousReplicas,
+          cfg.rda.replicas
+        )
+      : [];
+
   const preamble = bootstrap ? bootstrap.messages : [];
-  return { ok: true, render: rendered, errors: [], lines: [...preamble, ...summary(cfg, admin)] };
+  return {
+    ok: true,
+    render: rendered,
+    errors: [],
+    lines: [...preamble, ...summary(cfg, admin), ...nginxLines],
+  };
 }
 
 async function waitForMigrate(
@@ -191,18 +201,27 @@ async function waitForMigrate(
   }
 }
 
+/**
+ * Probes every URL `status` would, not just the one public_url implies. An
+ * operator who points public_url at a hostname resolved only from outside the
+ * box would otherwise wait out the whole timeout against a healthy stack.
+ */
 async function waitForReady(
   cfg: EffectiveConfig,
+  env: EnvSource,
   options: UpOptions,
   deps: UpDeps
 ): Promise<boolean> {
-  const url = `${summaryUrls(cfg).predict.replace("/v1/predict", "")}/ready`;
+  const rda = probeTargets(cfg, env).find((target) => target.name === "rda");
+  const urls = rda ? rda.urls : [`${baseUrl(cfg)}/ready`];
   const deadline = (deps.now ?? Date.now)() + (options.timeoutMs ?? DEFAULT_TIMEOUT_MS);
   const sleep = deps.sleep ?? defaultSleep;
 
   for (;;) {
-    const res = await deps.probe.get(url, 3000);
-    if (res && res.status === 200) return true;
+    for (const url of urls) {
+      const res = await deps.probe.get(url, 3000);
+      if (res && res.status === 200) return true;
+    }
     if ((deps.now ?? Date.now)() >= deadline) return false;
     await sleep(POLL_MS);
   }
@@ -361,3 +380,39 @@ function bootstrapIfAbsent(manifestPath: string): {
   };
 }
 
+
+
+/**
+ * nginx resolves the RDA replica addresses once at startup, so a stack that was
+ * already running with a different count is left balancing over stale peers.
+ */
+function restartNginx(
+  exec: UpDeps["exec"],
+  plan: NonNullable<RenderResult["plan"]>,
+  commandOptions: CommandOptions,
+  projectDir: string,
+  from: number,
+  to: number
+): string[] {
+  const result = runCompose(exec, plan, commandOptions, ["restart", SERVICE.nginx], projectDir);
+  if (result.status !== 0) {
+    return [
+      "",
+      `RDA replicas changed from ${from} to ${to}, but restarting nginx failed, so it`,
+      "is still balancing over the old addresses. Run `docker compose restart nginx`.",
+    ];
+  }
+  return ["", `Restarted nginx: RDA replicas changed from ${from} to ${to}.`];
+}
+
+/**
+ * The count the last `up` rendered. Comparing against it is what tells us the
+ * operator changed services.rda.replicas, without asking Docker anything.
+ */
+function previousRdaReplicas(renderedEnvPath: string): number | null {
+  if (!existsSync(renderedEnvPath)) return null;
+  const raw = loadDotenv(renderedEnvPath)["RDA_REPLICAS"];
+  if (raw === undefined) return null;
+  const parsed = Number.parseInt(raw, 10);
+  return Number.isNaN(parsed) ? null : parsed;
+}

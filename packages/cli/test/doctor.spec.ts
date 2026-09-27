@@ -8,7 +8,7 @@ import {
 } from "../src/commands/doctor";
 import type { Exec, ExecResult } from "../src/exec";
 import { effective, type Manifest } from "../src/manifest/types";
-import { errorCodes, warningCodes } from "./helpers";
+import { errorCodes, findByCode, warningCodes } from "./helpers";
 
 function execWith(responses: Record<string, ExecResult>): Exec {
   return {
@@ -229,7 +229,7 @@ describe("FIA host requirements", () => {
     expect(warningCodes(findings)).toContain("fia-disk");
   });
 
-  it("says nothing on a host with room", async () => {
+  it("raises nothing but the unverifiable disk requirement on a host with room", async () => {
     const findings = await doctor(cfg(fia), {
       exec: HEALTHY,
       checkPort: freePorts,
@@ -237,7 +237,40 @@ describe("FIA host requirements", () => {
       totalMemoryBytes: () => 64 * 1024 ** 3,
       freeDiskBytes: () => 100 * 1024 ** 3,
     });
-    expect(findings).toEqual([]);
+
+    expect(warningCodes(findings)).toEqual(["fia-disk"]);
+    expect(findByCode(findings, "fia-disk")?.message).toContain("cannot measure");
+  });
+
+  it("says the host is already short when it is, rather than only that it cannot measure", async () => {
+    const findings = await doctor(cfg(fia), {
+      exec: HEALTHY,
+      checkPort: freePorts,
+      checkTcp: reachable,
+      totalMemoryBytes: () => 64 * 1024 ** 3,
+      freeDiskBytes: () => 4 * 1024 ** 3,
+    });
+
+    expect(findByCode(findings, "fia-disk")?.detail).toContain("already short");
+  });
+
+  it("reads Docker's memory allocation rather than the host's when it can", async () => {
+    const dockerSaysFourGb: Exec = {
+      run(argv) {
+        if (argv.includes("info")) return { status: 0, stdout: String(4 * 1024 ** 3), stderr: "" };
+        return HEALTHY.run(argv);
+      },
+    };
+
+    const findings = await doctor(cfg(fia), {
+      exec: dockerSaysFourGb,
+      checkPort: freePorts,
+      checkTcp: reachable,
+      freeDiskBytes: () => 100 * 1024 ** 3,
+    });
+
+    expect(warningCodes(findings)).toContain("fia-ram");
+    expect(findByCode(findings, "fia-ram")?.message).toContain("4.0 GB");
   });
 
   it("checks nothing about FIA while it is disabled", async () => {

@@ -1,4 +1,4 @@
-import { existsSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { down } from "../src/commands/down";
@@ -424,5 +424,94 @@ describe("up bootstrapping a first run", () => {
       .map((argv) => argv[argv.indexOf("-p") + 1]);
     expect(names.length).toBeGreaterThanOrEqual(3);
     expect(new Set(names).size).toBe(1);
+  });
+});
+
+describe("up reacting to a replica change", () => {
+  function withRenderedReplicas(count: number): string {
+    const dir = project("version: 1\nservices:\n  rda:\n    replicas: 3\n");
+    mkdirSync(join(dir, ".ojuri"), { recursive: true });
+    writeFileSync(join(dir, ".ojuri", ".env.rendered"), `RDA_REPLICAS=${count}\n`, "utf8");
+    return dir;
+  }
+
+  it("restarts nginx when the count changed, because it holds the old addresses", async () => {
+    const dir = withRenderedReplicas(1);
+    const rec = recorder((argv) => (argv.includes("ps") ? { ...ok, stdout: MIGRATED } : ok));
+
+    const result = await up(join(dir, "ojuri.yaml"), { processEnv: {} }, {
+      exec: rec.exec,
+      probe: probeReturning(200),
+      sleep: noSleep,
+    });
+
+    expect(rec.calls.some((c) => c.includes("restart") && c.includes("nginx"))).toBe(true);
+    expect(result.lines.join("\n")).toContain("Restarted nginx");
+  });
+
+  it("leaves nginx alone when the count is unchanged", async () => {
+    const dir = withRenderedReplicas(3);
+    const rec = recorder((argv) => (argv.includes("ps") ? { ...ok, stdout: MIGRATED } : ok));
+
+    await up(join(dir, "ojuri.yaml"), { processEnv: {} }, {
+      exec: rec.exec,
+      probe: probeReturning(200),
+      sleep: noSleep,
+    });
+
+    expect(rec.calls.some((c) => c.includes("restart"))).toBe(false);
+  });
+
+  it("leaves nginx alone on a first run, when there is nothing to compare against", async () => {
+    const dir = project("version: 1\nservices:\n  rda:\n    replicas: 3\n");
+    const rec = recorder((argv) => (argv.includes("ps") ? { ...ok, stdout: MIGRATED } : ok));
+
+    await up(join(dir, "ojuri.yaml"), { processEnv: {} }, {
+      exec: rec.exec,
+      probe: probeReturning(200),
+      sleep: noSleep,
+    });
+
+    expect(rec.calls.some((c) => c.includes("restart"))).toBe(false);
+  });
+
+  it("says so rather than staying silent when the restart itself fails", async () => {
+    const dir = withRenderedReplicas(1);
+    const rec = recorder((argv) => {
+      if (argv.includes("restart")) return { status: 1, stdout: "", stderr: "no such service" };
+      return argv.includes("ps") ? { ...ok, stdout: MIGRATED } : ok;
+    });
+
+    const result = await up(join(dir, "ojuri.yaml"), { processEnv: {} }, {
+      exec: rec.exec,
+      probe: probeReturning(200),
+      sleep: noSleep,
+    });
+
+    expect(result.lines.join("\n")).toContain("restarting nginx failed");
+  });
+});
+
+describe("up waiting for readiness", () => {
+  it("falls back to localhost when public_url does not answer from the box", async () => {
+    const dir = project("version: 1\nnetwork:\n  public_url: https://ojuri.example.com\n");
+    const rec = recorder((argv) => (argv.includes("ps") ? { ...ok, stdout: MIGRATED } : ok));
+    const asked: string[] = [];
+    const probe = {
+      get: async (url: string) => {
+        asked.push(url);
+        return url.includes("localhost") ? { status: 200, body: "" } : null;
+      },
+    };
+
+    const result = await up(join(dir, "ojuri.yaml"), { processEnv: {} }, {
+      exec: rec.exec,
+      probe,
+      sleep: noSleep,
+    });
+
+    expect(result.ok).toBe(true);
+    expect(asked.some((u) => u.startsWith("https://ojuri.example.com"))).toBe(true);
+    expect(asked.some((u) => u.includes("localhost"))).toBe(true);
   });
 });

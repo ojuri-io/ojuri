@@ -148,9 +148,11 @@ describe("render command", () => {
     const dir = outDir();
     const { code, out } = capture(["render", fixture("default.yaml"), "--out-dir", dir]);
     expect(code).toBe(0);
-    expect(readdirSync(dir).sort()).toEqual([".env.rendered", "docker-compose.override.ojuri.yml"]);
+    expect(readdirSync(dir).sort()).toEqual(
+      expect.arrayContaining([".env.rendered", "docker-compose.override.ojuri.yml"])
+    );
     expect(out).toContain("docker compose");
-    expect(out).toContain("-f docker-compose.ghcr.yml");
+    expect(out).toMatch(/-f \S*docker-compose\.ghcr\.yml/);
   });
 
   it("says plainly when the overlay is empty", () => {
@@ -195,7 +197,7 @@ describe("render command", () => {
       outDir(),
     ]);
     expect(out).not.toContain("docker-compose.ghcr.yml");
-    expect(out).toContain("-f docker-compose.yml");
+    expect(out).toMatch(/-f \S*docker-compose\.yml/);
   });
 
   it("emits a machine-readable report under --json", () => {
