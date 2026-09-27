@@ -92,6 +92,8 @@ jobs:
             dir: paa-service
           - workspace: frontend
             dir: frontend
+          - workspace: packages/cli
+            dir: packages/cli
           - workspace: sdk
             dir: packages/sdk
     steps:
@@ -261,6 +263,64 @@ jobs:
   # the body afterwards if they want to add a narrative section.
   # ─────────────────────────────────────────────────────────────────
   # ─────────────────────────────────────────────────────────────────
+  # Publish @ojuri/cli. Unlike a client library this one is version
+  # locked to the platform: the tarball carries the compose file and the
+  # model artefacts, so a CLI that does not match the images it starts
+  # is a broken install rather than an old one. It therefore waits for
+  # build-and-push, because publishing a CLI that pulls images which do
+  # not exist yet would hand adopters a tag they cannot resolve.
+  # ─────────────────────────────────────────────────────────────────
+  publish-cli:
+    name: publish @ojuri/cli
+    runs-on: ubuntu-latest
+    needs: [resolve-version, test, build-and-push]
+    if: github.event_name == 'push' || !inputs.dry_run
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: packages/cli/package-lock.json
+          registry-url: https://registry.npmjs.org
+      - name: Guard against a missing token
+        run: |
+          if [ -z "${NPM_TOKEN}" ]; then
+            echo "NPM_TOKEN is not set — cannot publish @ojuri/cli." >&2
+            exit 1
+          fi
+        env:
+          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
+      - name: Install
+        working-directory: packages/cli
+        run: npm ci
+      - name: Align the package version with the release tag
+        working-directory: packages/cli
+        run: |
+          VERSION="${{ needs.resolve-version.outputs.version }}"
+          npm version "${VERSION#v}" --no-git-tag-version --allow-same-version
+      - name: Verify
+        working-directory: packages/cli
+        run: npm run lint && npm test
+      - name: The tarball must carry the stack, or the install needs a checkout
+        working-directory: packages/cli
+        run: |
+          npm pack --pack-destination /tmp
+          missing=0
+          for path in docker-compose.yml docker-compose.ghcr.yml .env.example \
+                      nginx/nginx.conf prometheus/prometheus.yml \
+                      models/fraud_model.onnx models/feature-catalog.v1.json; do
+            tar -tzf /tmp/ojuri-cli-*.tgz | grep -q "package/stack/$path$" || {
+              echo "::error::stack/$path is missing from the tarball"; missing=1; }
+          done
+          exit $missing
+      - name: Publish
+        working-directory: packages/cli
+        run: npm publish --access public --provenance
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+  # ─────────────────────────────────────────────────────────────────
   # Publish @ojuri/sdk to npm. Separate from the image matrix because
   # it is the only artefact adopters install rather than run, and it
   # must not gate the Docker release if npm is down.
@@ -357,6 +417,6 @@ jobs:
             - `ghcr.io/ojuri-io/fia`
             - `ghcr.io/ojuri-io/sentinel`
 
-            Adopter client: `npm install @ojuri/sdk`
+            One-command install: `npx @ojuri/cli@${{ needs.resolve-version.outputs.version }} up`
 
             See [`CHANGELOG.md`](CHANGELOG.md) for the human-curated change log, [`VERSIONING.md`](VERSIONING.md) for the pinning recommendation, and [`UPGRADING.md`](UPGRADING.md) for any major-version upgrade path.

@@ -1,0 +1,7 @@
+# Replicas above 1 on a service that is switched off is inert, so it
+# must not be an error.
+version: 1
+services:
+  mla:
+    enabled: false
+    replicas: 4

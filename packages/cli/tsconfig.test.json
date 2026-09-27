@@ -1,0 +1,14 @@
+{
+  // The build tsconfig deliberately compiles src/ only, so dist/ holds
+  // no specs. ts-jest needs the specs in its program to emit them, so
+  // it uses this one instead. Nothing is written to disk: ts-jest
+  // compiles in memory.
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "rootDir": ".",
+    "declaration": false,
+    "declarationMap": false,
+    "noEmitOnError": false
+  },
+  "include": ["src/**/*", "test/**/*"]
+}
