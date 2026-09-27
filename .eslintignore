@@ -10,3 +10,6 @@ frontend
 packages
 scripts
 test/**/*.spec.ts
+
+# Has its own lint step and tsconfig; see .github/workflows/ci.yml.
+packages/

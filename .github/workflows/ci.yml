@@ -42,6 +42,8 @@ jobs:
             build: "npm run build"
           - workspace: packages/cli
             dir: packages/cli
+          - workspace: sdk
+            dir: packages/sdk
             lint: "npm run lint"
             test: "npm test"
             build: "npm run build"

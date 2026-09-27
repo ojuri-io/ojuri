@@ -1,3 +1,5 @@
+import { ReasonBasis } from "@shared/onnx/reason-codes.types";
+
 /**
  * Device fingerprint information
  */
@@ -88,6 +90,7 @@ export interface ReasonCodeDto {
   description: string;
   contribution: number;
   value: number;
+  basis: ReasonBasis;
 }
 
 /**

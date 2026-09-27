@@ -7,7 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **`@ojuri/sdk`, a typed client for the predict path.** Adopters calling
+  `POST /v1/predict` no longer hand-roll `fetch`: `packages/sdk` ships a
+  zero-dependency, dual ESM/CJS client (Node 18+) covering the predict call
+  and inbound webhook signature verification, published to npm on release.
+  It deliberately does not wrap the audit reads or the FIA report endpoints —
+  those are Sentinel's surface, and the dashboard calls them directly.
+  `test/contracts/sdk-types.contract.test.ts` compares every copied type and
+  enum against the server declarations and fails this repo's CI on drift in
+  either direction.
+
 ### Fixed
+
+- **`ReasonCodeDto` omitted `basis`.** The wire DTO had drifted from
+  `ReasonCode`, which carries the field and is what the response factory
+  actually passes through, so the documented response shape understated what
+  `/v1/predict` returns.
 
 - **Deploys served a stale dashboard until the CDN cache lapsed.** Sentinel is
   a hashed-bundle SPA: a new image writes a new `index.html`, but CloudFront
