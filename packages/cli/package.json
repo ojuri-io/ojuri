@@ -10,6 +10,7 @@
     "dist",
     "schema",
     "templates",
+    "stack",
     "README.md"
   ],
   "author": "Ayodeji Abodunrin <https://ayodejiabodunrin.com/>",
@@ -26,7 +27,9 @@
     "build": "tsc",
     "test": "jest --passWithNoTests",
     "lint": "eslint --ignore-path .eslintignore --ext .ts .",
-    "lint:fix": "eslint . --ext .ts --fix"
+    "lint:fix": "eslint . --ext .ts --fix",
+    "sync:stack": "node scripts/sync-stack.mjs",
+    "prepack": "npm run build && npm run sync:stack"
   },
   "dependencies": {
     "ajv": "^8.17.1",

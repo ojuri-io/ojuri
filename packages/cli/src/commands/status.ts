@@ -4,6 +4,7 @@ import { loadDotenv, type EnvSource } from "../manifest/env";
 import { render, type RenderResult } from "../render";
 import type { CommandOptions } from "../render/command";
 import { parsePs, runCompose, type ContainerState } from "./stack";
+import { resolveStack } from "../stack/resolve";
 import { probeTargets } from "./urls";
 
 export interface StatusDeps {
@@ -49,10 +50,14 @@ export async function status(
   }
 
   const projectDir = dirname(rendered.manifestPath);
+  const outDir = options.outDir ?? ".ojuri";
+  const resolved = resolveStack(projectDir, outDir);
   const commandOptions: CommandOptions = {
     build: false,
-    outDir: options.outDir ?? ".ojuri",
+    outDir,
     envFile: ".env",
+    stackDir: resolved?.stackDir,
+    projectName: resolved?.projectName,
   };
 
   const ps = runCompose(

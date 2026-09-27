@@ -1,5 +1,7 @@
 import { copyFileSync, existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
+import { locateStack } from "../stack/locate";
+import { PACKAGE_DIR } from "../stack/package-dir";
 import { readEnvValue, replaceUrlPassword, setEnvValue } from "../envfile";
 import { DEFAULT_MANIFEST_FILENAME } from "../manifest/load";
 import {
@@ -9,6 +11,8 @@ import {
 } from "../secrets";
 
 export interface InitOptions {
+  /** Overrides where the bundled .env.example is read from. */
+  stackDir?: string;
   /** Project directory. Defaults to the current working directory. */
   dir?: string;
   /** Keep the development defaults instead of generating secrets. */
@@ -28,6 +32,21 @@ export interface InitResult {
 }
 
 /**
+ * A checkout has .env.example beside the manifest; a published package carries
+ * it in the bundled stack. Preferring the local copy lets an operator edit it.
+ */
+function resolveEnvExample(dir: string, stackDir?: string): string | null {
+  const local = join(dir, ".env.example");
+  if (existsSync(local)) return local;
+
+  const source = stackDir ? { root: stackDir, bundled: true } : locateStack(PACKAGE_DIR, dir);
+  if (!source) return null;
+
+  const bundled = join(source.root, ".env.example");
+  return existsSync(bundled) ? bundled : null;
+}
+
+/**
  * Path to the default manifest shipped with the package, resolved
  * relative to this file so it works from `dist/commands/` after a build
  * and from `src/commands/` under ts-jest.
@@ -38,7 +57,7 @@ export function init(options: InitOptions = {}): InitResult {
   const dir = resolve(options.dir ?? process.cwd());
   const manifestPath = join(dir, DEFAULT_MANIFEST_FILENAME);
   const envPath = join(dir, ".env");
-  const examplePath = join(dir, ".env.example");
+  const examplePath = resolveEnvExample(dir, options.stackDir);
 
   const result: InitResult = {
     ok: true,
@@ -65,11 +84,11 @@ export function init(options: InitOptions = {}): InitResult {
     return result;
   }
 
-  if (!existsSync(examplePath)) {
+  if (examplePath === null) {
     result.ok = false;
     result.errors.push(
-      `No .env.example in ${dir}, so there is nothing to copy .env from. ` +
-        "Run this from the repository root."
+      "No .env.example to copy .env from, and none bundled with this package. " +
+        "Run this from a checkout, or reinstall the package."
     );
     return result;
   }

@@ -94,18 +94,35 @@ export function runCompose(
  */
 export type AdminOutcome =
   | { kind: "generated"; password: string }
+  | { kind: "bootstrapped"; password: string }
   | { kind: "seeded-from-env" }
   | { kind: "existing" }
   | { kind: "unknown" };
 
 export function adminOutcome(logs: string, adminSeedPassword: string | undefined): AdminOutcome {
-  const banner = /password:\s*(\S+)/.exec(logs);
-  if (logs.includes("Ojuri admin user seeded") && banner?.[1]) {
-    return { kind: "generated", password: banner[1] };
-  }
+  const printed = bannerPassword(logs);
+  if (printed) return { kind: "generated", password: printed };
   // Knex says this when every migration was already applied, which means
   // the users migration did not run and the admin predates this boot.
   if (/already up to date/i.test(logs)) return { kind: "existing" };
   if (adminSeedPassword && adminSeedPassword.trim() !== "") return { kind: "seeded-from-env" };
   return { kind: "unknown" };
+}
+
+/**
+ * Only the lines after the migration's own banner are considered. Scanning the
+ * whole log for `password:` would hand the operator the first match anywhere,
+ * so a connection error or a future migration mentioning the word would be
+ * reported to them as their admin password.
+ */
+function bannerPassword(logs: string): string | null {
+  const lines = logs.split("\n");
+  const start = lines.findIndex((line) => line.includes("Ojuri admin user seeded"));
+  if (start === -1) return null;
+
+  for (const line of lines.slice(start)) {
+    const match = /password:\s*(\S+)/.exec(line);
+    if (match?.[1]) return match[1];
+  }
+  return null;
 }

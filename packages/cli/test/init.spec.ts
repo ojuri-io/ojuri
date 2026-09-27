@@ -171,9 +171,30 @@ describe("init", () => {
     expect(second.ok).toBe(true);
   });
 
-  it("fails clearly when there is no .env.example to copy", () => {
+  it("falls back to the stack's .env.example when the directory has none", () => {
     const dir = mkdtempSync(join(tmpdir(), "ojuri-bare-"));
     const result = init({ dir });
+    expect(result.ok).toBe(true);
+    expect(result.wroteEnv).toBe(true);
+    expect(readFileSync(join(dir, ".env"), "utf8")).toContain("AUTH_JWT_SECRET");
+  });
+
+  it("prefers a local .env.example over the bundled one", () => {
+    const dir = mkdtempSync(join(tmpdir(), "ojuri-local-example-"));
+    writeFileSync(join(dir, ".env.example"), "MARKER=local\nAUTH_JWT_SECRET=dev\n", "utf8");
+
+    const result = init({ dir });
+
+    expect(result.ok).toBe(true);
+    expect(readFileSync(join(dir, ".env"), "utf8")).toContain("MARKER=local");
+  });
+
+  it("fails clearly when nothing anywhere has a .env.example", () => {
+    const dir = mkdtempSync(join(tmpdir(), "ojuri-bare-"));
+    const emptyStack = mkdtempSync(join(tmpdir(), "ojuri-empty-stack-"));
+
+    const result = init({ dir, stackDir: emptyStack });
+
     expect(result.ok).toBe(false);
     expect(result.errors[0]).toContain(".env.example");
   });

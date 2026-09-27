@@ -89,3 +89,6 @@ crash.log
 # Rendered by `ojuri render`. Generated from ojuri.yaml on every run, so
 # it is never the source of truth and never worth committing.
 .ojuri/
+
+# Generated on prepack from the repository root; never committed.
+packages/cli/stack/

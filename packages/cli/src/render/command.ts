@@ -2,6 +2,10 @@ import { COMPOSE_FILE, COMPOSE_FILE_GHCR, ENV_FILENAME, OVERLAY_FILENAME } from 
 import type { RenderPlan } from "./plan";
 
 export interface CommandOptions {
+  /** Directory holding docker-compose.yml and the assets it bind-mounts. */
+  stackDir?: string;
+  /** Compose project name. Derived from the working directory when absent. */
+  projectName?: string;
   /** Build from source instead of pulling the published images. */
   build: boolean;
   /** Directory the rendered files were written to, relative to the project. */
@@ -24,13 +28,21 @@ export interface CommandOptions {
 export function composeCommand(plan: RenderPlan, opts: CommandOptions): string[] {
   const argv = ["docker", "compose"];
 
+  if (opts.projectName) argv.push("-p", opts.projectName);
+
+  // Compose resolves -f and --env-file against the process directory but the
+  // compose file's own relative bind mounts against the project directory, so
+  // the stack can sit somewhere other than where the command runs.
+  const stack = opts.stackDir ?? ".";
+  if (stack !== ".") argv.push("--project-directory", stack);
+
   if (opts.envFile) argv.push("--env-file", opts.envFile);
   argv.push("--env-file", join(opts.outDir, ENV_FILENAME));
 
-  argv.push("-f", COMPOSE_FILE);
+  argv.push("-f", join(stack, COMPOSE_FILE));
   // The GHCR overlay only swaps `build:` for `image:`. Building from
   // source means leaving it out entirely.
-  if (!opts.build) argv.push("-f", COMPOSE_FILE_GHCR);
+  if (!opts.build) argv.push("-f", join(stack, COMPOSE_FILE_GHCR));
   argv.push("-f", join(opts.outDir, OVERLAY_FILENAME));
 
   for (const profile of plan.profiles) argv.push("--profile", profile);

@@ -182,3 +182,24 @@ describe("summaryUrls", () => {
     expect(urls.grafana).toBeUndefined();
   });
 });
+
+describe("adminOutcome banner anchoring", () => {
+  it("ignores an earlier line mentioning a password", () => {
+    const logs = [
+      "db-migrate | error: connection failed for password: hunter2",
+      "db-migrate | Ojuri admin user seeded",
+      "db-migrate |   password: Xk9-real-secret",
+    ].join("\n");
+
+    expect(adminOutcome(logs, undefined)).toEqual({
+      kind: "generated",
+      password: "Xk9-real-secret",
+    });
+  });
+
+  it("does not report a password when the banner never appeared", () => {
+    const logs = "db-migrate | error: bad password: hunter2\ndb-migrate | already up to date";
+
+    expect(adminOutcome(logs, undefined)).toEqual({ kind: "existing" });
+  });
+});
