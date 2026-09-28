@@ -1,4 +1,4 @@
-import { mkdtempSync, readFileSync, readdirSync } from "node:fs";
+import { mkdtempSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { run, VERSION } from "../src/cli";
@@ -9,6 +9,19 @@ function capture(argv: string[], env: Record<string, string | undefined> = EMPTY
   const out: string[] = [];
   const err: string[] = [];
   const code = run(argv, { out: (t) => out.push(t), err: (t) => err.push(t) }, env);
+  return { code, out: out.join("\n"), err: err.join("\n") };
+}
+
+/**
+ * `doctor` is async, so its output is written after `run` returns and its exit
+ * code arrives as a promise. Exit codes are not asserted for it: it shells out
+ * to the real Docker, so a host without one reports an error and the code says
+ * more about the machine than about the behaviour under test.
+ */
+async function captureAsync(argv: string[], env: Record<string, string | undefined> = EMPTY_ENV) {
+  const out: string[] = [];
+  const err: string[] = [];
+  const code = await run(argv, { out: (t) => out.push(t), err: (t) => err.push(t) }, env);
   return { code, out: out.join("\n"), err: err.join("\n") };
 }
 
@@ -229,5 +242,55 @@ describe("render command", () => {
     const overlay = readFileSync(join(dir, "docker-compose.override.ojuri.yml"), "utf8");
     expect(overlay).toContain("postgres: !reset null");
     expect(overlay).toContain("depends_on: !override");
+  });
+});
+
+describe("doctor before a manifest exists", () => {
+  it("checks the host against the default stack rather than refusing", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "ojuri-doctor-bare-"));
+
+    const { out } = await captureAsync(["doctor", join(dir, "ojuri.yaml")]);
+
+    expect(out).toContain("checked the host against the default stack");
+    expect(out).not.toContain("No manifest found");
+  });
+
+  it("writes nothing, because doctor has no side effects", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "ojuri-doctor-clean-"));
+
+    await captureAsync(["doctor", join(dir, "ojuri.yaml")]);
+
+    expect(readdirSync(dir)).toEqual([]);
+  });
+
+  it("reports where the operator ran, not the template inside the package", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "ojuri-doctor-path-"));
+
+    const { out } = await captureAsync(["doctor", join(dir, "ojuri.yaml"), "--json"]);
+
+    const report = JSON.parse(out);
+    expect(report.manifest).toBe(dir);
+    expect(report.findings.map((f: { code: string }) => f.code)).toContain("no-manifest");
+  });
+
+  it("says nothing about a missing manifest once one exists", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "ojuri-doctor-present-"));
+    writeFileSync(join(dir, "ojuri.yaml"), "version: 1\n", "utf8");
+
+    const { out } = await captureAsync(["doctor", join(dir, "ojuri.yaml"), "--json"]);
+
+    expect(JSON.parse(out).findings.map((f: { code: string }) => f.code)).not.toContain(
+      "no-manifest"
+    );
+  });
+
+  it("still fails on a manifest that exists but does not parse", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "ojuri-doctor-broken-"));
+    writeFileSync(join(dir, "ojuri.yaml"), "version: 1\nservices: {\n", "utf8");
+
+    const { code, out } = await captureAsync(["doctor", join(dir, "ojuri.yaml")]);
+
+    expect(code).toBe(1);
+    expect(out).not.toContain("checked the host against the default stack");
   });
 });
