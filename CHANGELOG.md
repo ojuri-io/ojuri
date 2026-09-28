@@ -7,6 +7,53 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.7.2] - 2026-09-28
+
+Friction found by auditing the paths an adopter actually takes, rather than by
+waiting for each one to be reported. No migrations, no schema changes. One
+behaviour change worth reading before upgrading: a decision can now only be
+reviewed once.
+
+### Fixed
+
+- **A retry could be rejected as a changed request.** The idempotency hash was
+  taken over the request body as your client happened to serialise it, so the
+  same transaction sent with its fields in a different order looked like a
+  different request and the retry came back 422 "reused with a different request
+  body" — sending you looking for a field that changed when none had. Any client
+  that rebuilds the body from a map or a database row could hit this. Field order
+  no longer matters; the order of items in a list still does, because a
+  reordered list really is a different request. Cached responses from before the
+  upgrade will not match, so a retry in flight across it is scored again rather
+  than replayed, for one cache lifetime.
+
+- **Errors said what went wrong only in prose.** Every failure the platform
+  raises now carries a `code` alongside the message. Three conditions return 409
+  and four return 503, so the status alone never said what to do next, and the
+  only way to tell them apart was matching the wording of a message that was
+  written for a human reading a log. `duplicate_transaction` and
+  `idempotency_in_flight` are both 409 and mean opposite things. The message
+  wording is not part of the contract; the code is.
+
+- **A decision could be reviewed twice, and the second review won silently.**
+  Two reviewers acting on the same transaction both succeeded: the later
+  decision replaced the earlier one with nothing recording that it had happened,
+  in the table an auditor reads, and each sent its own `decision.overridden`
+  webhook and its own label to the learning agent, which then trained on
+  whichever arrived last. A second override is now refused, naming the reviewer
+  whose decision stands. Reopening a review is not supported.
+
+- **A repeated webhook could not be recognised as a repeat.**
+  `X-Webhook-Delivery` changed on every attempt, and deliveries are retried, so
+  a subscriber had nothing stable to deduplicate on and could act twice on one
+  event. It is now the same for every attempt at the same delivery.
+
+- **The same investigation report had two shapes.** Whether it looked reviewed
+  depended on which endpoint returned it.
+
+- **`docs/TROUBLESHOOTING.md` listed a port nothing uses** and omitted two that
+  are published, the same error the README carried.
+
 ## [1.7.1] - 2026-09-28
 
 A fix to the one-command install, which failed on exactly the run it exists
