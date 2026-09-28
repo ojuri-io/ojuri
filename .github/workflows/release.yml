@@ -283,7 +283,30 @@ jobs:
           cache: npm
           cache-dependency-path: packages/cli/package-lock.json
           registry-url: https://registry.npmjs.org
+      - name: Is this version already on the registry?
+        id: published
+        working-directory: packages/cli
+        env:
+          TAG: ${{ needs.resolve-version.outputs.version }}
+        run: |
+          # A tag that does not move this package's version must be a no-op, not
+          # a failure: `npm publish` refuses a duplicate with a 403, which would
+          # redden a release that shipped everything it meant to. Checking first
+          # also makes re-running a partly failed release safe.
+          NAME=$(node -p "require('./package.json').name")
+          # This job takes its version from the release tag rather than from the
+          # committed package.json, so ask about the tag. Reading package.json
+          # here could skip a release that had no prepare commit.
+          VERSION="${TAG#v}"
+          if npm view "$NAME@$VERSION" version >/dev/null 2>&1; then
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            echo "$NAME@$VERSION is already published. Nothing to do."
+          else
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+            echo "$NAME@$VERSION is not on the registry yet."
+          fi
       - name: Guard against a missing token
+        if: steps.published.outputs.skip != 'true'
         run: |
           if [ -z "${NPM_TOKEN}" ]; then
             echo "NPM_TOKEN is not set — cannot publish @ojuri/cli." >&2
@@ -292,17 +315,21 @@ jobs:
         env:
           NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
       - name: Install
+        if: steps.published.outputs.skip != 'true'
         working-directory: packages/cli
         run: npm ci
       - name: Align the package version with the release tag
+        if: steps.published.outputs.skip != 'true'
         working-directory: packages/cli
         run: |
           VERSION="${{ needs.resolve-version.outputs.version }}"
           npm version "${VERSION#v}" --no-git-tag-version --allow-same-version
       - name: Verify
+        if: steps.published.outputs.skip != 'true'
         working-directory: packages/cli
         run: npm run lint && npm test
       - name: The tarball must carry the stack, or the install needs a checkout
+        if: steps.published.outputs.skip != 'true'
         working-directory: packages/cli
         run: |
           npm pack --pack-destination /tmp
@@ -315,10 +342,15 @@ jobs:
           done
           exit $missing
       - name: Publish
+        if: steps.published.outputs.skip != 'true'
         working-directory: packages/cli
         run: npm publish --access public --provenance
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+      - name: Say so when there was nothing to publish
+        if: steps.published.outputs.skip == 'true'
+        run: echo "Version unchanged, so nothing was published. This is not a failure."
+
 
   # ─────────────────────────────────────────────────────────────────
   # Publish @ojuri/sdk to npm. Separate from the image matrix because
@@ -346,7 +378,25 @@ jobs:
           cache: npm
           cache-dependency-path: packages/sdk/package-lock.json
           registry-url: https://registry.npmjs.org
+      - name: Is this version already on the registry?
+        id: published
+        working-directory: packages/sdk
+        run: |
+          # A tag that does not move this package's version must be a no-op, not
+          # a failure: `npm publish` refuses a duplicate with a 403, which would
+          # redden a release that shipped everything it meant to. Checking first
+          # also makes re-running a partly failed release safe.
+          NAME=$(node -p "require('./package.json').name")
+          VERSION=$(node -p "require('./package.json').version")
+          if npm view "$NAME@$VERSION" version >/dev/null 2>&1; then
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            echo "$NAME@$VERSION is already published. Nothing to do."
+          else
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+            echo "$NAME@$VERSION is not on the registry yet."
+          fi
       - name: Guard against a missing token
+        if: steps.published.outputs.skip != 'true'
         run: |
           if [ -z "${NPM_TOKEN}" ]; then
             echo "NPM_TOKEN is not set — skipping publish. Set the secret to enable it." >&2
@@ -355,16 +405,23 @@ jobs:
         env:
           NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
       - name: Install
+        if: steps.published.outputs.skip != 'true'
         working-directory: packages/sdk
         run: npm ci
       - name: Verify
+        if: steps.published.outputs.skip != 'true'
         working-directory: packages/sdk
         run: npm run lint && npm test && npm run build
       - name: Publish
+        if: steps.published.outputs.skip != 'true'
         working-directory: packages/sdk
         run: npm publish --access public --provenance
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+      - name: Say so when there was nothing to publish
+        if: steps.published.outputs.skip == 'true'
+        run: echo "Version unchanged, so nothing was published. This is not a failure."
+
 
   release:
     name: GitHub Release
