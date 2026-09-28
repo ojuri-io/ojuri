@@ -1,6 +1,6 @@
 {
   "name": "@ojuri/sdk",
-  "version": "0.1.0",
+  "version": "0.0.1",
   "description": "Typed client for the Ojuri fraud-detection API \u2014 predict, decisions, investigation reports, and webhook signature verification. Zero runtime dependencies.",
   "author": "Ayodeji Abodunrin <https://ayodejiabodunrin.com/>",
   "license": "MIT",

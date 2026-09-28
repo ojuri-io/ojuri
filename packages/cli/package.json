@@ -1,6 +1,6 @@
 {
   "name": "@ojuri/cli",
-  "version": "1.6.0",
+  "version": "1.7.0",
   "description": "Ojuri CLI. Validates the ojuri.yaml deployment manifest and drives the Docker Compose stack.",
   "main": "dist/index.js",
   "bin": {
