@@ -76,8 +76,23 @@ All you need is **Docker 20.10 or newer, with Compose 2.24 or newer**
 (`docker compose version` will tell you). On older Compose, use the
 build-from-source steps further down instead.
 
+With Node 20 or newer on your PATH as well, one command does all of it,
+in any empty directory and with no clone:
+
 ```bash
-git clone --depth 1 --branch v1.4.0 https://github.com/ojuri-io/ojuri.git
+npx @ojuri/cli@1.7.0 up
+```
+
+It writes an `ojuri.yaml` and a `.env` with freshly generated secrets,
+unpacks the compose file and the assets it mounts, pulls the images,
+waits for the migration and for RDA to answer `/ready`, then prints a
+runnable `curl` and your admin password. `ojuri status`, `ojuri doctor`
+and `ojuri down` take it from there.
+
+Or do it by hand, which is the same stack and stays supported:
+
+```bash
+git clone --depth 1 --branch v1.7.0 https://github.com/ojuri-io/ojuri.git
 cd ojuri
 cp .env.example .env                        # required — sets your JWT secret and DB password
 docker compose -f docker-compose.yml -f docker-compose.ghcr.yml up -d
@@ -182,7 +197,7 @@ instead. It covers the installer, the `py -3.11` command, the Microsoft
 C++ redistributable that XGBoost needs, and the cmd/PowerShell syntax.
 
 **Ports** — these need to be free on your machine: `80 3000 3001 5173
-5433 6380 9090 9091 9093 9094 29092`. Postgres uses `5433` rather than
+5433 6380 9090 9091 9092 9094 9095 29092`. Postgres uses `5433` rather than
 the usual `5432` so it won't clash with one you already have.
 
 **Node 20+** is only needed if you want to run the dashboard or do
@@ -265,6 +280,25 @@ service is responsible for.
 Your application calls `POST /v1/predict` and acts on the `decision` it
 gets back — `ACCEPT`, `REVIEW`, or `DECLINE`. Everything below is
 optional.
+
+From Node, `@ojuri/sdk` saves you hand-rolling that call and verifying
+the webhook signature, which is the part most easily got wrong:
+
+```bash
+npm install @ojuri/sdk
+```
+
+```ts
+import { OjuriClient } from "@ojuri/sdk";
+
+const ojuri = new OjuriClient({ baseUrl, apiKey: process.env.OJURI_API_KEY });
+const { decision } = await ojuri.predict(txn, { idempotencyKey: txn.reference });
+```
+
+It has no runtime dependencies, ships ESM and CommonJS, and covers the
+predict call and webhook verification only. The dashboard's own endpoints
+are not in it, deliberately. See
+[`packages/sdk/README.md`](packages/sdk/README.md).
 
 - **The full API** — every field you can send, what comes back, and every
   error case: [`docs/PREDICT-API.md`](docs/PREDICT-API.md). You choose the
@@ -360,7 +394,7 @@ running, set `OJURI_VERSION` to a specific release before any compose
 command. You then upgrade deliberately, by changing that value:
 
 ```bash
-export OJURI_VERSION=v1.4.2
+export OJURI_VERSION=v1.7.0
 ```
 
 Check [`CHANGELOG.md`](CHANGELOG.md) before upgrading — it flags new
@@ -459,10 +493,12 @@ mean nothing.
 ## Documentation
 
 **Connecting your system** — [Predict API](docs/PREDICT-API.md) ·
-[API keys](docs/AUTH.md) · [Users and roles](docs/AUTHZ.md) ·
+[Node client](packages/sdk/README.md) · [API keys](docs/AUTH.md) ·
+[Users and roles](docs/AUTHZ.md) ·
 [Safe retries](docs/IDEMPOTENCY.md) · [Webhooks](docs/WEBHOOKS.md) ·
 [Rules](docs/RULES.md) · [Features](docs/FEATURES.md) ·
-[FIA API](docs/FIA-API.md)
+[FIA API](docs/FIA-API.md) ·
+[Fitting it into an existing system](docs/ADOPTER_INTEGRATION_GUIDE.md)
 
 **Running it** — [Architecture](docs/ARCHITECTURE.md) ·
 [Troubleshooting](docs/TROUBLESHOOTING.md) ·
@@ -481,7 +517,9 @@ mean nothing.
 [Contributing](CONTRIBUTING.md)
 
 Everything, indexed: [`docs/README.md`](docs/README.md). Each service also
-has its own README: [`paa-service/`](paa-service/) ·
+has its own README: [`packages/cli/`](packages/cli/README.md) ·
+[`packages/sdk/`](packages/sdk/README.md) ·
+[`paa-service/`](paa-service/) ·
 [`mla-service/`](mla-service/README.md) ·
 [`fia-service/`](fia-service/README.md) ·
 [`frontend/`](frontend/README.md)
@@ -490,7 +528,7 @@ has its own README: [`paa-service/`](paa-service/) ·
 
 ## Status
 
-**Stable as of v1.4.0.** API keys, user accounts and roles, live-editable
+**Stable as of v1.7.0.** API keys, user accounts and roles, live-editable
 rules, the model registry with per-segment thresholds, a full audit log
 with reasons on every decision, signed webhooks, safe retries, FIA's
 on-demand reports and follow-up questions, and the Sentinel dashboard.
