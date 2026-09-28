@@ -10,6 +10,6 @@ export default class TrainingPromoteDuplicateStagingError extends AppError {
         `Re-upload the source CSV to create a fresh job — the existing staging data is poisoned ` +
         `and ON CONFLICT cannot reconcile it.`,
     );
-    this.errorCode = ErrorCode.GENERAL_ERROR;
+    this.errorCode = ErrorCode.TRAINING_PROMOTE_DUPLICATE_STAGING;
   }
 }

@@ -8,6 +8,6 @@ export default class TrainingUploadOffsetMismatchError extends AppError {
       httpStatus.CONFLICT,
       `Chunk offset mismatch: expected ${expected}, got ${actual}`,
     );
-    this.errorCode = ErrorCode.GENERAL_ERROR;
+    this.errorCode = ErrorCode.TRAINING_UPLOAD_OFFSET_MISMATCH;
   }
 }

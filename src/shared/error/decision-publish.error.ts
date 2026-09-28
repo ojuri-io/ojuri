@@ -8,6 +8,6 @@ export default class DecisionPublishError extends AppError {
       httpStatus.SERVICE_UNAVAILABLE,
       `Decision could not be durably published for transaction: ${transactionId}`
     );
-    this.errorCode = ErrorCode.GENERAL_ERROR;
+    this.errorCode = ErrorCode.DECISION_PUBLISH_FAILED;
   }
 }

@@ -6,6 +6,6 @@ export default class ServiceUnavailableError extends AppError {
   constructor(message?: string) {
     super(httpStatus.SERVICE_UNAVAILABLE, message ?? "We are unable to process this request. Please try again.");
 
-    this.errorCode = ErrorCode.GENERAL_ERROR;
+    this.errorCode = ErrorCode.SERVICE_UNAVAILABLE;
   }
 }

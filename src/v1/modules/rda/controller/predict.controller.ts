@@ -7,13 +7,12 @@ import { PredictRequestDto } from "../dtos/predict-request.dto";
 import { IDEMPOTENCY_KEY_MAX_LENGTH } from "@shared/idempotency/idempotency.service";
 import DecisionAuditService from "@shared/audit/decision-audit.service";
 import AppError from "@shared/error/app.error";
-import { OverrideErrorCode } from "@shared/enums/override-error-code.enum";
+import { ErrorCode } from "@shared/enums/error-code.enum";
 import { WebhookEvent } from "@shared/enums/webhook-event.enum";
 import WebhookService from "@shared/webhooks/webhook.service";
 import { ErrorResponse, SuccessResponse } from "@shared/utils/response.util";
 import { metricsService } from "@shared/metrics/metrics.service";
 import { createServiceLogger, TraceContext } from "@shared/utils/logger/service-logger";
-import { PredictErrorCode } from "@shared/enums/predict-error-code.enum";
 
 const log = createServiceLogger("PredictController");
 
@@ -127,7 +126,7 @@ class PredictController {
           `Already reviewed by ${outcome.row.reviewedBy ?? "another reviewer"}. ` +
             "Their decision stands.",
           undefined,
-          OverrideErrorCode.ALREADY_REVIEWED
+          ErrorCode.ALREADY_REVIEWED
         )
       );
     }
@@ -256,7 +255,7 @@ function sendOutcome(
           ErrorResponse(
             "Idempotency-Key reused with a different request body",
             undefined,
-            PredictErrorCode.IDEMPOTENCY_BODY_MISMATCH
+            ErrorCode.IDEMPOTENCY_BODY_MISMATCH
           )
         );
       return;
@@ -270,7 +269,7 @@ function sendOutcome(
           ErrorResponse(
             "Another request with this Idempotency-Key is still in flight",
             undefined,
-            PredictErrorCode.IDEMPOTENCY_IN_FLIGHT
+            ErrorCode.IDEMPOTENCY_IN_FLIGHT
           )
         );
       return;
@@ -281,7 +280,7 @@ function sendOutcome(
           ErrorResponse(
             `transaction_id "${outcome.transactionId}" already processed for this tenant`,
             undefined,
-            PredictErrorCode.DUPLICATE_TRANSACTION
+            ErrorCode.DUPLICATE_TRANSACTION
           )
         );
       return;
