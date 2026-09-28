@@ -12,6 +12,7 @@ import WebhookService from "@shared/webhooks/webhook.service";
 import { ErrorResponse, SuccessResponse } from "@shared/utils/response.util";
 import { metricsService } from "@shared/metrics/metrics.service";
 import { createServiceLogger, TraceContext } from "@shared/utils/logger/service-logger";
+import { PredictErrorCode } from "@shared/enums/predict-error-code.enum";
 
 const log = createServiceLogger("PredictController");
 
@@ -232,20 +233,36 @@ function sendOutcome(
     case "conflict":
       res
         .code(httpStatus.UNPROCESSABLE_ENTITY)
-        .send(ErrorResponse("Idempotency-Key reused with a different request body"));
+        .send(
+          ErrorResponse(
+            "Idempotency-Key reused with a different request body",
+            undefined,
+            PredictErrorCode.IDEMPOTENCY_BODY_MISMATCH
+          )
+        );
       return;
+    // Both of the next two are 409 and they mean opposite things, which is why
+    // they carry a code: this one is worth retrying, the one below never is.
     case "in_flight":
       res
         .code(httpStatus.CONFLICT)
         .header("Retry-After", "1")
-        .send(ErrorResponse("Another request with this Idempotency-Key is still in flight"));
+        .send(
+          ErrorResponse(
+            "Another request with this Idempotency-Key is still in flight",
+            undefined,
+            PredictErrorCode.IDEMPOTENCY_IN_FLIGHT
+          )
+        );
       return;
     case "duplicate":
       res
         .code(httpStatus.CONFLICT)
         .send(
           ErrorResponse(
-            `transaction_id "${outcome.transactionId}" already processed for this tenant`
+            `transaction_id "${outcome.transactionId}" already processed for this tenant`,
+            undefined,
+            PredictErrorCode.DUPLICATE_TRANSACTION
           )
         );
       return;

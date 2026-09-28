@@ -58,7 +58,7 @@ SELECT id, "transactionId", "senderId", "receiverId", amount, "transactionType",
        "mlFraudProbability", "mlDecision", verdict, "agentConfidence",
        "recommendedAction", narrative, "keyIndicators", "featuresSnapshot",
        "llmModelVersion", "promptTemplateVersion", "generationLatencyMs",
-       status, "createdAt"
+       status, "reviewedBy", "reviewedAt", "createdAt"
 FROM "investigationReports"
 WHERE "transactionId" = :transaction_id
 ORDER BY "createdAt" DESC

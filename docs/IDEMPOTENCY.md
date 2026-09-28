@@ -43,9 +43,13 @@ every request shares the `"default"` namespace with their key id.
 
 ## What gets compared
 
-The request body is hashed with SHA-256 over its JSON form. Any field
-change (including `timestamp`!) counts as "different request" and
-returns 422. Either:
+The request body is hashed with SHA-256 over its JSON form, with object
+keys sorted first, so the order your client serialises fields in does not
+matter and a body rebuilt from a map or a database row still matches. Array
+order does matter, since a reordered list is a different request.
+
+Any field *change* (including `timestamp`!) counts as "different request"
+and returns 422. Either:
 
 - Capture the timestamp once when constructing the request, or
 - Treat 422 as "this key already maps to a different request, mint a
