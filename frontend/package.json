@@ -1,6 +1,6 @@
 {
   "name": "@ojuri/sentinel-frontend",
-  "version": "1.7.0",
+  "version": "1.7.1",
   "private": true,
   "type": "module",
   "description": "Sentinel \u2014 Ojuri operator dashboard. Live decisions, rules editor, model registry, audit log, FIA investigations, user/role admin.",

@@ -7,6 +7,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.7.1] - 2026-09-28
+
+A fix to the one-command install, which failed on exactly the run it exists
+for. Nothing else changes; `@ojuri/sdk` is unaffected and stays at 0.0.1.
+
+### Fixed
+
+- **`npx @ojuri/cli up` failed on a first install, on any connection slow
+  enough to take ten minutes over the images.** Everything the CLI shelled out
+  to Docker carried a ten-minute ceiling, and starting the stack pulls roughly
+  three gigabytes on a fresh host, so the install died partway through with
+  `spawnSync docker ETIMEDOUT`, no containers created, and nothing explaining
+  why. Found by installing the published package on a machine with no images
+  cached; CI had never caught it because its runners fetch well inside the
+  ceiling.
+
+  The ceiling was only half of it. Output was buffered rather than shown, so
+  the longest part of the install printed nothing at all and read as a hang
+  even when it was working. The pull is now its own step that renders Docker's
+  own progress as it happens, and the limit on a step like that is an hour,
+  there to catch a stuck daemon rather than to bound a download. Reading
+  container state and logs stays as it was, because that output is parsed.
+  Building from source skips the pull, since there is nothing published to
+  fetch, and a failure now points at what Docker printed instead of leaving a
+  blank where the reason belongs.
+
 ## [1.7.0] - 2026-09-28
 
 Additive only. Two new publishable packages, a new optional manifest, no
