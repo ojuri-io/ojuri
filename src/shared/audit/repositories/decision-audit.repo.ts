@@ -154,19 +154,30 @@ class DecisionAuditRepo extends BaseRepository<IDecisionAudit, DecisionAudit> {
   }
 
 
+  /**
+   * Guarded on `reviewedAt` being null, so two reviewers acting on the same row
+   * cannot both win. Without it the later write replaced the earlier one with no
+   * record that it happened, on a table an auditor reads, and each one fired its
+   * own `decision.overridden` webhook and ground-truth label.
+   */
   async applyOverride(input: {
     auditId: string;
     reviewer: string;
     decision: string;
     reason: string | null;
-  }): Promise<DecisionAudit | undefined> {
-    await DecisionAudit.query().where({ id: input.auditId }).patch({
-      reviewedBy: input.reviewer,
-      reviewedAt: new Date(),
-      overrideDecision: input.decision,
-      overrideReason: input.reason,
-    });
-    return DecisionAudit.query().findById(input.auditId);
+  }): Promise<{ applied: boolean; row: DecisionAudit | undefined }> {
+    const affected = await DecisionAudit.query()
+      .where({ id: input.auditId })
+      .whereNull("reviewedAt")
+      .patch({
+        reviewedBy: input.reviewer,
+        reviewedAt: new Date(),
+        overrideDecision: input.decision,
+        overrideReason: input.reason,
+      });
+
+    const row = await DecisionAudit.query().findById(input.auditId);
+    return { applied: Number(affected) > 0, row };
   }
 
   /**

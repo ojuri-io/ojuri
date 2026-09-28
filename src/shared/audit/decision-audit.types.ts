@@ -1,3 +1,4 @@
+import type { DecisionAudit } from "./model/decision-audit.model";
 import { Decision } from "@shared/enums/decision.enum";
 import { DecisionSource } from "@shared/enums/decision-source.enum";
 import { RuleAction } from "@shared/enums/rule-action.enum";
@@ -69,3 +70,7 @@ export interface AuditWriteQueueOptions {
   batchSize: number;
 }
 
+export type OverrideOutcome =
+  | { kind: "applied"; row: DecisionAudit }
+  | { kind: "already-reviewed"; row: DecisionAudit }
+  | { kind: "not-found" };

@@ -18,10 +18,13 @@ function buildController() {
       // it matches the JWT subject, not the body.
       audit.lastCall = { auditId, decision, reviewer, reason };
       return {
-        id: auditId,
-        transactionId: "txn-1",
-        tenantId: "default",
-        finalDecision: "ACCEPT",
+        kind: "applied" as const,
+        row: {
+          id: auditId,
+          transactionId: "txn-1",
+          tenantId: "default",
+          finalDecision: "ACCEPT",
+        },
       };
     },
     lastCall: undefined as

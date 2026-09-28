@@ -47,7 +47,7 @@ writes to. Reasons:
 | `reasonCodes`         | jsonb?         | Top-N feature contributions.                       |
 | `featuresSnapshot`    | jsonb?         | Snapshot of the named features.                    |
 | `featuresDefault`     | bool           | `true` when Redis cache missed.                    |
-| `reviewedBy`          | varchar(255)?  | Set on override.                                   |
+| `reviewedBy`          | varchar(255)?  | Set on override. Also the lock: an override only applies while this is null. |
 | `reviewedAt`          | timestamp?     | Set on override.                                   |
 | `overrideDecision`    | varchar(20)?   |                                                    |
 | `overrideReason`      | text?          |                                                    |
@@ -82,6 +82,16 @@ FROM "decisionAuditLog"
 WHERE "createdAt" >= date_trunc('day', now())
 GROUP BY segment;
 ```
+
+### A row is reviewed once
+
+`POST /v1/decisions/:auditId/override` applies only while `reviewedAt` is
+null. A second reviewer acting on the same row gets `409` with
+`code: "already_reviewed"` and the name of whoever got there first; their
+verdict stands, no second `decision.overridden` webhook fires, and the
+ground-truth label MLA trains on is not rewritten. Reopening a review is not
+supported: the first decision is what the audit trail recorded and what the
+model was told.
 
 ### Reviewer override rate this week
 

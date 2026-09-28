@@ -7,6 +7,7 @@ import { PredictRequestDto } from "../dtos/predict-request.dto";
 import { IDEMPOTENCY_KEY_MAX_LENGTH } from "@shared/idempotency/idempotency.service";
 import DecisionAuditService from "@shared/audit/decision-audit.service";
 import AppError from "@shared/error/app.error";
+import { OverrideErrorCode } from "@shared/enums/override-error-code.enum";
 import { WebhookEvent } from "@shared/enums/webhook-event.enum";
 import WebhookService from "@shared/webhooks/webhook.service";
 import { ErrorResponse, SuccessResponse } from "@shared/utils/response.util";
@@ -112,8 +113,26 @@ class PredictController {
         .send(ErrorResponse("Authenticated reviewer required for overrides"));
     }
 
-    const row = await this.decisionAudit.override({ auditId, decision, reviewer, reason });
-    if (!row) return res.code(httpStatus.NOT_FOUND).send(ErrorResponse("Audit row not found"));
+    const outcome = await this.decisionAudit.override({ auditId, decision, reviewer, reason });
+    if (outcome.kind === "not-found") {
+      return res.code(httpStatus.NOT_FOUND).send(ErrorResponse("Audit row not found"));
+    }
+
+    // Refusing beats overwriting: the first reviewer's verdict is already in the
+    // audit trail and is what MLA was told, so say who got there first rather
+    // than silently replacing them and firing a second webhook.
+    if (outcome.kind === "already-reviewed") {
+      return res.code(httpStatus.CONFLICT).send(
+        ErrorResponse(
+          `Already reviewed by ${outcome.row.reviewedBy ?? "another reviewer"}. ` +
+            "Their decision stands.",
+          undefined,
+          OverrideErrorCode.ALREADY_REVIEWED
+        )
+      );
+    }
+
+    const { row } = outcome;
 
     this.webhookService
       .publish(
