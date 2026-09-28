@@ -145,6 +145,7 @@ function toAbortError(reason: unknown): unknown {
 function toApiError(response: Response, body: unknown): OjuriApiError {
   return new OjuriApiError(messageFrom(body, response), {
     status: response.status,
+    code: codeFrom(body),
     errors: errorsFrom(body),
     correlationId: response.headers.get("X-Correlation-ID"),
     retryAfterSeconds: parseRetryAfter(response.headers.get("Retry-After")),
@@ -182,6 +183,14 @@ function messageFrom(body: unknown, response: Response): string {
   }
   if (typeof body === "string" && body.length > 0) return body.slice(0, 200);
   return `HTTP ${response.status} ${response.statusText}`.trim();
+}
+
+function codeFrom(body: unknown): string | null {
+  if (typeof body === "object" && body !== null) {
+    const { code } = body as Record<string, unknown>;
+    if (typeof code === "string" && code.length > 0) return code;
+  }
+  return null;
 }
 
 function errorsFrom(body: unknown): unknown[] {

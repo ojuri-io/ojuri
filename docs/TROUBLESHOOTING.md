@@ -21,8 +21,9 @@ and the `DB_*` block the Knex-backed admin endpoints need. Rotate
 `AUTH_JWT_SECRET` before any non-dev deploy.
 
 **A container fails to bind a port**
-Ojuri needs these host ports free: `80 3000 3001 5173 5433 6380 9090 9091
-9093 9094 29092`. Postgres in Docker listens on `5433`, not `5432`, to
+Ojuri needs these host ports free: `80 3001 5433 6380 9090 9091 9092 9094
+9095 29092`. The dev overlay also publishes RDA on `3000`, and the Vite
+dev server uses `5173`; neither is published by the shipped stack. Postgres in Docker listens on `5433`, not `5432`, to
 avoid conflicting with a host Postgres.
 
 **Lost the seeded admin password**

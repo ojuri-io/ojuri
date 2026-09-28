@@ -8,6 +8,6 @@ export default class AuditPersistenceError extends AppError {
       httpStatus.SERVICE_UNAVAILABLE,
       `Decision could not be audited durably for transaction: ${transactionId}`
     );
-    this.errorCode = ErrorCode.GENERAL_ERROR;
+    this.errorCode = ErrorCode.AUDIT_PERSISTENCE_FAILED;
   }
 }

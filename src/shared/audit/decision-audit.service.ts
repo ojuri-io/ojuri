@@ -7,7 +7,7 @@ import { DecisionAudit } from "./model/decision-audit.model";
 import AuditWriteQueue from "./audit-write-queue";
 import { GroundTruthSource } from "@shared/enums/ground-truth-source.enum";
 import AuditPersistenceError from "@shared/error/audit-persistence.error";
-import { DecisionAuditRecord, DecisionAuditRecordResult } from "./decision-audit.types";
+import type { DecisionAuditRecord, DecisionAuditRecordResult, OverrideOutcome } from "./decision-audit.types";
 
 export type { DecisionAuditRecord, DecisionAuditRecordResult };
 
@@ -133,13 +133,18 @@ class DecisionAuditService {
     reviewer: string;
     decision: "ACCEPT" | "DECLINE";
     reason?: string;
-  }): Promise<DecisionAudit | null> {
-    const row = await this.repo.applyOverride({
+  }): Promise<OverrideOutcome> {
+    const { applied, row } = await this.repo.applyOverride({
       auditId: input.auditId,
       reviewer: input.reviewer,
       decision: input.decision,
       reason: input.reason ?? null,
     });
+
+    if (!row) return { kind: "not-found" };
+    // Someone else reviewed this row first. Writing the label again would
+    // relabel their verdict as this reviewer's, and MLA trains on it.
+    if (!applied) return { kind: "already-reviewed", row };
 
     // Feeds MLA's next retrain a human-verified label instead of the
     // system's own prior decision. Best-effort: a missing transactions
@@ -160,7 +165,7 @@ class DecisionAuditService {
       }
     }
 
-    return row ?? null;
+    return { kind: "applied", row };
   }
 
   async getByTransactionId(transactionId: string): Promise<DecisionAudit | null> {

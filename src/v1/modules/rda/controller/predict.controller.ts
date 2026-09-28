@@ -7,6 +7,7 @@ import { PredictRequestDto } from "../dtos/predict-request.dto";
 import { IDEMPOTENCY_KEY_MAX_LENGTH } from "@shared/idempotency/idempotency.service";
 import DecisionAuditService from "@shared/audit/decision-audit.service";
 import AppError from "@shared/error/app.error";
+import { ErrorCode } from "@shared/enums/error-code.enum";
 import { WebhookEvent } from "@shared/enums/webhook-event.enum";
 import WebhookService from "@shared/webhooks/webhook.service";
 import { ErrorResponse, SuccessResponse } from "@shared/utils/response.util";
@@ -111,8 +112,26 @@ class PredictController {
         .send(ErrorResponse("Authenticated reviewer required for overrides"));
     }
 
-    const row = await this.decisionAudit.override({ auditId, decision, reviewer, reason });
-    if (!row) return res.code(httpStatus.NOT_FOUND).send(ErrorResponse("Audit row not found"));
+    const outcome = await this.decisionAudit.override({ auditId, decision, reviewer, reason });
+    if (outcome.kind === "not-found") {
+      return res.code(httpStatus.NOT_FOUND).send(ErrorResponse("Audit row not found"));
+    }
+
+    // Refusing beats overwriting: the first reviewer's verdict is already in the
+    // audit trail and is what MLA was told, so say who got there first rather
+    // than silently replacing them and firing a second webhook.
+    if (outcome.kind === "already-reviewed") {
+      return res.code(httpStatus.CONFLICT).send(
+        ErrorResponse(
+          `Already reviewed by ${outcome.row.reviewedBy ?? "another reviewer"}. ` +
+            "Their decision stands.",
+          undefined,
+          ErrorCode.ALREADY_REVIEWED
+        )
+      );
+    }
+
+    const { row } = outcome;
 
     this.webhookService
       .publish(
@@ -232,20 +251,36 @@ function sendOutcome(
     case "conflict":
       res
         .code(httpStatus.UNPROCESSABLE_ENTITY)
-        .send(ErrorResponse("Idempotency-Key reused with a different request body"));
+        .send(
+          ErrorResponse(
+            "Idempotency-Key reused with a different request body",
+            undefined,
+            ErrorCode.IDEMPOTENCY_BODY_MISMATCH
+          )
+        );
       return;
+    // Both of the next two are 409 and they mean opposite things, which is why
+    // they carry a code: this one is worth retrying, the one below never is.
     case "in_flight":
       res
         .code(httpStatus.CONFLICT)
         .header("Retry-After", "1")
-        .send(ErrorResponse("Another request with this Idempotency-Key is still in flight"));
+        .send(
+          ErrorResponse(
+            "Another request with this Idempotency-Key is still in flight",
+            undefined,
+            ErrorCode.IDEMPOTENCY_IN_FLIGHT
+          )
+        );
       return;
     case "duplicate":
       res
         .code(httpStatus.CONFLICT)
         .send(
           ErrorResponse(
-            `transaction_id "${outcome.transactionId}" already processed for this tenant`
+            `transaction_id "${outcome.transactionId}" already processed for this tenant`,
+            undefined,
+            ErrorCode.DUPLICATE_TRANSACTION
           )
         );
       return;

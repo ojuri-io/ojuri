@@ -8,6 +8,6 @@ export default class TrainingSourceUnsupportedError extends AppError {
       httpStatus.NOT_IMPLEMENTED,
       `Source kind for ${source} is not yet supported; only file:// is implemented in this release`,
     );
-    this.errorCode = ErrorCode.GENERAL_ERROR;
+    this.errorCode = ErrorCode.TRAINING_SOURCE_UNSUPPORTED;
   }
 }

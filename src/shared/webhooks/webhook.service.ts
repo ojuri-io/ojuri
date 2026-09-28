@@ -1,4 +1,4 @@
-import { createHash, createHmac, randomBytes, randomUUID } from "crypto";
+import { createHash, createHmac, randomBytes } from "crypto";
 import { singleton } from "tsyringe";
 import { createServiceLogger } from "@shared/utils/logger/service-logger";
 import WebhookSubscriptionRepo from "./repositories/webhook-subscription.repo";
@@ -95,7 +95,10 @@ class WebhookService {
   private async deliverOne(row: DeliveryWithSubscription): Promise<void> {
     const body = JSON.stringify(row.payload);
     const timestamp = Math.floor(Date.now() / 1000).toString();
-    const deliveryId = randomUUID();
+    // The row id, not a fresh one per attempt. A retry of the same delivery has
+    // to carry the same identifier or a subscriber has nothing stable to
+    // deduplicate on, and this worker retries with backoff.
+    const deliveryId = row.deliveryId;
 
     // HMAC key is sha256(secret) — the stored form, not the plaintext.
     // Subscribers run the same hash to verify; the sample in

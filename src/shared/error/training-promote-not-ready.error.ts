@@ -13,6 +13,6 @@ export default class TrainingPromoteNotReadyError extends AppError {
       `Cannot promote job ${jobId}: current status is ${currentStatus}, must be COMPLETED. ` +
         `If the import worker is still running this will clear shortly; refresh the page.`,
     );
-    this.errorCode = ErrorCode.GENERAL_ERROR;
+    this.errorCode = ErrorCode.TRAINING_PROMOTE_NOT_READY;
   }
 }

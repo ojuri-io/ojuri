@@ -8,6 +8,6 @@ export default class AuditQueueBackpressureError extends AppError {
       httpStatus.SERVICE_UNAVAILABLE,
       `Audit write queue full (cap=${capacity}); rejecting predict`,
     );
-    this.errorCode = ErrorCode.GENERAL_ERROR;
+    this.errorCode = ErrorCode.AUDIT_QUEUE_BACKPRESSURE;
   }
 }

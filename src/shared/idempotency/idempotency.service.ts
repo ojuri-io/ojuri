@@ -165,8 +165,15 @@ class IdempotencyService {
     return { kind: "in_flight" };
   }
 
+  /**
+   * Keys are sorted before hashing. `JSON.stringify` preserves insertion order,
+   * so a caller that rebuilds the body from a map or a database row can retry
+   * the same transaction and be told the body changed. Two clients sending the
+   * same fields in a different order hashed differently, and the retry that
+   * idempotency exists to make safe came back 422 instead.
+   */
   static hashRequest(body: unknown): string {
-    return createHash("sha256").update(JSON.stringify(body ?? null)).digest("hex");
+    return createHash("sha256").update(JSON.stringify(canonical(body ?? null))).digest("hex");
   }
 
   // Lightweight per-(tenant, transaction_id) dedup. Used when no
@@ -273,3 +280,13 @@ function sleep(ms: number): Promise<void> {
 }
 
 export default IdempotencyService;
+
+function canonical(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(canonical);
+  if (value === null || typeof value !== "object") return value;
+
+  const source = value as Record<string, unknown>;
+  const sorted: Record<string, unknown> = {};
+  for (const key of Object.keys(source).sort()) sorted[key] = canonical(source[key]);
+  return sorted;
+}

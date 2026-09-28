@@ -236,10 +236,23 @@ your own features through here without touching the catalogue.
 | 400    | Validation failure (missing required, type / range violation). | `{ status: false, message, errors: [{ field, message }] }` |
 | 400    | `Idempotency-Key` > 128 chars. | `{ status: false, message }` |
 | 401    | Missing API key when required. | `{ status: false, message }` |
-| 409    | Another request with the same Idempotency-Key is still in flight. Retry. | `{ status: false, message }` + `Retry-After: 1` |
-| 409    | `transaction_id` has already been processed for this tenant. **Do not retry.** The original decision stands; read it back from `GET /v1/decisions/:transactionId` (JWT, `audit:read`). | `{ status: false, message }`, no `Retry-After` |
-| 422    | Idempotency-Key reused with a different request body. | `{ status: false, message }` |
+| 409    | Another request with the same Idempotency-Key is still in flight. Retry. | `{ status: false, message, code: "idempotency_in_flight" }` + `Retry-After: 1` |
+| 409    | `transaction_id` has already been processed for this tenant. **Do not retry.** The original decision stands; read it back from `GET /v1/decisions/:transactionId` (JWT, `audit:read`). | `{ status: false, message, code: "duplicate_transaction" }`, no `Retry-After` |
+| 422    | Idempotency-Key reused with a different request body. | `{ status: false, message, code: "idempotency_body_mismatch" }` |
 | 500    | Inference / audit / Kafka pipeline failed catastrophically. | `{ status: false, message }` |
+
+`code` is what to branch on, and every error the platform raises deliberately
+carries one: three conditions return 409 and four return 503, so the status
+alone does not say what to do next. It is absent only on an unexpected failure
+the platform did not classify, which is a 500. Matching on `message` is not
+supported: the text is for a human reading a log and its wording is not part of
+the contract.
+
+The codes for this endpoint are `idempotency_in_flight` (retry),
+`duplicate_transaction` (do not retry), `idempotency_body_mismatch`,
+`decision_publish_failed`, `audit_persistence_failed`,
+`audit_queue_backpressure` and `service_unavailable`. The full set lives in
+`src/shared/enums/error-code.enum.ts`.
 
 **The two `409`s mean opposite things.** One says "wait and try again",
 the other says "stop, you already sent this". Branch on the

@@ -114,7 +114,7 @@ one exception, as above.
 
 | Class | Raised when |
 |---|---|
-| `OjuriApiError` | Non-2xx response. Carries `status`, `errors[]`, `correlationId`, `retryAfterSeconds`, `body`. |
+| `OjuriApiError` | Non-2xx response. Carries `status`, `code`, `errors[]`, `correlationId`, `retryAfterSeconds`, `body`. |
 | `OjuriResponseError` | The server answered with something unusable — a non-JSON 200, or a body with no `decision`. |
 | `OjuriTimeoutError` | The per-attempt timeout or the overall deadline elapsed. |
 | `OjuriNetworkError` | The request never reached the server. |
@@ -131,12 +131,17 @@ import { OjuriApiError } from "@ojuri/sdk";
 try {
   await ojuri.predict(request, { idempotencyKey: txn.reference });
 } catch (err) {
-  if (OjuriApiError.isOjuriApiError(err) && err.status === 409) {
-    // this transaction_id was already scored
-  }
+  if (!OjuriApiError.isOjuriApiError(err)) throw err;
+  // Two conditions return 409 and mean opposite things, so branch on `code`
+  // rather than the status or the message text.
+  if (err.code === "duplicate_transaction") return readExistingDecision(txn);
+  if (err.code === "idempotency_in_flight") return retryShortly();
   throw err;
 }
 ```
+
+`code` is `null` on responses that carry none, so treat its absence as "read
+the status". It is never derived from the message.
 
 ## Client-side validation
 

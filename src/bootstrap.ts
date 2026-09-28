@@ -107,7 +107,12 @@ function setErrorHandler(fastify: FastifyInstance) {
 
     Logger.error({ err: err.cause || err });
 
-    return reply.status(statusCode).send(ErrorResponse(message));
+    // Forward the code. Every AppError sets one and none of them reached a
+    // client before, so a caller had to match on message text to tell apart
+    // three different 409s and four different 503s.
+    const code = err instanceof AppError ? err.errorCode : undefined;
+
+    return reply.status(statusCode).send(ErrorResponse(message, undefined, code));
   });
 }
 

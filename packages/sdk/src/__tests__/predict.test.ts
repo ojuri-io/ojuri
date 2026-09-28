@@ -231,3 +231,58 @@ describe("predict response validation", () => {
     await expect(sdk.predict(REQUEST)).rejects.toBeInstanceOf(OjuriResponseError);
   });
 });
+
+describe("error codes", () => {
+  it("surfaces the server's code, so a caller need not match on message text", async () => {
+    const stub = stubFetch([
+      {
+        status: 409,
+        body: { status: false, message: "still in flight", code: "idempotency_in_flight" },
+        headers: { "Retry-After": "0" },
+      },
+      { body: DECISION },
+    ]);
+    const client = new OjuriClient({
+      baseUrl: "https://rda.example.com",
+      apiKey: "k",
+      fetch: stub.fetch,
+      retryBaseDelayMs: 0,
+      maxRetries: 0,
+    });
+
+    const err = await client.predict(REQUEST, { idempotencyKey: "k1" }).catch((e) => e);
+
+    expect(err.code).toBe("idempotency_in_flight");
+    expect(err.status).toBe(409);
+  });
+
+  it("tells the two 409s apart by code", async () => {
+    const stub = stubFetch([
+      { status: 409, body: { status: false, message: "dup", code: "duplicate_transaction" } },
+    ]);
+    const client = new OjuriClient({
+      baseUrl: "https://rda.example.com",
+      apiKey: "k",
+      fetch: stub.fetch,
+      maxRetries: 0,
+    });
+
+    const err = await client.predict(REQUEST, { idempotencyKey: "k1" }).catch((e) => e);
+
+    expect(err.code).toBe("duplicate_transaction");
+  });
+
+  it("leaves code null when the server sends none, rather than inventing one", async () => {
+    const stub = stubFetch([{ status: 500, body: { status: false, message: "boom" } }]);
+    const client = new OjuriClient({
+      baseUrl: "https://rda.example.com",
+      apiKey: "k",
+      fetch: stub.fetch,
+      maxRetries: 0,
+    });
+
+    const err = await client.predict(REQUEST, { idempotencyKey: "k1" }).catch((e) => e);
+
+    expect(err.code).toBeNull();
+  });
+});
