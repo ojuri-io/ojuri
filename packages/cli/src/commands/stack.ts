@@ -1,4 +1,4 @@
-import type { Exec } from "../exec";
+import type { Exec, ExecOptions } from "../exec";
 import { composeCommand, type CommandOptions } from "../render/command";
 import { SERVICE } from "../render/compose-base";
 import type { RenderPlan } from "../render/plan";
@@ -77,9 +77,10 @@ export function runCompose(
   plan: RenderPlan,
   opts: CommandOptions,
   args: string[],
-  cwd: string
+  cwd: string,
+  execOptions: Omit<ExecOptions, "cwd"> = {}
 ): { status: number; stdout: string; stderr: string } {
-  return exec.run(composeArgs(plan, opts, args), { cwd });
+  return exec.run(composeArgs(plan, opts, args), { cwd, ...execOptions });
 }
 
 /**
