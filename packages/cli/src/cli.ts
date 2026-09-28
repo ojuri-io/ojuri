@@ -6,8 +6,9 @@ import { init } from "./commands/init";
 import { formatStatus, status } from "./commands/status";
 import { up } from "./commands/up";
 import { systemExec, systemProbe, type Exec, type Probe } from "./exec";
-import { countBySeverity, formatHuman, formatJson } from "./findings";
+import { countBySeverity, formatHuman, formatJson, warning } from "./findings";
 import { loadManifest } from "./manifest/load";
+import { TEMPLATE_MANIFEST } from "./manifest/template";
 import { DEFAULT_MANIFEST_FILENAME } from "./manifest/load";
 import { DEFAULT_OUT_DIR, render } from "./render";
 import { validateManifest } from "./validate";
@@ -42,7 +43,8 @@ With no path, every command reads ./${DEFAULT_MANIFEST_FILENAME}. They
 exit 0 on success and 1 on failure. Warnings are printed but do not
 change the exit code.
 
-Start with \`ojuri init\`, then \`ojuri doctor\`, then \`ojuri up\`.
+\`ojuri doctor\` checks this host and needs nothing set up first.
+Then \`ojuri up\`, which writes a manifest and a .env if you have none.
 `;
 
 export interface Streams {
@@ -282,19 +284,45 @@ async function doctorCommand(
   path: string,
   opts: { json: boolean; streams: Streams; processEnv: Record<string, string | undefined> }
 ): Promise<number> {
-  const loaded = loadManifest(resolve(path), opts.processEnv);
+  const requested = loadManifest(resolve(path), opts.processEnv);
+
+  // Checking the host is worth doing before a manifest exists: `doctor` is the
+  // first thing the help text suggests, and refusing to run until `init` has
+  // been called sends an operator away from the command that would have told
+  // them their Docker is too old. Nothing is written; the shipped default
+  // stands in for a manifest they have not made yet.
+  const absent = requested.findings.some((f) => f.code === "missing-manifest");
+  const loaded = absent ? loadManifest(TEMPLATE_MANIFEST, opts.processEnv) : requested;
+
   if (loaded.manifest === null) {
     opts.streams.out(formatHuman(loaded.path, loaded.findings));
     return 1;
   }
 
   const { effective } = await import("./manifest/types");
-  const findings = await doctor(effective(loaded.manifest), { exec: deps.exec });
+  const findings = [
+    ...(absent
+      ? [
+          warning(
+            "no-manifest",
+            "",
+            "No ojuri.yaml here, so this checked the host against the default stack.",
+            "`ojuri init` writes one. A manifest that enables FIA or an external " +
+              "datastore would be checked differently."
+          ),
+        ]
+      : []),
+    ...(await doctor(effective(loaded.manifest), { exec: deps.exec })),
+  ];
+
+  // Report where the operator ran, not the template inside the package: a
+  // node_modules path in a CI report reads as a misconfiguration.
+  const reported = absent ? dirname(resolve(path)) : loaded.path;
 
   if (opts.json) {
-    opts.streams.out(formatJson(loaded.path, findings));
+    opts.streams.out(formatJson(reported, findings));
   } else {
-    opts.streams.out(formatHuman(dirname(loaded.path), findings));
+    opts.streams.out(formatHuman(absent ? reported : dirname(loaded.path), findings));
   }
   return countBySeverity(findings).errors === 0 ? 0 : 1;
 }

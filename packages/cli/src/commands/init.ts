@@ -1,5 +1,6 @@
 import { copyFileSync, existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
+import { TEMPLATE_MANIFEST } from "../manifest/template";
 import { locateStack } from "../stack/locate";
 import { PACKAGE_DIR } from "../stack/package-dir";
 import { readEnvValue, replaceUrlPassword, setEnvValue } from "../envfile";
@@ -46,12 +47,7 @@ function resolveEnvExample(dir: string, stackDir?: string): string | null {
   return existsSync(bundled) ? bundled : null;
 }
 
-/**
- * Path to the default manifest shipped with the package, resolved
- * relative to this file so it works from `dist/commands/` after a build
- * and from `src/commands/` under ts-jest.
- */
-export const TEMPLATE_MANIFEST = join(__dirname, "..", "..", "templates", "ojuri.yaml");
+export { TEMPLATE_MANIFEST } from "../manifest/template";
 
 export function init(options: InitOptions = {}): InitResult {
   const dir = resolve(options.dir ?? process.cwd());
