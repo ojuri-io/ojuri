@@ -33,6 +33,15 @@ At launch (June 7, 2026) Ojuri ships:
   Redis + Kafka + Prometheus + Grafana, with FIA gated behind a Compose
   profile so first boot is fast).
 
+## Added since launch
+
+Only the items that change how an adopter starts or integrates. Everything
+else is in [`CHANGELOG.md`](CHANGELOG.md).
+
+- **1.7.0** — `npx @ojuri/cli up`, a one-command install needing no clone,
+  and [`@ojuri/sdk`](packages/sdk/README.md), a typed Node client for the
+  predict call and webhook verification.
+
 See [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for the technical
 reference and [`CHANGELOG.md`](CHANGELOG.md) for the per-release detail.
 
@@ -176,6 +185,12 @@ in production trouble.
 
 ### Deployment + packaging
 
+- **One-command install** — shipped in 1.7.0. `npx @ojuri/cli up` brings the
+  stack up in an empty directory with no clone: the compose file and the
+  assets it mounts travel in the package, and an `ojuri.yaml` manifest layers
+  over `.env` without replacing it. Both earlier install paths are unchanged.
+  What is still open is a `doctor` that works before a manifest exists, and
+  richer preflight on the host.
 - **Helm chart** — Kubernetes-first adopters currently template their own
   manifests off `docker-compose.yml`. A first-party chart with sane
   defaults for the three RDA replicas, the PAA singleton, the FIA opt-in,
@@ -187,10 +202,19 @@ in production trouble.
 
 ### Integration surface
 
-- **Client SDKs in TypeScript and Python.** A typed `OjuriClient` with
-  retries, idempotency-key helpers, and webhook signature verification
-  beats hand-rolled HTTP for every adopter. The TS SDK can live in
-  `clients/typescript/` and ship to npm; Python to PyPI as `ojuri-client`.
+- **Python client.** The TypeScript half shipped in 1.7.0 as
+  [`@ojuri/sdk`](packages/sdk/README.md) — a typed `predict` with retries, a
+  wall-clock deadline, idempotency handling and webhook signature
+  verification, at `packages/sdk` rather than the `clients/typescript/`
+  originally sketched here. The Python equivalent is still open. It should
+  match the same surface and be generated from, or checked against, the same
+  contract; the PyPI name is undecided, `ojuri` reading better than
+  `ojuri-client` but foreclosing the namespace for anything else.
+
+  Deliberately out of scope for both: the audit reads, the review queue, the
+  override endpoint and the FIA report API. Those are the dashboard's surface
+  and it calls them directly. Wrapping them once cost ten wrong field names
+  on types nothing exercised, which is why the client is narrow.
 - **Pre-built connectors (Stripe / Adyen / Plaid).** Each is a small
   adapter that maps the provider's webhook or callback into a
   `POST /v1/predict` call and feeds the decision back into the
