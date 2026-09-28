@@ -109,14 +109,36 @@ export async function up(
     projectName: resolved.projectName,
   };
 
+  // Pulled as its own streamed step. Left to `up -d` it is a silent
+  // multi-gigabyte download on a first run, which reads as a hang and, on a
+  // slow line, used to be killed by the captured-output timeout.
+  if (!options.build) {
+    const pulled = runCompose(deps.exec, rendered.plan, commandOptions, ["pull"], projectDir, {
+      stream: true,
+    });
+    if (pulled.status !== 0) {
+      return {
+        ok: false,
+        render: rendered,
+        lines: [],
+        errors: [
+          "docker compose pull failed, so nothing was started.",
+          failureDetail(pulled),
+        ],
+      };
+    }
+  }
+
   const upArgs = options.build ? ["up", "-d", "--build"] : ["up", "-d"];
-  const result = runCompose(deps.exec, rendered.plan, commandOptions, upArgs, projectDir);
+  const result = runCompose(deps.exec, rendered.plan, commandOptions, upArgs, projectDir, {
+    stream: true,
+  });
   if (result.status !== 0) {
     return {
       ok: false,
       render: rendered,
       lines: [],
-      errors: [`docker compose up failed:`, result.stderr.trim() || result.stdout.trim()],
+      errors: [`docker compose up failed:`, failureDetail(result)],
     };
   }
 
@@ -415,4 +437,14 @@ function previousRdaReplicas(renderedEnvPath: string): number | null {
   if (raw === undefined) return null;
   const parsed = Number.parseInt(raw, 10);
   return Number.isNaN(parsed) ? null : parsed;
+}
+
+/**
+ * A streamed step has already printed its own diagnosis to the terminal, so
+ * there is nothing in the buffers to repeat. Saying so beats an empty line
+ * where an error message is expected.
+ */
+function failureDetail(result: { stdout: string; stderr: string }): string {
+  const captured = result.stderr.trim() || result.stdout.trim();
+  return captured || "Docker printed the reason above.";
 }

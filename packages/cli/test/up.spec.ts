@@ -60,8 +60,10 @@ describe("up", () => {
     );
 
     expect(result.ok).toBe(true);
-    // `up -d` first, then the migration poll, then the logs read.
-    expect(rec.calls[0]?.slice(-2)).toEqual(["up", "-d"]);
+    // Pull first so the download is visible, then `up -d`, then the migration
+    // poll, then the logs read.
+    expect(rec.calls[0]?.slice(-1)).toEqual(["pull"]);
+    expect(rec.calls[1]?.slice(-2)).toEqual(["up", "-d"]);
     expect(rec.calls.some((c) => c.includes("ps"))).toBe(true);
     expect(rec.calls.some((c) => c.includes("logs"))).toBe(true);
   });
@@ -513,5 +515,84 @@ describe("up waiting for readiness", () => {
     expect(result.ok).toBe(true);
     expect(asked.some((u) => u.startsWith("https://ojuri.example.com"))).toBe(true);
     expect(asked.some((u) => u.includes("localhost"))).toBe(true);
+  });
+});
+
+describe("up pulling the images", () => {
+  function streamRecorder(handler: (argv: string[], nth: number) => ExecResult) {
+    const calls: { argv: string[]; stream: boolean }[] = [];
+    return {
+      calls,
+      exec: {
+        run(argv: string[], options?: { stream?: boolean }) {
+          calls.push({ argv, stream: options?.stream === true });
+          return handler(argv, calls.length);
+        },
+      } as Exec,
+    };
+  }
+
+  it("streams the pull and the up, so a slow download is visible rather than silent", async () => {
+    const dir = project();
+    const rec = streamRecorder((argv) => (argv.includes("ps") ? { ...ok, stdout: MIGRATED } : ok));
+
+    await up(join(dir, "ojuri.yaml"), { processEnv: {} }, {
+      exec: rec.exec,
+      probe: probeReturning(200),
+      sleep: noSleep,
+    });
+
+    const streamed = rec.calls.filter((c) => c.stream).map((c) => c.argv[c.argv.length - 1]);
+    expect(streamed).toEqual(expect.arrayContaining(["pull", "-d"]));
+    // Reading `ps` and `logs` is parsed, so it must stay captured.
+    const captured = rec.calls.filter((c) => !c.stream).map((c) => c.argv);
+    expect(captured.some((a) => a.includes("ps"))).toBe(true);
+    expect(captured.some((a) => a.includes("logs"))).toBe(true);
+  });
+
+  it("does not pull under --build, because there is nothing published to pull", async () => {
+    const dir = project();
+    const rec = streamRecorder((argv) => (argv.includes("ps") ? { ...ok, stdout: MIGRATED } : ok));
+
+    await up(join(dir, "ojuri.yaml"), { build: true, processEnv: {} }, {
+      exec: rec.exec,
+      probe: probeReturning(200),
+      sleep: noSleep,
+    });
+
+    expect(rec.calls.some((c) => c.argv.includes("pull"))).toBe(false);
+    expect(rec.calls[0]?.argv.slice(-3)).toEqual(["up", "-d", "--build"]);
+  });
+
+  it("stops and says so when the pull fails, rather than starting a partial stack", async () => {
+    const dir = project();
+    const rec = streamRecorder((argv) =>
+      argv.includes("pull") ? { status: 1, stdout: "", stderr: "" } : ok
+    );
+
+    const result = await up(join(dir, "ojuri.yaml"), { processEnv: {} }, {
+      exec: rec.exec,
+      probe: probeReturning(200),
+      sleep: noSleep,
+    });
+
+    expect(result.ok).toBe(false);
+    expect(result.errors[0]).toContain("pull failed");
+    expect(rec.calls.some((c) => c.argv.includes("up"))).toBe(false);
+  });
+
+  it("points at the output Docker already printed, rather than an empty message", async () => {
+    const dir = project();
+    const rec = streamRecorder((argv) =>
+      argv.includes("pull") ? { status: 1, stdout: "", stderr: "" } : ok
+    );
+
+    const result = await up(join(dir, "ojuri.yaml"), { processEnv: {} }, {
+      exec: rec.exec,
+      probe: probeReturning(200),
+      sleep: noSleep,
+    });
+
+    expect(result.errors.join(" ")).toContain("printed the reason above");
   });
 });
