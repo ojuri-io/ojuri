@@ -6,10 +6,17 @@ import { lookup, type EnvSource } from "../manifest/env";
 import { loadDotenv } from "../manifest/env";
 import type { EffectiveConfig } from "../manifest/types";
 import { render, type RenderResult } from "../render";
-import type { CommandOptions } from "../render/command";
-import { ENV_FILENAME, SERVICE } from "../render/compose-base";
-import { adminOutcome, migrateOutcome, parsePs, runCompose, type AdminOutcome } from "./stack";
-import { baseUrl, probeTargets, summaryUrls } from "./urls";
+import { formatCommand, type CommandOptions } from "../render/command";
+import { ENV_FILENAME, OBSERVABILITY_SERVICES, SERVICE } from "../render/compose-base";
+import {
+  adminOutcome,
+  composeArgs,
+  migrateOutcome,
+  parsePs,
+  runCompose,
+  type AdminOutcome,
+} from "./stack";
+import { baseUrl, probeTargets, summaryLinks, summaryUrls } from "./urls";
 import { init } from "./init";
 import { resolveStack } from "../stack/resolve";
 
@@ -142,6 +149,24 @@ export async function up(
     };
   }
 
+  // Straight after `up -d`, which has already removed the extra replicas:
+  // until nginx is restarted it is balancing over peers that no longer
+  // exist, and waitForReady can get its 200 from the survivor while two
+  // thirds of real traffic 502s.
+  const nginxLines =
+    previousReplicas !== null && previousReplicas !== cfg.rda.replicas
+      ? restartNginx(
+          deps.exec,
+          rendered.plan,
+          commandOptions,
+          projectDir,
+          previousReplicas,
+          cfg.rda.replicas
+        )
+      : [];
+
+  const stoppedLines = stopDisabled(deps.exec, rendered.plan, commandOptions, projectDir, cfg);
+
   const migrate = await waitForMigrate(rendered.plan, commandOptions, projectDir, options, deps);
   if (migrate !== "succeeded") {
     const logs = composeLogs(deps.exec, rendered.plan, commandOptions, projectDir);
@@ -182,25 +207,89 @@ export async function up(
     ? ({ kind: "bootstrapped", password: bootstrap.adminPassword } as const)
     : adminOutcome(logs, lookup(env, "ADMIN_SEED_PASSWORD"));
 
-  const nginxLines =
-    previousReplicas !== null && previousReplicas !== cfg.rda.replicas
-      ? restartNginx(
-          deps.exec,
-          rendered.plan,
-          commandOptions,
-          projectDir,
-          previousReplicas,
-          cfg.rda.replicas
-        )
-      : [];
-
   const preamble = bootstrap ? bootstrap.messages : [];
   return {
     ok: true,
     render: rendered,
     errors: [],
-    lines: [...preamble, ...summary(cfg, admin), ...nginxLines],
+    lines: [...preamble, ...summary(cfg, admin, env), ...nginxLines, ...stoppedLines],
   };
+}
+
+/**
+ * Switching a service off in the manifest withholds its Compose profile,
+ * and `up -d` then simply does not mention the container, which goes on
+ * running. Even `--remove-orphans` leaves it: a service in an inactive
+ * profile is still a defined service, not an orphan. So the containers
+ * the manifest no longer asks for are removed by name.
+ *
+ * Datastores are named rather than removed. Their data outlives the
+ * container either way, but a bundled Postgres that an operator has
+ * pointed away from is not this command's to delete.
+ */
+function stopDisabled(
+  exec: UpDeps["exec"],
+  plan: NonNullable<RenderResult["plan"]>,
+  commandOptions: CommandOptions,
+  projectDir: string,
+  cfg: EffectiveConfig
+): string[] {
+  const removable: string[] = [
+    ...(cfg.mla.enabled ? [] : [SERVICE.mla]),
+    ...(cfg.fia.enabled ? [] : [SERVICE.fia]),
+    ...(cfg.sentinel.enabled ? [] : [SERVICE.sentinel]),
+    ...(cfg.observabilityEnabled ? [] : OBSERVABILITY_SERVICES),
+  ];
+  const datastores = plan.dropped.filter((service) => !removable.includes(service));
+  if (removable.length === 0 && datastores.length === 0) return [];
+
+  const ps = runCompose(exec, plan, commandOptions, ["ps", "-a", "--format", "json"], projectDir);
+  if (ps.status !== 0) {
+    return [
+      "",
+      "Could not list the running containers, so anything the manifest has just",
+      "switched off may still be running. `ojuri status` shows what is up.",
+    ];
+  }
+
+  const present = new Set(parsePs(ps.stdout).map((container) => container.service));
+  const lines: string[] = [];
+
+  const leftover = datastores.filter((service) => present.has(service));
+  if (leftover.length > 0) {
+    lines.push(
+      "",
+      `${list(leftover)} still running, and the manifest now points at your own.`,
+      `Its data is yours to keep or drop: \`docker compose stop ${leftover.join(" ")}\`.`
+    );
+  }
+
+  const stale = removable.filter((service) => present.has(service));
+  if (stale.length === 0) return lines;
+
+  // Volumes are left behind on purpose: FIA's model cache is a 7.6 GB
+  // download, and turning it off for an afternoon should not cost it.
+  const result = runCompose(exec, plan, commandOptions, ["rm", "-f", "-s", ...stale], projectDir);
+  if (result.status !== 0) {
+    const command = formatCommand(composeArgs(plan, commandOptions, ["rm", "-f", "-s", ...stale]));
+    return [
+      ...lines,
+      "",
+      `${list(stale)} switched off in the manifest but still running, and removing`,
+      `${stale.length === 1 ? "it" : "them"} failed. Run:`,
+      "",
+      `  ${command}`,
+    ];
+  }
+
+  return [...lines, "", `Removed ${stale.join(", ")}: switched off in the manifest.`];
+}
+
+/** "a", "a and b", "a, b and c" — with the verb, which changes with the count. */
+function list(services: string[]): string {
+  const verb = services.length === 1 ? "is" : "are";
+  if (services.length === 1) return `${services[0]} ${verb}`;
+  return `${services.slice(0, -1).join(", ")} and ${services[services.length - 1]} ${verb}`;
 }
 
 async function waitForMigrate(
@@ -265,22 +354,84 @@ function composeLogs(
   return `${logs.stdout}\n${logs.stderr}`;
 }
 
-/** What an operator needs to see once the stack is answering. */
-export function summary(cfg: EffectiveConfig, admin: AdminOutcome): string[] {
-  const urls = summaryUrls(cfg);
-  const lines: string[] = ["", "Ojuri is up.", "", `  Predict   ${urls.predict}`];
+const NO_ENV: EnvSource = { dotenv: {}, process: {} };
 
-  if (urls.sentinel) lines.push(`  Sentinel  ${urls.sentinel}`);
-  if (urls.grafana) lines.push(`  Grafana   ${urls.grafana}`);
+/** What an operator needs to see once the stack is answering. */
+export function summary(
+  cfg: EffectiveConfig,
+  admin: AdminOutcome,
+  env: EnvSource = NO_ENV
+): string[] {
+  const urls = summaryUrls(cfg);
+  const lines: string[] = ["", "Ojuri is up.", "", ...linkTable(cfg)];
+
+  lines.push("", ...adminLines(admin, urls.sentinel));
+  if (urls.grafana) lines.push("", ...grafanaLines(env, admin.kind === "bootstrapped"));
 
   lines.push("", "Score a transaction:", "", ...curlExample(cfg).split("\n"));
-  lines.push("", ...adminLines(admin));
 
   if (cfg.requireApiKey) {
     lines.push("", ...apiKeyLines(cfg));
   }
+  if (!cfg.fia.enabled) {
+    lines.push("", ...fiaLines());
+  }
 
   return lines;
+}
+
+/** Label, URL and what each one is for, in three aligned columns. */
+function linkTable(cfg: EffectiveConfig): string[] {
+  const links = summaryLinks(cfg);
+  const label = Math.max(...links.map((link) => link.label.length));
+  const url = Math.max(...links.map((link) => link.url.length));
+  return links.map(
+    (link) => `  ${link.label.padEnd(label)}  ${link.url.padEnd(url)}  ${link.note}`
+  );
+}
+
+/**
+ * Grafana keeps its own credentials, so the admin account above does not
+ * open it. Printing them is right for the pair this command just wrote
+ * and for the shipped default; a password the operator chose themselves
+ * is theirs, and only the variable names are printed for that.
+ */
+function grafanaLines(env: EnvSource, ours: boolean): string[] {
+  const user = set(lookup(env, "GRAFANA_USER")) ?? "admin";
+  // Compose resolves ${GRAFANA_PASSWORD:-admin}, so an empty value in .env
+  // is still the shipped password, not a secret the operator chose.
+  const password = set(lookup(env, "GRAFANA_PASSWORD")) ?? "admin";
+
+  if (ours) {
+    return [`Grafana signs in separately, on ${user} / ${password}, also in your .env.`];
+  }
+  if (password === "admin") {
+    return [`Grafana signs in separately, still on the shipped ${user} / ${password}.`];
+  }
+  return ["Grafana signs in separately, with GRAFANA_USER and GRAFANA_PASSWORD from .env."];
+}
+
+function set(value: string | undefined): string | undefined {
+  return value === undefined || value.trim() === "" ? undefined : value;
+}
+
+/**
+ * The one service off by default, so the summary has to say what is
+ * missing and what turning it on costs. Everything else in the manifest
+ * is already running by the time this prints.
+ */
+function fiaLines(): string[] {
+  return [
+    "FIA is off, so a declined transaction gets no written investigation.",
+    "To turn it on:",
+    "",
+    "  1. set services.fia.enabled to true in ojuri.yaml",
+    "  2. run `ojuri up` again",
+    "",
+    "It downloads about 7.6 GB of Phi-3 weights on first start and wants 16 GB",
+    "of RAM. FIA_DISABLE_LLM=true in .env serves the rule-based reports instead,",
+    "without the model. Neither setting touches the predict path.",
+  ];
 }
 
 function curlExample(cfg: EffectiveConfig): string {
@@ -301,11 +452,14 @@ function curlExample(cfg: EffectiveConfig): string {
     }'`;
 }
 
-function adminLines(admin: AdminOutcome): string[] {
+function adminLines(admin: AdminOutcome, sentinel: string | undefined): string[] {
+  const signIn = sentinel ? `Sign in to Sentinel at ${sentinel} with:` : "Sign in with:";
+
   switch (admin.kind) {
     case "bootstrapped":
       return [
-        "Admin password, generated by this command and written to your .env:",
+        "This command generated the admin password and wrote it to your .env.",
+        signIn,
         "",
         `  username: admin`,
         `  password: ${admin.password}`,
@@ -314,7 +468,8 @@ function adminLines(admin: AdminOutcome): string[] {
       ];
     case "generated":
       return [
-        "Admin password, printed once by the migration and not recoverable later:",
+        "The migration printed the admin password once and cannot recover it.",
+        signIn,
         "",
         `  username: admin`,
         `  password: ${admin.password}`,

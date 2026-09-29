@@ -137,8 +137,13 @@ describe("probeTargets", () => {
     expect(targets.find((t) => t.name === "mla")?.urls[0]).toBe("http://localhost/mla/readyz");
   });
 
+  it("probes MLA by default, since the default manifest runs it", () => {
+    expect(probeTargets(cfg(), noEnv).map((t) => t.name)).toEqual(["rda", "paa", "mla"]);
+  });
+
   it("does not probe a service the manifest has switched off", () => {
-    expect(probeTargets(cfg(), noEnv).map((t) => t.name)).toEqual(["rda", "paa"]);
+    const off = cfg({ version: 1, services: { mla: { enabled: false }, fia: { enabled: false } } });
+    expect(probeTargets(off, noEnv).map((t) => t.name)).toEqual(["rda", "paa"]);
   });
 
   it("honours a *_HEALTH_URL that is actually set", () => {
@@ -177,7 +182,13 @@ describe("summaryUrls", () => {
   });
 
   it("omits what is not enabled", () => {
-    const urls = summaryUrls(cfg({ version: 1, observability: { enabled: false } }));
+    const urls = summaryUrls(
+      cfg({
+        version: 1,
+        observability: { enabled: false },
+        services: { sentinel: { enabled: false } },
+      })
+    );
     expect(urls.sentinel).toBeUndefined();
     expect(urls.grafana).toBeUndefined();
   });

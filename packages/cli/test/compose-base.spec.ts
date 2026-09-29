@@ -147,6 +147,19 @@ describe("compose files", () => {
     expect(String(compose.services[SERVICE.rda]?.deploy?.replicas)).toContain("RDA_REPLICAS");
   });
 
+  it("pins the RDA replica count the manifest says it differs from", () => {
+    // The manifest defaults to 1 and every doc explains that as a
+    // divergence from compose's 3. Change the fallback and the README
+    // table, the DEFAULTS docstring and the bare-compose fixture all go
+    // wrong together, with nothing else failing.
+    expect(String(compose.services[SERVICE.rda]?.deploy?.replicas)).toContain("RDA_REPLICAS:-3");
+
+    const fixture = parseYaml(
+      readFileSync(join(__dirname, "fixtures", "bare-compose.yaml"), "utf8")
+    ) as { services?: { rda?: { replicas?: number } } };
+    expect(fixture.services?.rda?.replicas).toBe(3);
+  });
+
   it("confirms PAA is pinned to one replica in the base file", () => {
     expect(compose.services[SERVICE.paa]?.deploy?.replicas).toBe(1);
   });

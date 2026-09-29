@@ -39,17 +39,45 @@ const buildServiceTargets = (): ServiceProbeTarget[] => [
   {
     name: "MLA",
     description: "Model Learning Agent · Python drift/retrain",
-    // MLA runs natively on the developer's host (not in compose by
-    // design — it owns large model artefacts on disk). Default to
-    // 127.0.0.1:9095; set MLA_HEALTH_URL='' to skip the probe.
+    // In compose behind the `mla` profile, which `ojuri up` passes; the
+    // other supported way is a host venv, which this default addresses.
+    // Set MLA_HEALTH_URL='' to skip the probe.
     url: process.env.MLA_HEALTH_URL ?? "http://127.0.0.1:9095",
   },
   {
     name: "FIA",
     description: "Fraud Investigation Agent · Python Phi-3",
-    url: process.env.FIA_HEALTH_URL || "http://127.0.0.1:9094",
+    // FIA is the one service off by default, so an empty value is how a
+    // stack says it deliberately does not run it. `??`, not `||`, or the
+    // empty string falls through to a URL nothing is listening on and the
+    // dashboard reports a failure rather than an absence.
+    url: process.env.FIA_HEALTH_URL ?? "http://127.0.0.1:9094",
   },
 ];
+
+/**
+ * A hostname with no DNS record is a service this deployment does not
+ * run, not a service that is failing. FIA is off by default, so without
+ * this every default install shows a red card for a deliberate absence.
+ */
+export function hostDoesNotResolve(err: unknown): boolean {
+  const code = causeOf(err)?.code;
+  return code === "ENOTFOUND" || code === "EAI_AGAIN";
+}
+
+/** Node wraps every probe failure as "fetch failed"; the cause is the part worth reading. */
+export function probeError(err: unknown): string {
+  const cause = causeOf(err)?.message;
+  if (cause) return cause;
+  const message = (err as { message?: unknown } | null)?.message;
+  return typeof message === "string" && message ? message : "probe failed";
+}
+
+/** Duck-typed rather than `instanceof`: the error crosses a realm boundary under Jest. */
+function causeOf(err: unknown): { code?: string; message?: string } | undefined {
+  const cause = (err as { cause?: unknown } | null)?.cause;
+  return cause && typeof cause === "object" ? (cause as { code?: string; message?: string }) : undefined;
+}
 
 @injectable()
 class HealthService {
@@ -171,16 +199,19 @@ class HealthService {
             ],
           };
         } catch (err) {
+          const absent = hostDoesNotResolve(err);
           return {
             name: t.name,
             description: t.description,
-            status: "DOWN" as const,
+            status: absent ? ("UNKNOWN" as const) : ("DOWN" as const),
             url: t.url,
             latencyMs: null,
             when,
             kvs: [
               { k: "ENDPOINT", v: probeUrl },
-              { k: "ERROR", v: err instanceof Error ? err.message : "probe failed", tone: "danger" as const },
+              absent
+                ? { k: "STATE", v: "not running in this deployment" }
+                : { k: "ERROR", v: probeError(err), tone: "danger" as const },
             ],
           };
         } finally {

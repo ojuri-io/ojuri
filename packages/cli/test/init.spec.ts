@@ -131,11 +131,13 @@ describe("init", () => {
     expect(a.ADMIN_SEED_PASSWORD).not.toBe(b.ADMIN_SEED_PASSWORD);
   });
 
-  it("leaves MLA_SERVICE_TOKEN alone, which is a separate hardening job", () => {
+  it("generates MLA_SERVICE_TOKEN, which RDA accepts as a model-registry credential", () => {
     const dir = project();
     init({ dir });
     const env = parseDotenv(readFileSync(join(dir, ".env"), "utf8"));
-    expect(env.MLA_SERVICE_TOKEN).toContain("dev-only");
+    expect(env.MLA_SERVICE_TOKEN).not.toContain("dev-only");
+    // RDA rejects anything shorter, and MLA is on by default now.
+    expect((env.MLA_SERVICE_TOKEN ?? "").length).toBeGreaterThanOrEqual(32);
   });
 
   it("keeps the development defaults under --keep-dev-defaults", () => {

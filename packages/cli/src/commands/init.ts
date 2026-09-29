@@ -9,6 +9,7 @@ import {
   generateAdminPassword,
   generateJwtSecret,
   generatePostgresPassword,
+  generateServiceToken,
 } from "../secrets";
 
 export interface InitOptions {
@@ -104,18 +105,21 @@ export function init(options: InitOptions = {}): InitResult {
   return result;
 }
 
-/**
- * Swap the development defaults for generated values.
- *
- * MLA_SERVICE_TOKEN also ships a development default, but it is left
- * alone deliberately: it is out of scope for this change and noted for
- * a separate hardening pass.
- */
+/** Swap the development defaults for generated values. */
 function harden(text: string, adminPassword: string): string {
   let out = text;
 
   out = setEnvValue(out, "AUTH_JWT_SECRET", generateJwtSecret());
   out = setEnvValue(out, "ADMIN_SEED_PASSWORD", adminPassword);
+
+  // MLA is on by default, and .env.example's token is a published
+  // string over RDA's 32-character floor, so leaving it would ship a
+  // working credential for models:register and models:set_status.
+  out = setEnvValue(out, "MLA_SERVICE_TOKEN", generateServiceToken());
+
+  // Grafana publishes 3001 on every interface and its admin can add a
+  // datasource, so admin/admin is not a password to ship either.
+  out = setEnvValue(out, "GRAFANA_PASSWORD", generateAdminPassword());
 
   // POSTGRES_PASSWORD is what the container takes; DB_PASSWORD and the
   // password inside DB_URL are what host-side tooling uses. All three

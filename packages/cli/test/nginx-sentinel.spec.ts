@@ -71,6 +71,23 @@ describe("nginx.sentinel.conf", () => {
     }
   });
 
+  it("keeps RDA answering every path the docs call a health endpoint", () => {
+    // The default config lets /livez and /readyz fall through to `/`,
+    // which reaches RDA. Here `/` is the dashboard, and a SPA answers
+    // 200 text/html whatever RDA is doing, so each one needs naming.
+    for (const path of ["/health", "/livez", "/ready", "/readyz"]) {
+      expect(SENTINEL_CONF).toContain(`location = ${path} {`);
+    }
+  });
+
+  it("sends the MLA prefix to the service, not back out through the host", () => {
+    // host.docker.internal resolves inside the container but does not
+    // reach a published port back out, so Sentinel's drift and retrain
+    // calls timed out. This config is only mounted when the dashboard is
+    // served here, which is the layout that runs MLA in compose.
+    expect(SENTINEL_CONF).toContain("set $mla_upstream mla;");
+  });
+
   it("keeps the predict rate limit, so the two configs behave the same under load", () => {
     expect(SENTINEL_CONF).toContain("limit_req_zone");
     expect(SENTINEL_CONF).toContain("limit_req zone=api_limit burst=50 nodelay;");

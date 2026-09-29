@@ -16,10 +16,10 @@ export function applyRules(manifest: Manifest, env: EnvSource): Finding[] {
     ...mlaSingleton(cfg),
     ...fiaScaleOut(cfg),
     ...fiaFootprint(cfg),
+    ...mlaServiceToken(manifest, cfg, env),
     ...openPredictEndpoint(cfg, env),
     ...productionDefaults(cfg, env),
     ...externalDatastoreReferences(cfg),
-    ...sentinelWithoutFia(cfg),
   ];
 }
 
@@ -95,6 +95,40 @@ function fiaFootprint(cfg: Config): Finding[] {
         "authorisation path."
     ),
   ];
+}
+
+/**
+ * `.env.example` ships a token long enough to clear RDA's 32-character
+ * floor, and `init` refuses to rewrite an existing `.env`, so an adopter
+ * upgrading into MLA-on-by-default keeps a credential everybody can read
+ * from the repository. RDA takes it as a bearer token for
+ * `models:register` and `models:set_status`: registering an ONNX model
+ * and making it the champion.
+ */
+function mlaServiceToken(manifest: Manifest, cfg: Config, env: EnvSource): Finding[] {
+  if (!cfg.mla.enabled) return [];
+
+  const token = lookup(env, "MLA_SERVICE_TOKEN") ?? "";
+  if (!token.startsWith("dev-only")) return [];
+
+  // A manifest that omits services.mla never asked for it, and refusing
+  // to start such a stack would break an upgrade over a service the
+  // operator did not choose. Choosing it explicitly is a different thing.
+  const chosen = manifest.services?.mla?.enabled === true;
+
+  const summary = "MLA_SERVICE_TOKEN is the development default, which is published in .env.example.";
+  const detail =
+    "MLA is enabled, so RDA will accept this value as a bearer credential " +
+    "for models:register and models:set_status: registering a model and " +
+    "making it the one that scores your traffic. Generate one with " +
+    "`openssl rand -base64 32` and set it in .env for both. A fresh " +
+    "`ojuri init` generates it; an existing .env is never rewritten, which " +
+    "is why an upgrade lands here.";
+
+  if (chosen && lookup(env, "NODE_ENV") === "production") {
+    return [error("mla-service-token", "services.mla.enabled", summary, detail)];
+  }
+  return [warning("mla-service-token", "services.mla.enabled", summary, detail)];
 }
 
 function openPredictEndpoint(cfg: Config, env: EnvSource): Finding[] {
@@ -283,18 +317,4 @@ function unresolvedNames(value: string | undefined): string[] {
     if (name !== undefined) names.push(name);
   }
   return names;
-}
-
-function sentinelWithoutFia(cfg: Config): Finding[] {
-  if (!cfg.sentinel.enabled || cfg.fia.enabled) return [];
-  return [
-    warning(
-      "sentinel-without-fia",
-      "services.fia.enabled",
-      "Sentinel is enabled but FIA is not, so its investigation pages will show FIA as unavailable.",
-      "Nothing breaks: the dashboard's reads fall back to empty and the " +
-        "affected pages render an empty state. Enable FIA if you want " +
-        "investigation reports, having read the footprint warning first."
-    ),
-  ];
 }

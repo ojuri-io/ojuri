@@ -55,22 +55,25 @@ export interface Manifest {
 }
 
 /**
- * Defaults applied when a field is absent. These describe the stack a
- * plain `docker compose up` produces today, so an empty manifest and the
- * committed `ojuri.yaml` mean the same thing.
+ * Defaults applied when a field is absent, so an empty manifest and the
+ * committed `ojuri.yaml` mean the same thing. They describe what `ojuri
+ * up` runs, which is not quite a bare `docker compose up`: that starts
+ * more RDA replicas and neither MLA nor Sentinel, because Compose has no
+ * way to switch a profile on by default. `compose-base.spec.ts` pins the
+ * replica count it defaults to.
  */
 export const DEFAULTS = {
   release: "v1",
   postgresMode: "bundled" as DatastoreMode,
   redisMode: "bundled" as DatastoreMode,
   kafkaMode: "bundled" as DatastoreMode,
-  rdaReplicas: 3,
+  rdaReplicas: 1,
   paaReplicas: 1,
-  mlaEnabled: false,
+  mlaEnabled: true,
   mlaReplicas: 1,
   fiaEnabled: false,
   fiaReplicas: 1,
-  sentinelEnabled: false,
+  sentinelEnabled: true,
   requireApiKey: false,
   httpPort: 80,
   publicUrl: "http://localhost",

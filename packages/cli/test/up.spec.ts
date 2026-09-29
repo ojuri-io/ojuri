@@ -68,6 +68,203 @@ describe("up", () => {
     expect(rec.calls.some((c) => c.includes("logs"))).toBe(true);
   });
 
+  it("removes a service the manifest has just switched off", async () => {
+    // Withholding the profile is not enough: `up -d` does not mention the
+    // container and it keeps running. Even --remove-orphans leaves it.
+    const dir = project();
+    const rec = recorder((argv) =>
+      argv.includes("ps")
+        ? {
+            ...ok,
+            stdout:
+              '[{"Service":"db-migrate","State":"exited","ExitCode":0},' +
+              '{"Service":"fia","State":"running"}]',
+          }
+        : ok
+    );
+
+    const result = await up(
+      join(dir, "ojuri.yaml"),
+      { outDir: ".ojuri" },
+      { exec: rec.exec, probe: probeReturning(200), sleep: noSleep }
+    );
+
+    const removal = rec.calls.find((call) => call.includes("rm"));
+    expect(removal?.slice(-4)).toEqual(["rm", "-f", "-s", "fia"]);
+    expect(result.lines.join("\n")).toContain("Removed fia");
+  });
+
+  it("removes nothing when the disabled services are not running", async () => {
+    const dir = project();
+    const rec = recorder((argv) => (argv.includes("ps") ? { ...ok, stdout: MIGRATED } : ok));
+
+    const result = await up(
+      join(dir, "ojuri.yaml"),
+      { outDir: ".ojuri" },
+      { exec: rec.exec, probe: probeReturning(200), sleep: noSleep }
+    );
+
+    expect(rec.calls.some((call) => call.includes("rm"))).toBe(false);
+    expect(result.lines.join("\n")).not.toContain("Removed");
+  });
+
+  it("names only the disabled service, with an enabled one running beside it", async () => {
+    const dir = project("version: 1\nservices:\n  sentinel:\n    enabled: false\n");
+    const rec = recorder((argv) =>
+      argv.includes("ps")
+        ? {
+            ...ok,
+            stdout:
+              '[{"Service":"db-migrate","State":"exited","ExitCode":0},' +
+              '{"Service":"sentinel","State":"running"},' +
+              '{"Service":"mla","State":"running"}]',
+          }
+        : ok
+    );
+
+    await up(
+      join(dir, "ojuri.yaml"),
+      { outDir: ".ojuri" },
+      { exec: rec.exec, probe: probeReturning(200), sleep: noSleep }
+    );
+
+    // `--profile mla` is in this argv legitimately, so pin rm's own
+    // arguments rather than the whole command.
+    const removal = rec.calls.find((call) => call.includes("rm")) ?? [];
+    expect(removal.slice(removal.indexOf("rm"))).toEqual(["rm", "-f", "-s", "sentinel"]);
+  });
+
+  it("removes Prometheus and Grafana when observability is switched off", async () => {
+    const dir = project("version: 1\nobservability:\n  enabled: false\n");
+    const rec = recorder((argv) =>
+      argv.includes("ps")
+        ? {
+            ...ok,
+            stdout:
+              '[{"Service":"db-migrate","State":"exited","ExitCode":0},' +
+              '{"Service":"prometheus","State":"running"},' +
+              '{"Service":"grafana","State":"running"}]',
+          }
+        : ok
+    );
+
+    await up(
+      join(dir, "ojuri.yaml"),
+      { outDir: ".ojuri" },
+      { exec: rec.exec, probe: probeReturning(200), sleep: noSleep }
+    );
+
+    const removal = rec.calls.find((call) => call.includes("rm")) ?? [];
+    expect(removal.slice(removal.indexOf("rm"))).toEqual([
+      "rm",
+      "-f",
+      "-s",
+      "prometheus",
+      "grafana",
+    ]);
+  });
+
+  it("names a bundled datastore left behind rather than deleting it", async () => {
+    // The container holds the operator's data. Pointing the manifest
+    // elsewhere is not permission to remove it.
+    const dir = project(
+      "version: 1\ndatastores:\n  postgres:\n    mode: external\n    url: postgresql://u@h/d\n"
+    );
+    const rec = recorder((argv) =>
+      argv.includes("ps")
+        ? {
+            ...ok,
+            stdout:
+              '[{"Service":"db-migrate","State":"exited","ExitCode":0},' +
+              '{"Service":"postgres","State":"running"}]',
+          }
+        : ok
+    );
+
+    const result = await up(
+      join(dir, "ojuri.yaml"),
+      { outDir: ".ojuri", yes: true },
+      { exec: rec.exec, probe: probeReturning(200), sleep: noSleep }
+    );
+
+    const text = result.lines.join("\n");
+    expect(text).toContain("postgres is still running");
+    expect(text).toContain("docker compose stop postgres");
+    const removal = rec.calls.find((call) => call.includes("rm"));
+    expect(removal).toBeUndefined();
+  });
+
+  it("says so when it cannot tell what is running", async () => {
+    const dir = project();
+    let listings = 0;
+    const rec = recorder((argv) => {
+      if (!argv.includes("ps")) return ok;
+      // The first listing is this check's; the migration poll reads ps
+      // too, and starving that one would loop until the deadline.
+      listings += 1;
+      return listings === 1
+        ? { status: 1, stdout: "", stderr: "cannot connect to the docker daemon" }
+        : { ...ok, stdout: MIGRATED };
+    });
+
+    const result = await up(
+      join(dir, "ojuri.yaml"),
+      { outDir: ".ojuri" },
+      { exec: rec.exec, probe: probeReturning(200), sleep: noSleep }
+    );
+
+    expect(result.lines.join("\n")).toContain("Could not list the running containers");
+  });
+
+  it("prints a runnable command when the removal itself fails", async () => {
+    const dir = project("version: 1\nservices:\n  sentinel:\n    enabled: false\n");
+    const rec = recorder((argv) => {
+      if (argv.includes("rm")) return { status: 1, stdout: "", stderr: "permission denied" };
+      return argv.includes("ps")
+        ? {
+            ...ok,
+            stdout:
+              '[{"Service":"db-migrate","State":"exited","ExitCode":0},' +
+              '{"Service":"sentinel","State":"running"}]',
+          }
+        : ok;
+    });
+
+    const result = await up(
+      join(dir, "ojuri.yaml"),
+      { outDir: ".ojuri" },
+      { exec: rec.exec, probe: probeReturning(200), sleep: noSleep }
+    );
+
+    const text = result.lines.join("\n");
+    expect(text).toContain("sentinel is switched off");
+    expect(text).toContain("docker compose");
+    expect(text).toContain(".ojuri/docker-compose.override.ojuri.yml");
+    expect(text).toContain("rm -f -s sentinel");
+  });
+
+  it("removes nothing when every optional service is enabled", async () => {
+    const dir = project("version: 1\nservices:\n  fia:\n    enabled: true\n");
+    const rec = recorder((argv) =>
+      argv.includes("ps")
+        ? {
+            ...ok,
+            stdout:
+              '[{"Service":"db-migrate","State":"exited","ExitCode":0},' +
+              '{"Service":"fia","State":"running"}]',
+          }
+        : ok
+    );
+
+    await up(
+      join(dir, "ojuri.yaml"),
+      { outDir: ".ojuri" },
+      { exec: rec.exec, probe: probeReturning(200), sleep: noSleep }
+    );
+
+    expect(rec.calls.some((call) => call.includes("rm"))).toBe(false);
+  });
+
   it("passes the rendered env file and the overlay to every compose call", async () => {
     const dir = project();
     const rec = recorder((argv) => (argv.includes("ps") ? { ...ok, stdout: MIGRATED } : ok));
@@ -239,12 +436,66 @@ describe("the summary up prints", () => {
   });
 
   it("shows Sentinel at the NGINX origin and Grafana on its own port", () => {
-    const lines = summary(
-      cfg({ version: 1, services: { sentinel: { enabled: true } } }),
+    const lines = summary(cfg(), { kind: "existing" }).join("\n");
+    expect(lines).toMatch(/Sentinel {2,}http:\/\/localhost {2,}operator dashboard/);
+    expect(lines).toMatch(/Grafana {2,}http:\/\/localhost:3001 {2,}metrics dashboards/);
+  });
+
+  it("shows the agents behind the dashboard, with FIA only once it is on", () => {
+    const lines = summary(cfg(), { kind: "existing" }).join("\n");
+    expect(lines).toContain("http://localhost:9091/stats");
+    expect(lines).toContain("http://localhost:9095/stats");
+    expect(lines).not.toContain(":9094");
+
+    const withFia = summary(
+      cfg({ version: 1, services: { fia: { enabled: true } } }),
       { kind: "existing" }
     ).join("\n");
-    expect(lines).toContain("Sentinel  http://localhost");
-    expect(lines).toContain("Grafana   http://localhost:3001");
+    expect(withFia).toContain("http://localhost:9094/stats");
+  });
+
+  it("says FIA is off and how to turn it on, since it is the one service that is", () => {
+    const lines = summary(cfg(), { kind: "existing" }).join("\n");
+    expect(lines).toContain("services.fia.enabled");
+    expect(lines).toContain("7.6 GB");
+    expect(lines).toContain("FIA_DISABLE_LLM=true");
+  });
+
+  it("says nothing about turning FIA on once it is on", () => {
+    const lines = summary(
+      cfg({ version: 1, services: { fia: { enabled: true } } }),
+      { kind: "existing" }
+    ).join("\n");
+    expect(lines).not.toContain("services.fia.enabled");
+  });
+
+  it("names the Sentinel origin in the sign-in block, not just in the table", () => {
+    const lines = summary(
+      cfg(),
+      { kind: "bootstrapped", password: "hunter2hunter2" }
+    ).join("\n");
+    expect(lines).toContain("Sign in to Sentinel at http://localhost with:");
+  });
+
+  it("prints the Grafana password it generated, since nothing else shows it", () => {
+    const lines = summary(
+      cfg(),
+      { kind: "bootstrapped", password: "hunter2hunter2" },
+      { dotenv: { GRAFANA_PASSWORD: "gener4tedpass" }, process: {} }
+    ).join("\n");
+    expect(lines).toContain("admin / gener4tedpass");
+  });
+
+  it("prints the shipped Grafana pair, and only the variable names for a chosen one", () => {
+    const shipped = summary(cfg(), { kind: "existing" }).join("\n");
+    expect(shipped).toContain("shipped admin / admin");
+
+    const chosen = summary(cfg(), { kind: "existing" }, {
+      dotenv: { GRAFANA_PASSWORD: "s3cret" },
+      process: {},
+    }).join("\n");
+    expect(chosen).not.toContain("s3cret");
+    expect(chosen).toContain("GRAFANA_PASSWORD");
   });
 
   it("explains the two-step key issuance when API keys are required", () => {
@@ -310,7 +561,7 @@ describe("status", () => {
       { exec: rec.exec, probe: probeReturning(200) }
     );
     expect(result.containers[0]?.service).toBe("rda");
-    expect(result.health.map((h) => h.name)).toEqual(["rda", "paa"]);
+    expect(result.health.map((h) => h.name)).toEqual(["rda", "paa", "mla"]);
     expect(result.health.every((h) => h.status === "up")).toBe(true);
   });
 
@@ -394,7 +645,7 @@ describe("up bootstrapping a first run", () => {
     });
 
     const text = result.lines.join("\n");
-    expect(text).toContain("generated by this command");
+    expect(text).toContain("generated the admin password");
     expect(text).toMatch(/password: \S{12,}/);
   });
 

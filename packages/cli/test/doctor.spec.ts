@@ -100,7 +100,7 @@ describe("version checks", () => {
 describe("required ports", () => {
   it("covers the default stack", () => {
     const ports = requiredPorts(cfg()).map((p) => p.port).sort((a, b) => a - b);
-    expect(ports).toEqual([80, 3001, 5433, 6380, 9090, 9091, 9092, 29092]);
+    expect(ports).toEqual([80, 3001, 5433, 6380, 9090, 9091, 9092, 9095, 29092]);
   });
 
   it("drops a datastore's port when it is external", () => {

@@ -680,7 +680,8 @@ The shipped `docker-compose.yml` runs the reference production stack:
   seeing the rest of the stack run. FIA listens on host port 9094 and is
   capped at 16 GB / 2 CPU.
 - **MLA** is in `docker-compose.yml` behind the `mla` profile, so a plain
-  `up` doesn't start it. You can run it either way:
+  `up` doesn't start it, though `ojuri up` passes the profile and does.
+  You can run it either way:
   - *In Compose* — add `--profile mla` and set
     `MLA_HEALTH_URL=http://mla:9095` in `.env`, so the RDA replicas probe
     the container rather than the host.
@@ -689,7 +690,8 @@ The shipped `docker-compose.yml` runs the reference production stack:
     `METRICS_PORT` 9095, which is why the health fan-out defaults to
     `MLA_HEALTH_URL=http://host.docker.internal:9095`.
 - **Sentinel** is served separately (Vite dev server on 5173, or a
-  static build behind your own reverse proxy in production). It is not
+  static build behind your own reverse proxy in production), or from the
+  `sentinel` profile, which `ojuri up` passes by default. It is not
   bundled into compose.
 - **Infra**: Redis (host 6380), Kafka + Zookeeper (host 9092 external,
   29092 internal — the internal listener is what containers use to avoid

@@ -229,16 +229,43 @@ describe("Sentinel", () => {
     expect(errorCodes(findings)).toEqual([]);
   });
 
-  it("warns that FIA pages will be unavailable when FIA is off", () => {
-    const { findings } = validateFixture("sentinel-no-fia.yaml");
-    const finding = findByCode(findings, "sentinel-without-fia");
+});
+
+describe("the MLA service token", () => {
+  const DEV = { MLA_SERVICE_TOKEN: "dev-only-mla-service-token-change-in-prod-please-rotate-min-32-chars" };
+
+  it("warns when MLA is enabled and the token is still the published default", () => {
+    const { findings, ok } = validateFixture("default.yaml", DEV);
+    const finding = findByCode(findings, "mla-service-token");
+    expect(ok).toBe(true);
     expect(finding?.severity).toBe("warning");
-    expect(finding?.detail).toContain("empty state");
+    expect(finding?.detail).toContain("models:register");
   });
 
-  it("stays quiet when both are enabled", () => {
-    const { findings } = validateFixture("fia-scaled.yaml");
-    expect(warningCodes(findings)).not.toContain("sentinel-without-fia");
+  it("is an error in production, as the other published defaults are", () => {
+    const { findings, ok } = validateFixture("default.yaml", { ...DEV, ...PROD });
+    expect(ok).toBe(false);
+    expect(errorCodes(findings)).toContain("mla-service-token");
+  });
+
+  it("only warns in production when the manifest never asked for MLA", () => {
+    // minimal.yaml omits services.mla, so MLA arrives from the default.
+    // Refusing to start that stack would break an upgrade over a service
+    // the operator did not choose.
+    // The other production rules still error here; this one must not.
+    const { findings } = validateFixture("minimal.yaml", { ...DEV, ...PROD });
+    expect(warningCodes(findings)).toContain("mla-service-token");
+    expect(errorCodes(findings)).not.toContain("mla-service-token");
+  });
+
+  it("stays quiet on a generated token", () => {
+    const { findings } = validateFixture("default.yaml", { MLA_SERVICE_TOKEN: "x".repeat(43) });
+    expect(warningCodes(findings)).not.toContain("mla-service-token");
+  });
+
+  it("stays quiet when MLA is off, which makes the token inert", () => {
+    const { findings } = validateFixture("bare-compose.yaml", DEV);
+    expect(warningCodes(findings)).not.toContain("mla-service-token");
   });
 });
 

@@ -7,6 +7,112 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.8.0] - 2026-09-29
+
+What an install gives you when you touch nothing. `npx @ojuri/cli up` used to
+bring up the scoring path and stop there: no dashboard, no drift monitoring, and
+nothing in the output saying either was missing. It now starts everything except
+FIA. Nothing on the `docker compose` path changed, and an `ojuri.yaml` you
+already have is read exactly as written.
+
+### Changed
+
+- **Everything but FIA is on by default.** The Sentinel dashboard and MLA now
+  start with the stack. Sentinel was the bigger omission: decisions were going
+  to `decisionAuditLog` and the only way to read them was SQL or the API, on a
+  product whose dashboard is half of what it is. MLA off meant no drift
+  monitoring and no retraining, so the model an evaluation judged was the one it
+  started with. FIA stays off, and is now the only service that is: its language
+  model is a 7.6 GB download and it wants 16 GB of RAM, which is more than an
+  install should spend uninvited. `services.fia.enabled: true` and another
+  `ojuri up` turns it on.
+
+- **RDA defaults to one replica under the CLI**, down from three. Three copies
+  of the same Node process on one laptop buys nothing an evaluation can measure
+  and costs three times the memory; raise it when a single process stops keeping
+  up. A bare `docker compose up` still defaults to three, and `RDA_REPLICAS`
+  still overrides either way.
+
+- **`ojuri up` prints where to go.** Every URL it started, in one table, with
+  what each is for: Sentinel, the predict endpoint, Grafana, PAA's stats, MLA's.
+  The admin block now names the dashboard it signs you into, and says plainly
+  that Grafana has its own credentials, which the shipped pair still being
+  `admin / admin` made easy to miss. When FIA is off the output says so, and
+  gives the two steps to turn it on.
+
+- **Switching a service off in the manifest now removes its container.**
+  Withholding a Compose profile is not enough: `up -d` simply does not mention
+  the container and it keeps running, and `--remove-orphans` leaves it too,
+  because a service in an inactive profile is still a defined service. So
+  turning MLA, FIA or Sentinel off and re-running `ojuri up` left it running,
+  with the manifest and `ojuri status` both saying otherwise. Switching
+  observability off removes Prometheus and Grafana the same way. Volumes are
+  kept, so turning FIA off for an afternoon does not cost the 7.6 GB download.
+
+  Two things worth knowing. A bundled datastore you have pointed at your own is
+  **named, not removed** — the container holds your data, and that is not this
+  command's to delete. And Compose projects are named after the directory, so
+  `ojuri up` in `~/work/ojuri` addresses the same containers as a bare
+  `docker compose` in a checkout of the same basename: a FIA started there by
+  hand is one the default manifest considers switched off. The output says what
+  it removed.
+
+- **Dropped the `sentinel-without-fia` warning.** It described the shipped
+  default once Sentinel came on, and a warning every install earns is a warning
+  everybody learns to scroll past. The manifest comment and the `up` output both
+  say what FIA-off costs.
+
+### Fixed
+
+- **Sentinel's drift and retrain controls could not reach MLA.** With the
+  dashboard served from the stack, NGINX routed `/mla/` to
+  `host.docker.internal`, which resolves from inside the container but does not
+  reach a published port back out, so every call the Settings page makes
+  (`drift-config`, `retrain`, `retrain-runs`, `stats`) timed out as a 502. The
+  config that fronts Sentinel now names the `mla` service, as the AWS deploy
+  config already did. The config used when Sentinel is off is unchanged, since
+  that is the layout where MLA typically runs on the host.
+
+- **System health showed a red failure for a service that was deliberately
+  off.** Every probe failure was reported as `DOWN` with the message `fetch
+  failed`, which is what Node calls every network error. With FIA off by
+  default, the first health page an operator opened had a red card and a
+  meaningless error on it. A hostname with no DNS record now reads as
+  `UNKNOWN` — "not running in this deployment" — and a real failure shows the
+  underlying cause (`connect ECONNREFUSED …`) rather than the wrapper.
+
+- **The compose stack ran MLA's drift check at a threshold nothing else
+  agreed with.** `docker-compose.yml` defaulted `DRIFT_F1_THRESHOLD` to 0.92
+  while MLA's own default, `docs/ARCHITECTURE.md` and `CLAUDE.md` all say 0.4,
+  and the repo's measured F1 on IEEE-CIS is 0.554. Every windowed check would
+  therefore read as drift (tracked as OJR-05 in `docs/REVIEW_FINDINGS.md`). It
+  was latent while MLA was off by default; it is not any more, so the compose
+  default now matches the documented one.
+
+- **`ojuri --version` printed `1.6.0`.** The number came from a constant kept by
+  hand next to the one in `package.json`, and the two had been apart since
+  1.7.0, so anyone reporting a bug reported it against the wrong version. It is
+  read from the package now, which is the only copy that can be wrong.
+
+### Security
+
+- **`ojuri init` generates `MLA_SERVICE_TOKEN`.** RDA accepts it as a bearer
+  credential for `models:register` and `models:set_status`, and `.env.example`
+  ships a published development string long enough to clear RDA's 32-character
+  floor. It was inert while MLA was off by default. With MLA on it would have
+  been a live credential, identical on every install, for registering and
+  activating a model. Existing installs keep whatever their `.env` holds:
+  rotate it by hand if it still starts with `dev-only`. `ojuri validate`, which
+  `up` runs, now says so on every run while it holds: a warning outside
+  production and an error in it, matching how the other published defaults are
+  treated.
+
+- **`ojuri init` generates `GRAFANA_PASSWORD`.** Grafana publishes 3001 on
+  every interface and its admin can add a datasource, so `admin / admin` was
+  not a pair to ship either. As with the MLA token, an existing `.env` is never
+  rewritten; the `up` summary prints the credentials while they are still the
+  shipped ones and only the variable names once they are not.
+
 ## [1.7.2] - 2026-09-28
 
 Friction found by auditing the paths an adopter actually takes, rather than by
