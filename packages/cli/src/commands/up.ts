@@ -480,18 +480,20 @@ function adminLines(admin: AdminOutcome, sentinel: string | undefined): string[]
       return [
         "The admin password is the ADMIN_SEED_PASSWORD in your .env, if this run",
         "created the database. On a database that already existed the admin is",
-        "unchanged, and `npm run reset:admin` issues a new password.",
-      ];
+        "unchanged, and `ojuri reset-admin` issues a new password.",
+        signIn === "Sign in with:" ? "" : `Sentinel is at ${sentinel}.`,
+      ].filter((line) => line !== "");
     case "existing":
       return [
         "The database already existed, so the admin account is unchanged.",
-        "Lost the password? `npm run reset:admin` issues a new one.",
+        "Lost the password? It is the ADMIN_SEED_PASSWORD in your .env if this",
+        "stack wrote that file, and `ojuri reset-admin` issues a new one either way.",
       ];
     default:
       return [
         "Could not tell from the migration logs whether this run created the",
-        "admin account. `docker compose logs db-migrate` has the detail, and",
-        "`npm run reset:admin` issues a fresh password either way.",
+        "admin account. `ojuri status` shows what is running, and",
+        "`ojuri reset-admin` issues a fresh password either way.",
       ];
   }
 }
