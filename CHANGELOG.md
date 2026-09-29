@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.8.1] - 2026-09-29
+
+Four instructions that could not be followed and three defects behind them, found
+by running every documented script against a live stack rather than reading it.
+
+### Added
+
+- **`ojuri reset-admin`.** Issues a new admin password and prints it once, with
+  `--password`, `--username` and `--tenant`. It runs inside the RDA container,
+  which carries bcrypt, knex and the connection details.
+
 ### Fixed
 
 - **The synthetic load generator declined everything it sent.** `npm run
@@ -34,19 +45,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   suggested what to do. Both paths now retarget the recorded names to their own
   extension before migrating, which is idempotent and a no-op on a database that
   has never been migrated.
-
-## [1.8.1] - 2026-09-29
-
-Four instructions that could not be followed, three of them found by running every
-documented script against a live stack rather than reading it.
-
-### Added
-
-- **`ojuri reset-admin`.** Issues a new admin password and prints it once, with
-  `--password`, `--username` and `--tenant`. It runs inside the RDA container,
-  which carries bcrypt, knex and the connection details.
-
-### Fixed
 
 - **The decision replay CLI could not replay anything.** `npm run replay`
   re-posted each audited transaction under its original `transaction_id`, which
