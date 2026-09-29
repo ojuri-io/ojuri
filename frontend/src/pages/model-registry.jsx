@@ -364,7 +364,7 @@ function ModelRegistry({ toast, models, setModels, segmentThresholds, setSegment
                   onActivate={()=>setStatus(m.version, 'ACTIVE')}
                   onShadow={()=>setStatus(m.version, 'SHADOW')}
                   onRetire={()=>setStatus(m.version, 'RETIRED')}
-                  onBacktest={()=>{ setOpenMenu(null); toast(`npm run replay --target ${m.version} --since 24h`); }}
+                  onBacktest={()=>{ setOpenMenu(null); toast(`Deploy ${m.version} as SHADOW, then from a checkout: npm run replay -- --target <rda-url> --since <date>`); }}
                   onMeta={()=>{ setMetaModel(m.version); setOpenMenu(null); }}
                 />
               )}

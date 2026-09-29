@@ -93,14 +93,22 @@ async function main() {
   const counts: Record<string, Record<string, number>> = {};
   let errors = 0;
 
+  // The target rejects a transaction_id it has already scored, so a replay
+  // that reused the original id came back `duplicate_transaction` for every
+  // row. The prefix keeps the original recoverable in SQL, which is how the
+  // candidate's rows are meant to be compared to the originals.
+  const runId = new Date().toISOString().replace(/[-:.TZ]/g, "").slice(0, 14);
+
   for (const r of rows) {
     const payload = {
-      transaction_id: r.transactionId,
+      transaction_id: `replay-${runId}-${r.transactionId}`,
       sender_id: r.senderId,
       receiver_id: r.receiverId ?? "unknown",
       amount: Number(r.amount),
       transaction_type: r.transactionType ?? "TRANSFER",
-      timestamp: Math.floor(new Date(r.createdAt).getTime() / 1000),
+      // Milliseconds. Dividing by 1000 put every replayed transaction in
+      // 1970 and skewed every feature derived from its age.
+      timestamp: new Date(r.createdAt).getTime(),
       segment: r.segment,
     };
 
@@ -113,13 +121,18 @@ async function main() {
         headers,
         body: JSON.stringify(payload),
       });
-      const body = await resp.json();
-      const replayed = (body as any).decision ?? "ERROR";
+      const body = (await resp.json()) as { decision?: string; code?: string };
+      // A rejection carries a code and no decision. Counting it as a decision
+      // called "ERROR" hid why, and hid that it was every single row.
+      const replayed = body.decision ?? `rejected:${body.code ?? resp.status}`;
 
       counts[r.originalDecision] ??= {};
       counts[r.originalDecision][replayed] = (counts[r.originalDecision][replayed] ?? 0) + 1;
-    } catch {
+    } catch (err) {
       errors++;
+      if (errors === 1) {
+        console.error(`  first failure: ${err instanceof Error ? err.message : String(err)}`);
+      }
     }
   }
 

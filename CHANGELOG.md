@@ -15,6 +15,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **The decision replay CLI could not replay anything.** `npm run replay`
+  re-posted each audited transaction under its original `transaction_id`, which
+  the target rejects as a duplicate, so every row came back as a decision
+  called `ERROR` and the comparison it exists to print was always empty. Rows
+  now replay under a `replay-<run>-<id>` key, which keeps the original
+  recoverable in SQL, and a rejection is reported with its code rather than
+  flattened into `ERROR`. It also sent the timestamp in seconds where the API
+  takes milliseconds, putting every replayed transaction in 1970 and skewing
+  every feature derived from its age.
+
+- **The dashboard's Backtest action printed a command that could not work.**
+  `npm run replay --target <model version> --since 24h` names a script that
+  needs a checkout, omits the `--` that npm needs to pass flags through at all,
+  passes a model version where `--target` takes the URL of the deployment to
+  replay against, and passes `24h` where `--since` goes into a SQL timestamp
+  comparison. There is no backtest endpoint behind the menu item; it only ever
+  printed text. It now describes what actually has to happen.
+
 - **`ojuri up` told you to run a command that cannot exist.** Three lines of its
   summary, and the dashboard's own login page, pointed at
   `npm run reset:admin` — a script in the repository's `package.json`. An
