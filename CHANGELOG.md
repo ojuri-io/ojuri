@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.8.1] - 2026-09-29
+
+Four instructions that could not be followed, three of them found by running every
+documented script against a live stack rather than reading it.
+
 ### Added
 
 - **`ojuri reset-admin`.** Issues a new admin password and prints it once, with
