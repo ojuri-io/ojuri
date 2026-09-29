@@ -112,9 +112,9 @@ The ONNX toolchain drifted off its pins. Reinstall the exact versions in
 training → ONNX → RDA inference path.
 
 **Sentinel's System health page shows MLA offline**
-Expected unless you started MLA. It's opt-in — either `--profile mla` on a
-compose command (with `MLA_HEALTH_URL=http://mla:9095` in `.env`) or a
-host venv.
+Expected unless you started MLA. `ojuri up` starts it for you; on a
+compose command it is opt-in, either `--profile mla` (with
+`MLA_HEALTH_URL=http://mla:9095` in `.env`) or a host venv.
 
 ## FIA
 

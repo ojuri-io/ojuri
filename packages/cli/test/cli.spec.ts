@@ -66,7 +66,7 @@ describe("output", () => {
 
   it("uses a singular count for one finding", () => {
     const { out } = capture(["validate", fixture("sentinel-no-fia.yaml")]);
-    expect(out).toContain("0 errors, 4 warnings.");
+    expect(out).toContain("0 errors, 3 warnings.");
     const single = capture(["validate", fixture("external-postgres.yaml")]);
     expect(single.out).toMatch(/\d+ errors?, \d+ warnings?\./);
   });
@@ -169,8 +169,8 @@ describe("render command", () => {
   });
 
   it("says plainly when the overlay is empty", () => {
-    const { out } = capture(["render", fixture("default.yaml"), "--out-dir", outDir()]);
-    expect(out).toContain("describes the shipped stack exactly");
+    const { out } = capture(["render", fixture("bare-compose.yaml"), "--out-dir", outDir()]);
+    expect(out).toContain("changes nothing in the compose file");
   });
 
   it("still prints the warnings the manifest earns", () => {

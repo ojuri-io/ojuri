@@ -9,7 +9,12 @@ Seven commands: `init`, `doctor`, `up`, `status`, `down`, plus the
 
 ## Install
 
-Not published yet. From a checkout:
+```bash
+npx @ojuri/cli up          # no install at all, in any empty directory
+npm install -g @ojuri/cli  # or keep it around as `ojuri`
+```
+
+From a checkout:
 
 ```bash
 cd packages/cli
@@ -17,6 +22,32 @@ npm install
 npm run build
 node dist/index.js validate ../../ojuri.yaml
 ```
+
+## What an install runs
+
+Everything except FIA. `ojuri up` in an empty directory writes a manifest
+whose defaults start Postgres, Redis, Kafka with Zookeeper, one RDA
+replica behind NGINX, the PAA singleton, the Sentinel dashboard, MLA, and
+Prometheus with Grafana.
+
+FIA is the one service off by default, because its language model is a
+7.6 GB download on first start and it wants 16 GB of RAM. Set
+`services.fia.enabled: true` and run `ojuri up` again.
+
+Three fields differ from what a bare `docker compose up`
+produces, because Compose cannot switch a profile on by itself and its
+own `RDA_REPLICAS` default is 3:
+
+| Field | Manifest default | Bare compose |
+|---|---|---|
+| `services.rda.replicas` | 1 | 3 |
+| `services.mla.enabled` | true | off (`mla` profile) |
+| `services.sentinel.enabled` | true | off (`sentinel` profile) |
+
+Everything else in the manifest holds the compose file's own value, and
+CI pins that: a manifest carrying the compose defaults has to render to
+an empty overlay and a `docker compose config` byte-identical to the
+quick start's.
 
 ## `ojuri validate [path]`
 
@@ -50,7 +81,6 @@ describes a stack that will actually work.
 | `prod-api-key`, `prod-jwt-secret`, `prod-cors` | error in production, otherwise warning | Mirrors RDA's own `warnIfUnsafeDefaults()`. RDA refuses to boot with `NODE_ENV=production` while any of these hold, unless `ALLOW_UNSAFE_PROD_DEFAULTS=true`. Catching it here means finding out before the containers start rather than from a crash loop. |
 | `unresolved-reference` | error | An external datastore whose `${VAR}` never resolved would render a compose file pointing at the literal text. |
 | `unresolved-reference-optional` | warning | Same, for a field the stack can start without, such as an external Redis password. |
-| `sentinel-without-fia` | warning | The dashboard's investigation pages will show FIA as unavailable. They degrade to an empty state rather than erroring. |
 
 ### Resolving `${VAR}`
 
@@ -127,14 +157,16 @@ changes:
 
 ### The no-op property
 
-Rendering the committed `ojuri.yaml` produces an empty overlay and an
+A manifest holding the compose defaults renders an empty overlay and an
 `.env.rendered` whose values match `.env.example` exactly. The resolved
 Compose project is then byte-identical to the README quick start's.
 
-That is the whole point of the manifest, so it is enforced rather than
-asserted: `.github/workflows/ci.yml` renders the default manifest and
-diffs `docker compose config` both ways. `docker compose config` needs
-no Docker daemon, so the job runs in seconds.
+That is the whole point of the manifest layer, so it is enforced rather
+than asserted: `.github/workflows/ci.yml` renders
+`test/fixtures/bare-compose.yaml` and diffs `docker compose config` both
+ways. The same job then renders the committed `ojuri.yaml` and fails if
+it changes anything beyond the three fields above. `docker compose
+config` needs no Docker daemon, so the job runs in seconds.
 
 ### One function, two commands
 
@@ -165,15 +197,32 @@ admin user is created inside a migration, so on a database where that
 migration has already run the value is inert and the existing admin is
 untouched. `npm run reset:admin` is the way in there.
 
-`MLA_SERVICE_TOKEN` also ships a development default and is left alone
-deliberately: hardening it is a separate change.
+`MLA_SERVICE_TOKEN` is generated too. RDA accepts it as a bearer
+credential for `models:register` and `models:set_status`, and the
+development default in `.env.example` is a published string long enough
+to clear RDA's 32-character floor, so leaving it would ship a working
+model-registry credential identical on every install.
 
 ## `ojuri up [path]`
 
 Validates, renders, starts the stack, waits for `db-migrate` to exit
-cleanly and for RDA to answer `/ready` through NGINX, then prints the
-predict URL, a runnable `curl` with a fresh UUID, and the admin
-credentials situation.
+cleanly and for RDA to answer `/ready` through NGINX, then prints every
+URL it started with what each is for, a runnable `curl` with a fresh
+UUID, the admin credentials situation, and, when FIA is off, the two
+steps that turn it on.
+
+Images are pulled as their own streamed step rather than left to
+`up -d`, which on a first run is a silent multi-gigabyte download that
+reads as a hang.
+
+Switching MLA, FIA, Sentinel or observability off in the manifest and
+running this again removes their containers. A bundled datastore you
+have pointed at your own is named rather than removed: its data outlives
+the container either way, but deleting one is not this command's call. Withholding the Compose profile is not enough: `up -d`
+does not mention the container and it keeps running, and
+`--remove-orphans` leaves it as well, because a service in an inactive
+profile is still a defined service. Volumes are kept, so FIA's 7.6 GB
+model cache survives being switched off.
 
 ```bash
 ojuri up              # pull the published images

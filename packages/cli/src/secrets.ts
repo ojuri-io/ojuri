@@ -28,4 +28,13 @@ export function generateAdminPassword(): string {
   return randomBytes(18).toString("base64url");
 }
 
+/**
+ * MLA_SERVICE_TOKEN. RDA accepts it as a bearer credential for
+ * `models:register` and `models:set_status`, and rejects anything under
+ * 32 characters, so the generated value has to clear that floor.
+ */
+export function generateServiceToken(): string {
+  return randomBytes(32).toString("base64url");
+}
+
 export const ADMIN_PASSWORD_MIN_LENGTH = 12;

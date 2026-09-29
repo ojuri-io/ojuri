@@ -33,17 +33,22 @@ export function baseUrl(cfg: EffectiveConfig): string {
 }
 
 /**
- * Grafana is published straight onto the host rather than proxied, so it takes
- * public_url's hostname and scheme but its own port. Hardcoding localhost sent
- * an operator on a remote box to their own machine.
+ * Services published straight onto the host rather than proxied through
+ * NGINX. They take public_url's hostname and scheme but their own port:
+ * hardcoding localhost sent an operator on a remote box to their own
+ * machine.
  */
-const GRAFANA_HOST_PORT = 3001;
+const HOST_PORT = { grafana: 3001, paa: 9091, mla: 9095, fia: 9094 } as const;
+
+function hostUrl(cfg: EffectiveConfig, port: number, path = "/"): string {
+  const url = new URL(cfg.publicUrl);
+  url.port = String(port);
+  url.pathname = path;
+  return stripTrailingSlash(url.toString());
+}
 
 function grafanaUrl(cfg: EffectiveConfig): string {
-  const url = new URL(cfg.publicUrl);
-  url.port = String(GRAFANA_HOST_PORT);
-  url.pathname = "/";
-  return stripTrailingSlash(url.toString());
+  return hostUrl(cfg, HOST_PORT.grafana);
 }
 
 function isDefaultPort(protocol: string, port: number): boolean {
@@ -104,4 +109,49 @@ export function summaryUrls(cfg: EffectiveConfig): {
   if (cfg.sentinel.enabled) urls.sentinel = base;
   if (cfg.observabilityEnabled) urls.grafana = grafanaUrl(cfg);
   return urls;
+}
+
+export interface SummaryLink {
+  label: string;
+  url: string;
+  note: string;
+}
+
+/**
+ * The table `ojuri up` prints once the stack is answering, in the order
+ * an operator wants it: the dashboard they will live in, the endpoint
+ * their payment system calls, then the services behind both.
+ */
+export function summaryLinks(cfg: EffectiveConfig): SummaryLink[] {
+  const base = baseUrl(cfg);
+  const links: SummaryLink[] = [];
+
+  if (cfg.sentinel.enabled) {
+    links.push({ label: "Sentinel", url: base, note: "operator dashboard" });
+  }
+  links.push({ label: "Predict", url: `${base}/v1/predict`, note: "score a transaction" });
+  if (cfg.observabilityEnabled) {
+    links.push({ label: "Grafana", url: grafanaUrl(cfg), note: "metrics dashboards" });
+  }
+  links.push({
+    label: "PAA",
+    url: hostUrl(cfg, HOST_PORT.paa, "/stats"),
+    note: "graph and velocity state",
+  });
+  if (cfg.mla.enabled) {
+    links.push({
+      label: "MLA",
+      url: hostUrl(cfg, HOST_PORT.mla, "/stats"),
+      note: "drift and retrain status",
+    });
+  }
+  if (cfg.fia.enabled) {
+    // Several replicas cannot publish 9094 between them, so rendering
+    // drops the host port and NGINX is the only way in.
+    const url =
+      cfg.fia.replicas > 1 ? `${base}/fia/stats` : hostUrl(cfg, HOST_PORT.fia, "/stats");
+    links.push({ label: "FIA", url, note: "investigation reports" });
+  }
+
+  return links;
 }

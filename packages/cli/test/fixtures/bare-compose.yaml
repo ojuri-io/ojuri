@@ -1,0 +1,13 @@
+# The stack a bare `docker compose up` produces. The default manifest
+# turns MLA and Sentinel on and drops RDA to one replica, so this is the
+# fixture for anything asserting a no-op render.
+version: 1
+services:
+  rda:
+    replicas: 3
+  mla:
+    enabled: false
+  fia:
+    enabled: false
+  sentinel:
+    enabled: false

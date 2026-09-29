@@ -20,6 +20,21 @@ function plan(manifest: Manifest) {
 
 const DEFAULT: Manifest = { version: 1 };
 
+/**
+ * What a bare `docker compose up` produces. The default manifest no
+ * longer matches it: rda.replicas is 1 there, and the MLA and Sentinel
+ * profiles are on, neither of which Compose can do by itself.
+ */
+const BARE_COMPOSE: Manifest = {
+  version: 1,
+  services: {
+    rda: { replicas: 3 },
+    mla: { enabled: false },
+    fia: { enabled: false },
+    sentinel: { enabled: false },
+  },
+};
+
 describe("SENTINEL_CORS_ORIGINS cannot drift from validate", () => {
   // `ojuri validate` checks the allowlist against RDA's production
   // guard and `ojuri render` writes it into the stack. If these two
@@ -55,16 +70,16 @@ describe("SENTINEL_CORS_ORIGINS cannot drift from validate", () => {
   });
 });
 
-describe("the default manifest renders to a no-op", () => {
+describe("a manifest matching bare compose renders to a no-op", () => {
   it("produces an empty overlay", () => {
-    const p = plan(DEFAULT);
+    const p = plan(BARE_COMPOSE);
     expect(isNoOp(p.overlay)).toBe(true);
     expect(p.dropped).toEqual([]);
     expect(p.profiles).toEqual([]);
   });
 
   it("produces an overlay Compose can still parse", () => {
-    const doc = parseYaml(renderOverlay(plan(DEFAULT)));
+    const doc = parseYaml(renderOverlay(plan(BARE_COMPOSE)));
     expect(doc).toEqual({ services: {} });
   });
 
@@ -72,7 +87,7 @@ describe("the default manifest renders to a no-op", () => {
     // The requirement is value-identity, not file-identity: .env.example
     // carries many fields the manifest does not control.
     const example = parseDotenv(readFileSync(join(REPO, ".env.example"), "utf8"));
-    const rendered = plan(DEFAULT).env;
+    const rendered = plan(BARE_COMPOSE).env;
 
     for (const [key, value] of Object.entries(rendered)) {
       expect([key, value]).toEqual([key, example[key]]);
@@ -80,12 +95,38 @@ describe("the default manifest renders to a no-op", () => {
   });
 
   it("controls exactly the four fields the shipped stack needs", () => {
-    expect(Object.keys(plan(DEFAULT).env).sort()).toEqual([
+    expect(Object.keys(plan(BARE_COMPOSE).env).sort()).toEqual([
       "OJURI_VERSION",
       "RDA_REPLICAS",
       "RDA_REQUIRE_API_KEY",
       "SENTINEL_CORS_ORIGINS",
     ]);
+  });
+});
+
+describe("the default manifest", () => {
+  // Everything but FIA is on, so an install that touches nothing has a
+  // dashboard to sign in to and a retrain loop watching for drift.
+  it("runs one RDA replica", () => {
+    expect(plan(DEFAULT).env.RDA_REPLICAS).toBe("1");
+  });
+
+  it("activates the MLA and Sentinel profiles, and not FIA", () => {
+    expect(plan(DEFAULT).profiles.sort()).toEqual(["mla", "sentinel"]);
+  });
+
+  it("points the MLA health probe at the in-compose service", () => {
+    expect(plan(DEFAULT).env.MLA_HEALTH_URL).toBe("http://mla:9095");
+  });
+
+  it("swaps in the nginx config that fronts Sentinel", () => {
+    expect(plan(DEFAULT).overlay.services[SERVICE.nginx]?.volumes).toEqual([
+      "./nginx/nginx.sentinel.conf:/etc/nginx/nginx.conf:ro",
+    ]);
+  });
+
+  it("drops nothing, since every datastore is bundled", () => {
+    expect(plan(DEFAULT).dropped).toEqual([]);
   });
 });
 
@@ -242,8 +283,10 @@ describe("profiles and MLA health", () => {
     );
   });
 
-  it("leaves MLA_HEALTH_URL alone when MLA is off, so the default stack is untouched", () => {
-    expect(plan(DEFAULT).env.MLA_HEALTH_URL).toBeUndefined();
+  it("leaves MLA_HEALTH_URL alone when MLA is off, so the compose default holds", () => {
+    expect(
+      plan({ version: 1, services: { mla: { enabled: false } } }).env.MLA_HEALTH_URL
+    ).toBeUndefined();
   });
 });
 
@@ -257,14 +300,24 @@ describe("nginx", () => {
   });
 
   it("leaves the default config in place when Sentinel is off", () => {
-    expect(plan(DEFAULT).overlay.services[SERVICE.nginx]).toBeUndefined();
+    expect(
+      plan({ version: 1, services: { sentinel: { enabled: false } } }).overlay.services[
+        SERVICE.nginx
+      ]
+    ).toBeUndefined();
   });
 
   it("republishes the port only when it is not 80", () => {
-    expect(plan({ version: 1, network: { http_port: 80 } }).overlay.services[SERVICE.nginx])
-      .toBeUndefined();
+    const off = { sentinel: { enabled: false } };
     expect(
-      plan({ version: 1, network: { http_port: 8080 } }).overlay.services[SERVICE.nginx]?.ports
+      plan({ version: 1, services: off, network: { http_port: 80 } }).overlay.services[
+        SERVICE.nginx
+      ]
+    ).toBeUndefined();
+    expect(
+      plan({ version: 1, services: off, network: { http_port: 8080 } }).overlay.services[
+        SERVICE.nginx
+      ]?.ports
     ).toEqual(["8080:80"]);
   });
 });
@@ -337,11 +390,20 @@ describe("the compose command", () => {
     expect(formatCommand(argv)).toContain("--profile fia --profile sentinel");
   });
 
-  it("reproduces the README quick start plus the overlay for the default manifest", () => {
-    expect(formatCommand(composeCommand(plan(DEFAULT), opts))).toBe(
+  it("reproduces the README quick start plus the overlay when nothing optional is on", () => {
+    expect(formatCommand(composeCommand(plan(BARE_COMPOSE), opts))).toBe(
       "docker compose --env-file .env --env-file .ojuri/.env.rendered " +
         "-f docker-compose.yml -f docker-compose.ghcr.yml " +
         "-f .ojuri/docker-compose.override.ojuri.yml up -d"
+    );
+  });
+
+  it("adds the MLA and Sentinel profiles for the default manifest", () => {
+    expect(formatCommand(composeCommand(plan(DEFAULT), opts))).toBe(
+      "docker compose --env-file .env --env-file .ojuri/.env.rendered " +
+        "-f docker-compose.yml -f docker-compose.ghcr.yml " +
+        "-f .ojuri/docker-compose.override.ojuri.yml " +
+        "--profile mla --profile sentinel up -d"
     );
   });
 });
@@ -364,7 +426,6 @@ describe("render refuses a manifest that does not validate", () => {
     const result = render(fixture("default.yaml"), { dryRun: true, processEnv: EMPTY_ENV });
     expect(result.ok).toBe(true);
     expect(result.findings.length).toBeGreaterThan(0);
-    expect(result.noOp).toBe(true);
   });
 
   it("writes nothing on a dry run", () => {

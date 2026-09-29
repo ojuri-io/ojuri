@@ -101,17 +101,17 @@ jobs:
           echo "All files parse."
 
   # ─────────────────────────────────────────────────────────────────
-  # The manifest has to describe the shipped stack exactly, or adopters
-  # who never write one get a different stack from the README's. This
-  # renders the committed ojuri.yaml and byte-compares the Compose
-  # project it produces against the one the README quick start produces.
-  # Any drift between docker-compose.yml and ojuri.yaml fails here.
+  # The manifest may only change the stack in ways it states. A manifest
+  # holding the compose defaults has to render to nothing at all, which
+  # is what catches drift between docker-compose.yml and the manifest
+  # layer. The committed ojuri.yaml then differs from it in exactly
+  # three fields, and this job pins those three.
   #
   # `docker compose config` resolves and validates without a daemon, so
   # this job needs no containers and runs in seconds.
   # ─────────────────────────────────────────────────────────────────
   render-is-a-no-op:
-    name: default manifest renders to a no-op
+    name: the manifest renders only what it says
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
@@ -128,21 +128,28 @@ jobs:
           npm ci
           npm run build
 
-      - name: Render the committed manifest
+      - name: Render a manifest holding the compose defaults
         run: |
           cp .env.example .env
-          node packages/cli/dist/index.js render ojuri.yaml --out-dir .ojuri
+          # --out-dir resolves against the manifest's own directory, so the
+          # fixture is rendered from the root rather than where it lives.
+          cp packages/cli/test/fixtures/bare-compose.yaml bare-compose.yaml
+          node packages/cli/dist/index.js render bare-compose.yaml --out-dir .ojuri-bare
+          test -f .ojuri-bare/.env.rendered
+          test -f .ojuri-bare/docker-compose.override.ojuri.yml
 
-      - name: The rendered overlay must be empty
+      - name: That overlay must be empty
         run: |
-          if grep -qE '^\s+[a-z0-9-]+:' .ojuri/docker-compose.override.ojuri.yml; then
-            echo "::error::The default manifest rendered a non-empty overlay."
-            cat .ojuri/docker-compose.override.ojuri.yml
+          set -e
+          if grep -qE '^\s+[a-z0-9-]+:' .ojuri-bare/docker-compose.override.ojuri.yml; then
+            echo "::error::A manifest holding the compose defaults rendered an overlay."
+            cat .ojuri-bare/docker-compose.override.ojuri.yml
             exit 1
           fi
 
-      - name: The rendered env must match .env.example on every field it sets
+      - name: Its env must match .env.example on every field it sets
         run: |
+          set -e
           fail=0
           while IFS='=' read -r key value; do
             case "$key" in ''|\#*) continue ;; esac
@@ -151,7 +158,7 @@ jobs:
               echo "::error::$key is '$value' in .env.rendered but '$expected' in .env.example"
               fail=1
             fi
-          done < .ojuri/.env.rendered
+          done < .ojuri-bare/.env.rendered
           exit $fail
 
       - name: The resolved Compose project must be identical either way
@@ -159,15 +166,58 @@ jobs:
           docker compose --env-file .env \
             -f docker-compose.yml -f docker-compose.ghcr.yml \
             config > /tmp/baseline.yml
+          docker compose --env-file .env --env-file .ojuri-bare/.env.rendered \
+            -f docker-compose.yml -f docker-compose.ghcr.yml \
+            -f .ojuri-bare/docker-compose.override.ojuri.yml \
+            config > /tmp/rendered.yml
+          if ! diff -u /tmp/baseline.yml /tmp/rendered.yml; then
+            echo "::error::Rendering the compose defaults changed the stack."
+            exit 1
+          fi
+          echo "Identical: that manifest is a no-op."
+
+      - name: Render the committed manifest
+        run: node packages/cli/dist/index.js render ojuri.yaml --out-dir .ojuri
+
+      - name: It may differ from the compose defaults in three fields and no more
+        run: |
+          set -e
+          # One RDA replica, MLA probed in-compose, and the nginx config
+          # that fronts Sentinel. Anything else in the overlay or the env
+          # is a divergence nobody documented.
+          grep -q '^RDA_REPLICAS=1$' .ojuri/.env.rendered
+          grep -q '^MLA_HEALTH_URL=http://mla:9095$' .ojuri/.env.rendered
+          grep -q 'nginx.sentinel.conf' .ojuri/docker-compose.override.ojuri.yml
+
+          keys=$(grep -oE '^[A-Z_]+' .ojuri/.env.rendered | sort | tr '\n' ' ')
+          if [ "$keys" != "MLA_HEALTH_URL OJURI_VERSION RDA_REPLICAS RDA_REQUIRE_API_KEY SENTINEL_CORS_ORIGINS " ]; then
+            echo "::error::the default manifest now controls: $keys"
+            exit 1
+          fi
+
+          overridden=$(grep -oE '^  [a-z0-9-]+:' .ojuri/docker-compose.override.ojuri.yml | tr -d ' :' | sort | tr '\n' ' ')
+          if [ "$overridden" != "nginx " ]; then
+            echo "::error::the default overlay now touches: $overridden"
+            exit 1
+          fi
+
+      - name: And it must still resolve to a valid project, with MLA and Sentinel in it
+        run: |
+          set -e
           docker compose --env-file .env --env-file .ojuri/.env.rendered \
             -f docker-compose.yml -f docker-compose.ghcr.yml \
             -f .ojuri/docker-compose.override.ojuri.yml \
-            config > /tmp/rendered.yml
-          if ! diff -u /tmp/baseline.yml /tmp/rendered.yml; then
-            echo "::error::Rendering the default manifest changed the stack."
+            --profile mla --profile sentinel \
+            config --services | sort > /tmp/default-services.txt
+          cat /tmp/default-services.txt
+          for service in mla sentinel rda paa-1 nginx postgres redis kafka; do
+            grep -qx "$service" /tmp/default-services.txt
+          done
+          # FIA is the one service the default manifest leaves out.
+          if grep -qx fia /tmp/default-services.txt; then
+            echo "::error::FIA is in the default project and should not be."
             exit 1
           fi
-          echo "Identical: rendering the default manifest is a no-op."
 
   # ─────────────────────────────────────────────────────────────────
   # Docker stack smoke. Builds the images and brings the full
@@ -467,7 +517,8 @@ jobs:
   one-command-install:
     name: install from the tarball with no checkout
     runs-on: ubuntu-latest
-    timeout-minutes: 25
+    # The default stack now pulls MLA, a heavy Python image, and Sentinel.
+    timeout-minutes: 35
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -488,7 +539,8 @@ jobs:
           set -e
           missing=0
           for path in docker-compose.yml docker-compose.ghcr.yml .env.example \
-                      nginx/nginx.conf prometheus/prometheus.yml \
+                      nginx/nginx.conf nginx/nginx.sentinel.conf \
+                      prometheus/prometheus.yml \
                       models/fraud_model.onnx models/feature-catalog.v1.json; do
             if ! tar -tzf /tmp/ojuri-cli-*.tgz | grep -q "package/stack/$path$"; then
               echo "::error::stack/$path is not in the tarball"
@@ -529,6 +581,31 @@ jobs:
             -d "{\"transaction_id\":\"ci-$(date +%s)-oneshot\",\"sender_id\":\"acct-1\",\"receiver_id\":\"acct-2\",\"amount\":50000,\"transaction_type\":\"TRANSFER\",\"timestamp\":$(date +%s)000}")
           echo "$body"
           echo "$body" | grep -qE '"decision":"(ACCEPT|DECLINE|REVIEW)"'
+
+      - name: The default install must bring up the dashboard and MLA
+        run: |
+          set -e
+          # Sentinel is served at the root by the nginx config the manifest
+          # selects, so a 200 here also proves that swap happened.
+          type=$(curl -fsS -o /dev/null -w '%{content_type}' http://localhost/)
+          echo "/ served $type"
+          case "$type" in text/html*) ;; *) echo "::error::/ did not serve the dashboard"; exit 1 ;; esac
+
+          # RDA's own health paths must still reach RDA rather than the SPA.
+          for path in /livez /readyz; do
+            body=$(curl -fsS "http://localhost$path")
+            echo "$path -> $body"
+            echo "$body" | grep -q '"status"'
+          done
+
+          curl -fsS -m 10 http://localhost:9095/stats | grep -q '"service": "mla"'
+          curl -fsS -m 10 http://localhost/mla/readyz | grep -q UP
+
+          # FIA is the one service the default manifest leaves out.
+          if docker ps --format '{{.Names}}' | grep -q 'fia'; then
+            echo "::error::FIA is running on a default install"
+            exit 1
+          fi
 
       - name: status and down must address what up started
         working-directory: /tmp/adopter

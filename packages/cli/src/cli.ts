@@ -1,5 +1,6 @@
+import { readFileSync } from "node:fs";
 import { parseArgs } from "node:util";
-import { dirname, resolve } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { down } from "./commands/down";
 import { doctor } from "./commands/doctor";
 import { init } from "./commands/init";
@@ -11,9 +12,13 @@ import { loadManifest } from "./manifest/load";
 import { TEMPLATE_MANIFEST } from "./manifest/template";
 import { DEFAULT_MANIFEST_FILENAME } from "./manifest/load";
 import { DEFAULT_OUT_DIR, render } from "./render";
+import { PACKAGE_DIR } from "./stack/package-dir";
 import { validateManifest } from "./validate";
 
-export const VERSION = "1.6.0";
+/** Read rather than duplicated: the hand-kept copy silently drifted from the package for two releases. */
+export const VERSION: string = (
+  JSON.parse(readFileSync(join(PACKAGE_DIR, "package.json"), "utf8")) as { version: string }
+).version;
 
 const USAGE = `ojuri ${VERSION}
 
@@ -399,7 +404,7 @@ function renderCommand(path: string, opts: RenderCommandOptions): number {
   for (const file of result.written) opts.streams.out(`wrote ${file}`);
   if (result.noOp) {
     opts.streams.out("");
-    opts.streams.out("The overlay is empty: this manifest describes the shipped stack exactly.");
+    opts.streams.out("The overlay is empty: this manifest changes nothing in the compose file.");
   }
   opts.streams.out("");
   opts.streams.out(result.command);

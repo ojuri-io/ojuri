@@ -2,20 +2,20 @@
 #
 # Ojuri deployment manifest.
 #
-# This file describes the stack that `docker compose up -d` produces
-# today, field for field. Rendering it is a no-op, which is the point:
-# nothing here changes behaviour until you change a value.
+# This is the stack `ojuri up` runs. It is a layer over .env, not a
+# replacement: `ojuri render` turns it into a .env fragment plus a
+# Compose overlay.
 #
-# It is a layer over .env, not a replacement. `ojuri render` turns it
-# into a .env fragment plus a Compose overlay; adopters who never touch
-# it carry on with the README quick start unchanged.
+# A bare `docker compose up -d` knows nothing about this file, and three
+# fields here deliberately differ from what it would do on its own:
+# rda.replicas, mla.enabled and sentinel.enabled. Each says so below.
 #
 # Check it with `ojuri validate`.
 
 version: 1
 
 # Image tag written to OJURI_VERSION. `v1` floats and picks up patches
-# and minors. Pin strictly (v1.6.0) for regulated deployments; see
+# and minors. Pin strictly (v1.8.0) for regulated deployments; see
 # VERSIONING.md.
 release: v1
 
@@ -31,11 +31,13 @@ datastores:
     mode: bundled
 
 services:
-  # Written to RDA_REPLICAS, which stays the only way to scale RDA.
-  # NGINX resolves the replica addresses once at startup, so `ojuri up`
-  # restarts it after a change.
+  # Written to RDA_REPLICAS, which stays the only way to scale RDA. One
+  # replica serves the whole predict path; raise it when a single Node
+  # process stops keeping up. NGINX resolves the replica addresses once
+  # at startup, so `ojuri up` restarts it after a change. A bare
+  # `docker compose up` still defaults to 3.
   rda:
-    replicas: 3
+    replicas: 1
 
   # PAA is a singleton and validate refuses anything above 1. The
   # transaction graph lives in process memory, so a second copy would
@@ -43,22 +45,29 @@ services:
   paa:
     replicas: 1
 
-  # Off by default, exactly as the `mla` and `fia` compose profiles are.
+  # On by default. Without it nothing watches for drift and no model is
+  # ever retrained. It sits on no request path, trains nothing at
+  # startup, and needs verified labels before a retrain can fire.
+  # Compose keeps it behind the `mla` profile, which `ojuri up` passes
+  # for you.
   mla:
-    enabled: false
+    enabled: true
     replicas: 1
 
-  # FIA pulls roughly 7.6 GB of model weights on first start and wants
-  # 16 GB of RAM. Read the warning `ojuri validate` prints before
-  # turning it on.
+  # The one service off by default. FIA pulls roughly 7.6 GB of model
+  # weights on first start and wants 16 GB of RAM, which is more than an
+  # evaluation should spend uninvited. Read the warning `ojuri validate`
+  # prints before turning it on.
   fia:
     enabled: false
     replicas: 1
 
-  # The operator dashboard. Served through NGINX on network.http_port
-  # when enabled; it publishes no host port of its own.
+  # The operator dashboard, on by default. Served through NGINX on
+  # network.http_port; it publishes no host port of its own. Enabling it
+  # swaps in nginx.sentinel.conf, which keeps every /v1 route on RDA and
+  # gives `/` to the dashboard.
   sentinel:
-    enabled: false
+    enabled: true
 
 auth:
   # False is the shipped default so a fresh checkout works with no

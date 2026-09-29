@@ -7,9 +7,9 @@ const HEADER = `# ${OVERLAY_FILENAME}
 # it. Change ojuri.yaml instead.
 #
 # Compose merges this over docker-compose.yml, so it only carries what
-# the manifest changes. Rendering the default manifest produces no
-# overrides at all, which is the point: the manifest describes the
-# shipped stack exactly.
+# the manifest changes. A manifest holding the compose defaults renders
+# nothing here at all; the shipped one renders the nginx config that
+# fronts Sentinel, and nothing else.
 #
 # \`!reset\` removes a key the base file set; \`!override\` replaces one
 # rather than merging into it. Both need Compose 2.24 or newer, which is

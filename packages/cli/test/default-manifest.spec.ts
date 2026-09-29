@@ -25,24 +25,34 @@ describe("the committed ojuri.yaml", () => {
     expect(root).toEqual(fixtureDoc);
   });
 
-  it("describes the stack a plain docker compose up produces", () => {
-    // These are the values in docker-compose.yml and .env.example today.
-    // Rendering this manifest has to be a no-op, so a change here is a
-    // change to the default stack and should be deliberate.
+  it("describes the stack ojuri up produces", () => {
+    // A change here is a change to what every adopter gets from an
+    // install that touches nothing, so it should be deliberate.
     const cfg = effective(parseYaml(readFileSync(ROOT_MANIFEST, "utf8")) as Manifest);
 
     expect(cfg.release).toBe("v1");
     expect(cfg.postgres.mode).toBe("bundled");
     expect(cfg.redis.mode).toBe("bundled");
     expect(cfg.kafka.mode).toBe("bundled");
-    expect(cfg.rda.replicas).toBe(3);
+    expect(cfg.rda.replicas).toBe(1);
     expect(cfg.paa.replicas).toBe(1);
-    expect(cfg.mla.enabled).toBe(false);
+    expect(cfg.mla.enabled).toBe(true);
     expect(cfg.fia.enabled).toBe(false);
-    expect(cfg.sentinel.enabled).toBe(false);
+    expect(cfg.sentinel.enabled).toBe(true);
     expect(cfg.requireApiKey).toBe(false);
     expect(cfg.httpPort).toBe(80);
     expect(cfg.observabilityEnabled).toBe(true);
+  });
+
+  it("differs from a bare docker compose up in exactly three fields", () => {
+    // Compose cannot switch a profile on by itself and defaults
+    // RDA_REPLICAS to 3, so these three are the whole divergence. Any
+    // fourth one belongs in the manifest's header comment as well.
+    const text = readFileSync(ROOT_MANIFEST, "utf8");
+    const cfg = effective(parseYaml(text) as Manifest);
+
+    expect([cfg.rda.replicas, cfg.mla.enabled, cfg.sentinel.enabled]).toEqual([1, true, true]);
+    expect(text).toContain("rda.replicas, mla.enabled and sentinel.enabled");
   });
 
   it("carries no em-dashes in its comments", () => {
@@ -53,8 +63,11 @@ describe("the committed ojuri.yaml", () => {
 describe("effective defaults", () => {
   it("fills an empty manifest with the shipped stack", () => {
     const cfg = effective({});
-    expect(cfg.rda.replicas).toBe(3);
+    expect(cfg.rda.replicas).toBe(1);
     expect(cfg.paa.replicas).toBe(1);
+    expect(cfg.mla.enabled).toBe(true);
+    expect(cfg.sentinel.enabled).toBe(true);
+    expect(cfg.fia.enabled).toBe(false);
     expect(cfg.observabilityEnabled).toBe(true);
     expect(cfg.publicUrl).toBe("http://localhost");
   });

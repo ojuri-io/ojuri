@@ -85,14 +85,21 @@ npx @ojuri/cli up
 
 It writes an `ojuri.yaml` and a `.env` with freshly generated secrets,
 unpacks the compose file and the assets it mounts, pulls the images,
-waits for the migration and for RDA to answer `/ready`, then prints a
-runnable `curl` and your admin password. `ojuri status`, `ojuri doctor`
-and `ojuri down` take it from there.
+waits for the migration and for RDA to answer `/ready`, then prints every
+URL it started, a runnable `curl`, and your admin password.
+`ojuri status`, `ojuri doctor` and `ojuri down` take it from there.
+
+That brings up everything but FIA: the predict API behind NGINX, the PAA
+graph worker, the **Sentinel dashboard** at <http://localhost>, MLA
+watching for drift, and Prometheus with Grafana. FIA is the one service
+left off, because its language model is a 7.6 GB download on first start;
+set `services.fia.enabled: true` in `ojuri.yaml` and run `ojuri up`
+again to turn it on.
 
 Or do it by hand, which is the same stack and stays supported:
 
 ```bash
-git clone --depth 1 --branch v1.7.2 https://github.com/ojuri-io/ojuri.git
+git clone --depth 1 --branch v1.8.0 https://github.com/ojuri-io/ojuri.git
 cd ojuri
 cp .env.example .env                        # required — sets your JWT secret and DB password
 docker compose -f docker-compose.yml -f docker-compose.ghcr.yml up -d
@@ -102,7 +109,13 @@ docker compose logs db-migrate              # your admin password is printed her
 That starts Postgres, Redis, Kafka with Zookeeper, three copies of RDA
 behind NGINX (change the count with `RDA_REPLICAS`), the PAA worker, and
 Prometheus with Grafana. A one-off `db-migrate` container sets up the
-database first, then exits. MLA and FIA are not started — they're opt-in.
+database first, then exits. Sentinel, MLA and FIA are not started here,
+because Compose cannot switch a profile on by itself. `--profile mla`
+adds MLA, and wants `MLA_HEALTH_URL=http://mla:9095` in `.env` so RDA
+probes the container rather than the host. Sentinel needs more than its
+profile: the shipped `nginx.conf` routes `/` to RDA, so the dashboard
+would start with nothing reaching it. Mount `nginx/nginx.sentinel.conf`
+instead, which is what the CLI path does for you.
 
 Now score a transaction:
 

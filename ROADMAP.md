@@ -41,6 +41,9 @@ else is in [`CHANGELOG.md`](CHANGELOG.md).
 - **1.7.0** — `npx @ojuri/cli up`, a one-command install needing no clone,
   and [`@ojuri/sdk`](packages/sdk/README.md), a typed Node client for the
   predict call and webhook verification.
+- **1.8.0** — that install now starts everything except FIA, including the
+  Sentinel dashboard and MLA, with one RDA replica rather than three, and
+  prints every URL it started.
 
 See [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for the technical
 reference and [`CHANGELOG.md`](CHANGELOG.md) for the per-release detail.
@@ -190,10 +193,11 @@ in production trouble.
   assets it mounts travel in the package, and an `ojuri.yaml` manifest layers
   over `.env` without replacing it. Both earlier install paths are unchanged.
   What is still open is a `doctor` that works before a manifest exists, and
-  richer preflight on the host.
+  richer preflight on the host. 1.8.0 turned the dashboard and MLA on by
+  default, leaving FIA the one opt-in service.
 - **Helm chart** — Kubernetes-first adopters currently template their own
   manifests off `docker-compose.yml`. A first-party chart with sane
-  defaults for the three RDA replicas, the PAA singleton, the FIA opt-in,
+  defaults for the RDA replica count, the PAA singleton, the FIA opt-in,
   and the Postgres / Redis / Kafka externals is the highest-leverage
   follow-up on this list.
 - **Terraform module** — companion to the Helm chart for cloud-resource
