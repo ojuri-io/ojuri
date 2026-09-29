@@ -90,14 +90,16 @@ function loadFromFile(path: string): Record<string, unknown>[] {
  * `_note` comment in particular) is stripped so the body is clean
  * for the validator.
  */
-function preparePayload(entry: Record<string, unknown>, nowSeconds: number): Record<string, unknown> {
+function preparePayload(entry: Record<string, unknown>, now: number): Record<string, unknown> {
   const { _note: _drop, transaction_id: _ignoreId, timestamp: _ignoreTs, ...rest } = entry;
   return {
     ...rest,
     transaction_id: randomUUID(),
-    timestamp: nowSeconds,
+    timestamp: now,
   };
 }
+
+const CHANNELS = ["USSD", "MOBILE", "WEB", "AGENT"] as const;
 
 function generateTransaction(idx: number, fraudRatio: number): Record<string, unknown> {
   const isFraud = Math.random() < fraudRatio;
@@ -109,14 +111,38 @@ function generateTransaction(idx: number, fraudRatio: number): Record<string, un
     ? 200_000 + Math.random() * 800_000
     : Math.max(50, Math.exp(Math.random() * 6) * 100);
 
+  // Trust context, which the curated demo rows carry and this generator used
+  // to omit. Absent, every field defaults to its least trusted value, so a
+  // run declined all of its traffic whatever --fraud-ratio said.
+  const trust = isFraud
+    ? {
+        is_authenticated: false,
+        device_is_trusted: false,
+        account_age_days: Math.floor(Math.random() * 7),
+        session_to_txn_seconds: 1 + Math.floor(Math.random() * 5),
+      }
+    : {
+        is_authenticated: true,
+        device_is_trusted: true,
+        account_age_days: 180 + Math.floor(Math.random() * 1800),
+        session_to_txn_seconds: 30 + Math.floor(Math.random() * 600),
+      };
+
   return {
     transaction_id: randomUUID(),
     sender_id: isFraud ? `attacker_${idx % 5}` : `user_${idx % 1000}`,
     receiver_id: isFraud ? `mule_${idx % 10}` : `user_${(idx * 7) % 1000}`,
     amount: Math.round(amount * 100) / 100,
     transaction_type: txType,
-    timestamp: Math.floor(Date.now() / 1000) - Math.floor(Math.random() * 86400),
+    // Milliseconds, per the predict contract. Seconds put every generated
+    // transaction in 1970 and scrambled every calendar feature derived from it.
+    timestamp: Date.now() - Math.floor(Math.random() * 86_400_000),
     segment: idx % 3 === 0 ? "high_value" : "standard",
+    channel: CHANNELS[idx % CHANNELS.length],
+    currency: "NGN",
+    transaction_country: "NG",
+    ip_country: isFraud && idx % 2 === 0 ? "RU" : "NG",
+    ...trust,
   };
 }
 
@@ -165,7 +191,7 @@ async function main() {
       if (idx === undefined) break;
       try {
         const payload = curated
-          ? preparePayload(curated[idx]!, Math.floor(Date.now() / 1000))
+          ? preparePayload(curated[idx]!, Date.now())
           : generateTransaction(idx, args.fraudRatio);
         const r = await fire(args, payload);
         results.push(r);

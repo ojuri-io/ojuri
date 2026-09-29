@@ -423,6 +423,11 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
+    # The normalize step is guarded on the file existing: this compose file
+    # is shipped inside @ojuri/cli and is routinely run against an older
+    # published image via OJURI_VERSION, which has no such file. Requiring
+    # it outright killed db-migrate, and with it the whole stack.
+    #
     # Invokes the knex CLI directly with node, bypassing the package.json
     # `db:migrate` script that wraps it in ts-node + dotenv. The production
     # image runs `npm prune --production` which removes ts-node, and Compose
@@ -433,7 +438,7 @@ services:
     command:
       - sh
       - -c
-      - "node ./node_modules/knex/bin/cli.js --knexfile knexfile.js migrate:latest && node ./node_modules/knex/bin/cli.js --knexfile knexfile.js seed:run"
+      - "if [ -f ./dist/database/normalize-migration-names.cli.js ]; then node ./dist/database/normalize-migration-names.cli.js; fi && node ./node_modules/knex/bin/cli.js --knexfile knexfile.js migrate:latest && node ./node_modules/knex/bin/cli.js --knexfile knexfile.js seed:run"
     environment:
       - NODE_ENV=${NODE_ENV:-production}
       - DB_CLIENT=pg
