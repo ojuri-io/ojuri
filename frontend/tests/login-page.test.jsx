@@ -24,7 +24,7 @@ describe('Login', () => {
 
     await waitFor(() => expect(signInOptions).toHaveBeenCalled());
     expect(username().value).toBe('admin');
-    expect(screen.getByText(/npm run db:migrate/)).toBeInTheDocument();
+    expect(screen.getByText(/ojuri reset-admin/)).toBeInTheDocument();
     expect(screen.queryByText(/public sandbox/i)).not.toBeInTheDocument();
   });
 
@@ -35,7 +35,7 @@ describe('Login', () => {
     render(<Login onSuccess={() => {}} />);
 
     await waitFor(() => expect(username().value).toBe('demo'));
-    expect(screen.queryByText(/npm run db:migrate/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/ojuri reset-admin/)).not.toBeInTheDocument();
     expect(screen.getByRole('link', { name: /alongside the sandbox link/i })).toHaveAttribute(
       'href',
       'https://ojuri.io/#sandbox'

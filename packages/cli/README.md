@@ -4,8 +4,8 @@ The `ojuri` command. Reads the deployment manifest at `ojuri.yaml` and,
 in later phases, renders it into a `.env` fragment and a Docker Compose
 overlay and drives the stack.
 
-Seven commands: `init`, `doctor`, `up`, `status`, `down`, plus the
-`validate` and `render` they are built on.
+Eight commands: `init`, `doctor`, `up`, `status`, `down`, `reset-admin`,
+plus the `validate` and `render` they are built on.
 
 ## Install
 
@@ -257,6 +257,26 @@ credential gets a 423 from every admin endpoint until the password is
 rotated. Rotating it here would mean this command inventing a password
 and consuming a deliberate security gate, so when
 `auth.require_api_key` is true it prints the two steps instead.
+
+## `ojuri reset-admin [path]`
+
+Issues a new password for the seeded admin and prints it once.
+
+```bash
+ojuri reset-admin                                   # generate one
+ojuri reset-admin --password 'my-chosen-secret'     # or pick it
+ojuri reset-admin --username alice --tenant acme    # defaults: admin / default
+```
+
+`mustChangePassword` is set, so the next login forces a rotation.
+
+It runs inside the RDA container, which carries bcrypt, knex and the
+connection details, so the stack has to be up. The repository's
+`npm run reset:admin` does the same thing from a checkout; this exists
+because an adopter who installed with `npx @ojuri/cli up` has no
+checkout, and no `docker compose` invocation of their own either, since
+the compose files live under `.ojuri/stack` and need the project name
+and five `--env-file` / `-f` flags to address.
 
 ## `ojuri status [path]`
 

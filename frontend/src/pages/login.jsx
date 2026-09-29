@@ -237,10 +237,11 @@ function Login({ onSuccess }) {
             </>
           ) : (
             <>
-              First-run password is printed once by{' '}
-              <code className="mono">npm run db:migrate</code>. Lost it?
+              The first-run password is printed once, by{' '}
+              <code className="mono">ojuri up</code> or the migration. Lost it?
               <br />
-              Run <code className="mono">npm run reset:admin</code> from the repo root.
+              Run <code className="mono">ojuri reset-admin</code>, or{' '}
+              <code className="mono">npm run reset:admin</code> from a checkout.
             </>
           )}
         </p>

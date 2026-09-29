@@ -426,13 +426,28 @@ describe("the summary up prints", () => {
   it("points at .env when the password came from ADMIN_SEED_PASSWORD", () => {
     const lines = summary(cfg(), { kind: "seeded-from-env" }).join("\n");
     expect(lines).toContain("ADMIN_SEED_PASSWORD");
-    expect(lines).toContain("reset:admin");
+    expect(lines).toContain("ojuri reset-admin");
   });
 
   it("says the admin is unchanged on an existing database", () => {
     const lines = summary(cfg(), { kind: "existing" }).join("\n");
     expect(lines).toContain("already existed");
-    expect(lines).toContain("reset:admin");
+    expect(lines).toContain("ojuri reset-admin");
+  });
+
+  it("never names a command that only exists in a checkout", () => {
+    // An install from npx has no package.json of ours, so `npm run
+    // reset:admin` is an instruction the reader cannot follow.
+    for (const admin of [
+      { kind: "bootstrapped", password: "x" },
+      { kind: "generated", password: "x" },
+      { kind: "seeded-from-env" },
+      { kind: "existing" },
+      { kind: "unknown" },
+    ] as const) {
+      const lines = summary(cfg(), admin).join("\n");
+      expect(lines).not.toContain("npm run");
+    }
   });
 
   it("shows Sentinel at the NGINX origin and Grafana on its own port", () => {

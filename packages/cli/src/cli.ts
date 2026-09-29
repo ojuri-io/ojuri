@@ -4,6 +4,7 @@ import { dirname, join, resolve } from "node:path";
 import { down } from "./commands/down";
 import { doctor } from "./commands/doctor";
 import { init } from "./commands/init";
+import { resetAdmin } from "./commands/reset-admin";
 import { formatStatus, status } from "./commands/status";
 import { up } from "./commands/up";
 import { systemExec, systemProbe, type Exec, type Probe } from "./exec";
@@ -30,6 +31,7 @@ Usage:
   ojuri doctor [path]       Check this host can run the stack.
   ojuri validate [path]     Check a manifest for problems.
   ojuri render [path]       Write the .env fragment and Compose overlay.
+  ojuri reset-admin [path]  Issue a new admin password.
 
 Options:
   --json                    Emit machine-readable output.
@@ -41,6 +43,12 @@ Options:
   --yes                     Skip the confirmation prompts.
   --keep-dev-defaults       With init, keep .env.example's development
                             secrets instead of generating new ones.
+  --password <value>        With reset-admin, set this rather than
+                            generating one.
+  --username <name>         With reset-admin, the user to reset
+                            (default admin).
+  --tenant <id>             With reset-admin, its tenant (default
+                            default).
   -h, --help                Show this message.
   -v, --version             Show the version.
 
@@ -92,6 +100,9 @@ export function run(
         volumes: { type: "boolean", default: false },
         yes: { type: "boolean", default: false },
         "keep-dev-defaults": { type: "boolean", default: false },
+        password: { type: "string" },
+        username: { type: "string" },
+        tenant: { type: "string" },
         help: { type: "boolean", short: "h", default: false },
         version: { type: "boolean", short: "v", default: false },
       },
@@ -130,6 +141,15 @@ export function run(
         outDir: values["out-dir"],
         build: values.build === true,
         printCommand: values["print-command"] === true,
+        streams,
+        processEnv,
+      });
+    case "reset-admin":
+      return resetAdminCommand(positionals[1] ?? DEFAULT_MANIFEST_FILENAME, {
+        password: values.password,
+        username: values.username,
+        tenant: values.tenant,
+        outDir: values["out-dir"],
         streams,
         processEnv,
       });
@@ -180,6 +200,37 @@ export let deps: RunDeps = systemDeps;
 
 export function _setDepsForTests(next: RunDeps): void {
   deps = next;
+}
+
+function resetAdminCommand(
+  manifestPath: string,
+  opts: {
+    password?: string;
+    username?: string;
+    tenant?: string;
+    outDir?: string;
+    streams: Streams;
+    processEnv: Record<string, string | undefined>;
+  }
+): number {
+  const result = resetAdmin(
+    manifestPath,
+    {
+      password: opts.password,
+      username: opts.username,
+      tenant: opts.tenant,
+      outDir: opts.outDir,
+      processEnv: opts.processEnv,
+    },
+    systemDeps
+  );
+
+  if (result.render.findings.length > 0) {
+    opts.streams.out(formatHuman(result.render.manifestPath, result.render.findings));
+  }
+  for (const line of result.lines) opts.streams.out(line);
+  for (const line of result.errors) opts.streams.err(line);
+  return result.ok ? 0 : 1;
 }
 
 function initCommand(opts: {

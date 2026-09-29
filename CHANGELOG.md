@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **`ojuri reset-admin`.** Issues a new admin password and prints it once, with
+  `--password`, `--username` and `--tenant`. It runs inside the RDA container,
+  which carries bcrypt, knex and the connection details.
+
+### Fixed
+
+- **`ojuri up` told you to run a command that cannot exist.** Three lines of its
+  summary, and the dashboard's own login page, pointed at
+  `npm run reset:admin` — a script in the repository's `package.json`. An
+  adopter who installed with `npx @ojuri/cli up` has no repository, so the one
+  instruction printed for a lost password was impossible to follow. They now
+  name `ojuri reset-admin`, and say that `ADMIN_SEED_PASSWORD` in `.env` is the
+  password on a database this stack created.
+
 ## [1.8.0] - 2026-09-29
 
 What an install gives you when you touch nothing. `npx @ojuri/cli up` used to
