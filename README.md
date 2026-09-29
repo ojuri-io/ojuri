@@ -80,7 +80,7 @@ With Node 20 or newer on your PATH as well, one command does all of it,
 in any empty directory and with no clone:
 
 ```bash
-npx @ojuri/cli@1.7.0 up
+npx @ojuri/cli up
 ```
 
 It writes an `ojuri.yaml` and a `.env` with freshly generated secrets,
@@ -92,7 +92,7 @@ and `ojuri down` take it from there.
 Or do it by hand, which is the same stack and stays supported:
 
 ```bash
-git clone --depth 1 --branch v1.7.0 https://github.com/ojuri-io/ojuri.git
+git clone --depth 1 --branch v1.7.2 https://github.com/ojuri-io/ojuri.git
 cd ojuri
 cp .env.example .env                        # required — sets your JWT secret and DB password
 docker compose -f docker-compose.yml -f docker-compose.ghcr.yml up -d
@@ -394,7 +394,7 @@ running, set `OJURI_VERSION` to a specific release before any compose
 command. You then upgrade deliberately, by changing that value:
 
 ```bash
-export OJURI_VERSION=v1.7.0
+export OJURI_VERSION=v1.7.2
 ```
 
 Check [`CHANGELOG.md`](CHANGELOG.md) before upgrading — it flags new
@@ -528,7 +528,7 @@ has its own README: [`packages/cli/`](packages/cli/README.md) ·
 
 ## Status
 
-**Stable as of v1.7.0.** API keys, user accounts and roles, live-editable
+**Stable as of v1.7.2.** API keys, user accounts and roles, live-editable
 rules, the model registry with per-segment thresholds, a full audit log
 with reasons on every decision, signed webhooks, safe retries, FIA's
 on-demand reports and follow-up questions, and the Sentinel dashboard.
