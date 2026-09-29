@@ -7,6 +7,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **The synthetic load generator declined everything it sent.** `npm run
+  seed:load --count N` omitted the trust context the curated demo rows carry
+  (`is_authenticated`, `device_is_trusted`, `account_age_days`,
+  `session_to_txn_seconds`, channel and countries). Every absent field defaults
+  to its least trusted value, so a run reported `accept=0 decline=20` no matter
+  what `--fraud-ratio` said, and the decision mix it printed meant nothing. The
+  generated transactions now carry that context, weaker on the fraud-flavoured
+  ones: at `--fraud-ratio 0.02` a run now accepts, at 1.0 it sends everything
+  to review.
+
+- **Both load paths sent the timestamp in seconds** where the predict contract
+  takes milliseconds, so every generated transaction claimed to be from 1970 and
+  every calendar feature derived from it was wrong. `feature-builder.ts` already
+  carried a comment about this exact hazard from a previous occurrence.
+
+- **The two install paths could not migrate each other's database.** knex records
+  whichever migration filename it loaded, and the two paths load different ones:
+  the container runs compiled JavaScript from `dist`, a checkout runs TypeScript
+  from `src` through ts-node. So a database created by `ojuri up` refused
+  `npm run db:migrate` from a checkout, and the reverse, with
+  `Error: The migration directory is corrupt, the following files are missing:`
+  followed by all 38 of them. Nothing was corrupt, and nothing in the message
+  suggested what to do. Both paths now retarget the recorded names to their own
+  extension before migrating, which is idempotent and a no-op on a database that
+  has never been migrated.
+
 ## [1.8.1] - 2026-09-29
 
 Four instructions that could not be followed, three of them found by running every

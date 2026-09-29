@@ -116,6 +116,15 @@ Expected unless you started MLA. `ojuri up` starts it for you; on a
 compose command it is opt-in, either `--profile mla` (with
 `MLA_HEALTH_URL=http://mla:9095` in `.env`) or a host venv.
 
+**`The migration directory is corrupt, the following files are missing:` and then every migration**
+Nothing is corrupt. knex records the filename it loaded, and the compiled build
+records `.js` where a checkout records `.ts`, so each one reads the other's rows
+as missing files. Fixed in 1.8.2: both paths retarget the names before migrating.
+On an older build, run the migration from whichever side created the database, or
+rewrite the column once:
+`UPDATE migrations SET name = regexp_replace(name, '\.(js|ts)$', '.ts');`
+(use `.js` if you are migrating from the container).
+
 ## FIA
 
 **The first investigation appears to hang for several minutes**
